@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Reset your FairSwap password</title>
+  <style>
+    @media only screen and (max-width: 600px) {
+      .email-content { padding: 30px 24px !important; }
+      .email-header { padding: 28px 24px 22px !important; }
+      .email-footer { padding: 24px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f7f5; color:#111827; font-family:Arial, Helvetica, sans-serif; -webkit-text-size-adjust:100%;">
+  <div style="display:none; font-size:1px; line-height:1px; color:#f4f7f5; max-height:0; max-width:0; opacity:0; overflow:hidden; mso-hide:all;">Use this secure link to reset your FairSwap account password.</div>
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100%; border-collapse:collapse; background-color:#f4f7f5;">
+    <tr>
+      <td align="center" style="padding:36px 16px;">
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100%; max-width:600px; border-collapse:separate; background-color:#ffffff; border:1px solid #e5e7eb; border-radius:14px;">
+          <tr>
+            <td class="email-header" style="padding:32px 40px 24px; border-bottom:1px solid #e5e7eb;">
+              <p style="margin:0; color:#065f46; font-size:25px; line-height:32px; font-weight:700; letter-spacing:-0.6px;">FairSwap<span style="color:#6b7280; font-size:14px; font-weight:600; letter-spacing:0;">.in</span></p>
+            </td>
+          </tr>
+          <tr>
+            <td class="email-content" style="padding:36px 40px 40px;">
+              <p style="margin:0 0 12px; color:#047857; font-size:12px; line-height:18px; font-weight:700; letter-spacing:1.2px;">ACCOUNT SECURITY</p>
+              <h1 style="margin:0 0 18px; color:#111827; font-size:27px; line-height:35px; font-weight:700;">Reset your password</h1>
+              <p style="margin:0 0 28px; color:#374151; font-size:16px; line-height:25px;">We received a request to reset your FairSwap password. Use the button below to choose a new password.</p>
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:separate;">
+                <tr>
+                  <td align="center" bgcolor="#047857" style="background-color:#047857; border-radius:8px;">
+                    <a id="recovery-email-link" href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&amp;type=recovery&amp;next=/auth/reset-password" style="display:inline-block; padding:15px 26px; border-radius:8px; color:#ffffff; font-size:16px; line-height:20px; font-weight:700; text-decoration:none;">Reset password</a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:24px 0 0; color:#4b5563; font-size:14px; line-height:22px;">For your security, this link expires in <strong>10 minutes</strong>.</p>
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100%; margin-top:30px; border-collapse:collapse;">
+                <tr>
+                  <td style="padding:18px 20px; background-color:#f0fdf4; border-left:3px solid #059669;">
+                    <p style="margin:0; color:#374151; font-size:14px; line-height:22px;"><strong>Didn't request a password reset?</strong> You can safely ignore this email. Never share this reset link with anyone.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td class="email-footer" style="padding:26px 40px; background-color:#f9fafb; border-top:1px solid #e5e7eb; border-radius:0 0 14px 14px;">
+              <p style="margin:0; color:#6b7280; font-size:13px; line-height:20px;">FairSwap.in &middot; Your local classifieds marketplace</p>
+              <p style="margin:8px 0 0; color:#6b7280; font-size:12px; line-height:19px;">This automated message relates to your FairSwap account.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
