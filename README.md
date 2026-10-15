@@ -10,14 +10,15 @@ deployment authority has not been transferred from FairSwap-Web.
 Production and Test Supabase environments must remain untouched during repository
 initialization and extraction. Further implementation requires separate approval.
 
-## Stage 1B status
+## Stage 2A status
 
 The repository has one README-only initialization commit on `main`. The local
-`chore/backend-extraction-baseline` branch contains the accepted Stage 1A
-documentation foundation and the authorized 82-file Stage 1B source copy for CTO
-review. All feature working-tree changes are unstaged, uncommitted and unpushed.
-Toolchain setup, additional test/script migration, CI migration, Web cleanup, and
-deployment handoff have not started.
+`chore/backend-extraction-baseline` branch has local checkpoint
+`47eabc28253951b733f607c61ed08bfa45e60248` for the accepted Stage 1A/1B baseline.
+The subsequent Stage 2A toolchain, five unchanged unit tests, verifier and
+documentation changes remain unstaged, uncommitted and unpushed for CTO review.
+Database integration, CI migration, Web cleanup, and deployment handoff have not
+started.
 
 ## Approved extraction baseline
 
@@ -52,7 +53,29 @@ All 82 destination blob identities and Git clean-filter results match the pinned
 source. All 58 migration SHA-256 pairs match both the source and accepted Stage 0
 manifest. See the baseline document for static verification evidence and limits.
 
-No package manifest, dependencies, JavaScript/TypeScript test suites, operational
-scripts, or CI/CD workflows were added. No copied code or runtime tests were run;
-source integrity and static path checks do not prove runtime success. No
-deployment authority or credentials are provisioned here. Stop after Stage 1B.
+## Local unit verification
+
+Use Node `>=24.15.0 <25` and pnpm `10.12.1`. Dependencies are exact pins in the
+independent Backend manifest and lockfile; no Next.js or browser test stack.
+
+```sh
+corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+corepack pnpm verify:migrations
+corepack pnpm typecheck
+corepack pnpm test:unit
+```
+
+Stage 2A results on Node 24.15.0: 58 migrations verified, scoped TypeScript passed,
+and five unit-test files passed with 93 tests, zero failures/skips/todos. Tests use
+fake RPC clients and injected provider transports; the setup blocks real fetch
+and socket connections. `envDir: false` prevents automatic environment-file
+loading. No hosted initialization, email delivery, or integration suite runs.
+
+TypeScript checks the evaluator/guard, shared worker cores, five tests, setup and
+Vitest config. DOM declaration libraries provide the source-compatible Fetch
+types; they do not enable jsdom or a browser runtime. Deno entrypoints, SQL/pgTAP,
+database behavior, actual Vault authentication and hosted acceptance are not
+validated by these unit checks. See the baseline document for exact scope/results.
+
+No deployment authority or credentials are provisioned here. Stop after Stage 2A;
+the next stage requires explicit CTO approval.

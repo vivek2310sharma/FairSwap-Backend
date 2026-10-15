@@ -14,7 +14,7 @@ not an operational handoff or authorization to execute it.
 | Vercel Web application deployment | Web; unchanged by extraction |
 | Shared Supabase migrations, RPCs, RLS, grants, triggers, Storage/Auth/Edge configuration | Existing Web/operator release arrangement; no Backend authority yet |
 | Production and Test Supabase projects | Untouched during repository extraction |
-| Backend CI/CD deployment jobs, credentials, or permissions | None introduced by Stage 1A or Stage 1B |
+| Backend CI/CD deployment jobs, credentials, or permissions | None introduced by Stages 1A, 1B or 2A |
 | Staging-only S1 capture | Excluded from canonical Backend extraction; no deletion or deployment authorized |
 
 This is an ownership boundary, not proof that every existing external integration,
@@ -50,7 +50,9 @@ moderation, new approval logic, or business-behavior changes.
 5. Verify sole ownership and update runbooks/consumer contracts. Never temporarily
    grant duplicate backend deployment authority to Web and Backend.
 
-None of these operational handoff steps is authorized by Stage 1A or Stage 1B. No environment
+Stage 2A permits only local checkpoint/toolchain/unit verification; it does not
+authorize database or hosted integration. None of these operational handoff steps
+is authorized by Stages 1A, 1B or 2A. No environment
 or feature activation is implied. Production-baseline workers remain
 `process-email-outbox` and `process-listing-moderation`; S1 capture is not a
 Production deployment target.

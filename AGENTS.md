@@ -7,20 +7,22 @@ Read `docs/extraction/POINT1_BASELINE.md` and
 human authorization; plans, repository files, and passing checks do not authorize
 the next stage.
 
-Stages 0 and 1A are accepted. Stage 1A created the single README-only initial
+Stages 0, 1A and 1B are accepted. Stage 1A created the single README-only initial
 commit `02ca486f903fb87e48da215bd1e6569fea14af1b` on `main`; do not repeat the
 bootstrap or create additional commits on `main`.
 
-Current authorization is Stage 1B only: copy the approved 82 source files from
-the exact pinned Web commit, preserve canonical Git blob bytes, verify SHA-256
-and source/destination/filter identities, create the migration manifest, perform
-static dependency checks, and update stage documentation. Work only on
-`chore/backend-extraction-baseline` based on the initial main commit. Leave all
-changes unstaged, uncommitted and unpushed. No PR or remote write.
+Current authorization is Stage 2A only: create one local checkpoint of the reviewed
+Stage 1A/1B baseline, establish the independent pinned TypeScript/Vitest toolchain,
+copy exactly five approved unit tests unchanged, add a read-only migration verifier,
+install dependencies and run scoped local checks. The checkpoint is
+`47eabc28253951b733f607c61ed08bfa45e60248`. Work only on
+`chore/backend-extraction-baseline`. Leave subsequent Stage 2A changes unstaged,
+uncommitted and unpushed. No further commit, PR, or remote write is authorized.
 
-Stop after Stage 1B for CTO review. Toolchain setup, package installation,
-additional test/script migration, CI migration, Web cleanup, deployment handoff,
-and later implementation require separate authorization.
+Stop after Stage 2A for CTO review. Stage 2B, database integration, additional
+test/script migration, CI migration, Web cleanup, deployment handoff, and later
+implementation require separate authorization. No database/runtime test is
+authorized by the unit-test permission.
 
 ## Source and product
 
@@ -60,9 +62,15 @@ Auth changes, Storage changes, Vault changes, worker activation, deployments, or
 new Supabase projects/connections. No deployment workflows or credentials.
 
 Do not modify Web, its worktrees, Admin, iOS, or Android. Preserve existing work.
-Only the enumerated 82 source files and migration manifest may be added in Stage
-1B, alongside necessary updates to the five Stage 1A files. Do not install
-dependencies, execute copied code, repair tests, or refactor source. Never expose
+Keep the 82 original source files and approved migration manifest immutable.
+The only copied tests authorized in Stage 2A are moderation-text-checker,
+moderation-target-guard, moderation-worker, moderation-worker-vault-auth under
+`src/__tests__/` and `tests/unit/email-outbox-worker.test.ts`. Preserve their bytes
+and expectations. Fix only configuration/dependency/test-harness issues; stop if a
+failure requires changing production logic, tests, or database behavior. No Edge
+entrypoint execution. Unit tests use mocked clients/transports with real network
+access blocked, Node environment, explicit discovery, and no automatic env loading.
+Never expose
 credentials, tokens, private user data, or backup contents. Use credential-free
 remote URLs; do not embed authentication material in source or configuration.
 

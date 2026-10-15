@@ -2,11 +2,12 @@
 
 ## Authorization and repository provenance
 
-Stages 0 and 1A are accepted. Stage 1A initialized the existing private repository
-`vivek2310sharma/FairSwap-Backend`. Stage 1B authorizes only immutable source copy,
-integrity/static verification, the migration manifest, and necessary documentation
-updates. The 82-file source copy is complete locally and ready for CTO review;
-runtime behavior has not been tested.
+Stages 0, 1A and 1B are accepted. Stage 1A initialized the existing private
+repository `vivek2310sharma/FairSwap-Backend`. Stage 1B copied and verified the 82
+immutable source files. Stage 2A authorizes one local baseline checkpoint plus an
+independent unit-test toolchain, five unchanged pinned unit-test copies, a read-only
+migration verifier and scoped local verification. No database integration,
+CI/deployment ownership transfer or Web cleanup is authorized.
 
 | Item | Approved value |
 | --- | --- |
@@ -17,11 +18,15 @@ runtime behavior has not been tested.
 | Initial commit message | `chore: initialize FairSwap backend repository` |
 | Local review branch | `chore/backend-extraction-baseline` |
 | Feature branch base | Same initial main commit |
+| Local Stage 1A/1B checkpoint | `47eabc28253951b733f607c61ed08bfa45e60248` |
 
 The remote was verified empty before Stage 1A initialization. The authorized
-README-only initial commit is the only commit on main. All feature working-tree
-changes remain unstaged, uncommitted and unpushed for CTO review. No remote writes
-are authorized or performed in Stage 1B. Do not repeat initialization.
+README-only initial commit is the only commit on main. Stage 2A created one local
+checkpoint on the feature branch with message
+`chore(backend): import verified Supabase source baseline`. Its 88-file tree
+preserves all 82 canonical source blobs. Subsequent Stage 2A working-tree changes
+remain unstaged, uncommitted and unpushed for CTO review. No remote writes are
+authorized or performed in Stage 1B/2A. Do not repeat initialization.
 
 Older/dirty local Web checkouts are not extraction sources. Future source reads
 must use the exact approved commit, with any newer baseline separately reviewed.
@@ -152,12 +157,81 @@ connection URLs in the copied baseline; configuration environment-variable names
 are not secret values. Pattern inspection cannot certify every possible secret
 format.
 
-No relative-file dependency was missing. Package resolution, Deno/TypeScript
+At the Stage 1B closeout, no relative-file dependency was missing. Package resolution, Deno/TypeScript
 compilation, extension availability, SQL execution, actual Auth callbacks, worker
 runtime behavior, and live switch state remain unverified. No packages were
 installed and no copied code, tests, workers, operational scripts, database
 reconstruction, hosted Supabase operation, or deployment was executed. Existing
 Web, Admin and mobile repositories are outside the write scope.
 
-Stop after Stage 1B and return for CTO review. Do not begin toolchain setup,
-additional test/script migration, CI migration, Web cleanup, or ownership transfer.
+## Stage 2A local verification (15 October 2026)
+
+Pre-commit integrity verified 82/82 raw source and staged blob identities, all 58
+migration hashes, and manifest SHA-256
+`eb2dfee779a15634927cfbf25fcd6ffc59df591a585d1ec8f5f3d40e5caaf1dd`.
+The exact reviewed 88 files were checkpointed locally. `git diff --cached --check`
+reported inherited trailing whitespace in five SQL migrations and a blank EOF
+line in `supabase/config.toml`; those immutable source bytes were preserved.
+
+The toolchain uses Node 24.15.0, pnpm 10.12.1, Supabase JS 2.116.0, Zod 3.24.2,
+TypeScript 5.9.3, Vitest 3.2.7 and the source-audited Node declarations 20.19.43.
+Registry engine checks establish Node compatibility; frozen installation with
+`--ignore-scripts --engine-strict` passed. The independent package is
+`fairswap-backend`. It has no Next.js/jsdom dependency, deployment script, Web
+server-only stub, or Supabase CLI. Before a package pin existed, Corepack's version
+probe cached pnpm 12.11.2; actual installation and checks use 10.12.1. No project
+dependency was upgraded. pnpm emits a Node `url.parse()` deprecation warning.
+
+All five unit tests were copied byte-for-byte from the approved Web commit using
+an isolated temporary bare clone. No expectations or production code changed.
+Test inspection verified fake RPC/Auth clients and injected provider transports;
+Request/Response objects and URLs are in-memory fixtures, not real requests.
+The separate test setup blocks global fetch and socket connections and asserts
+zero network attempts after each test. Explicit discovery selects only these five
+files, Node is the environment, zero-test success is disabled, and `envDir: false`
+prevents automatic environment-file loading.
+
+| Exact test path | Discovered / executed / passed | Failed / skipped |
+| --- | --- | --- |
+| `src/__tests__/moderation-text-checker.test.ts` | 39 / 39 / 39 | 0 / 0 |
+| `src/__tests__/moderation-target-guard.test.ts` | 7 / 7 / 7 | 0 / 0 |
+| `src/__tests__/moderation-worker.test.ts` | 10 / 10 / 10 | 0 / 0 |
+| `src/__tests__/moderation-worker-vault-auth.test.ts` | 3 / 3 / 3 | 0 / 0 |
+| `tests/unit/email-outbox-worker.test.ts` | 34 / 34 / 34 | 0 / 0 |
+| Total | 93 / 93 / 93 | 0 / 0 |
+
+Executed commands and results:
+
+- `corepack pnpm verify:migrations`: PASS, exactly 58 files. The new Node verifier
+  reads byte hashes, validates count/format/unique sorted paths and exact disk SQL
+  membership, and never writes migrations. One positive disposable fixture and
+  seven negative cases (altered bytes, missing/additional file, malformed entry,
+  duplicate path, unsorted paths, wrong count) passed. Fixture files were removed.
+- `corepack pnpm typecheck`: PASS after a configuration-only Fetch declaration
+  correction. The initial ES2022-only run found `Response.json()` typed as unknown
+  by Node declarations; adding DOM/DOM.Iterable libraries restores the standard
+  Fetch declaration contract used by the source. Strict mode remains enabled.
+- `corepack pnpm test:unit --reporter=verbose --reporter=json
+  --outputFile=artifacts/stage2a-unit-results.json`: PASS, five files, 93 tests,
+  zero failed/pending/skipped/todo. The machine report is ignored local evidence.
+- Final rerun with `--reporter=default --reporter=json` also passed 93/93. A
+  restricted-sandbox attempt failed before test discovery because esbuild could
+  not read parent directories; the approved filesystem-access rerun passed with
+  the same no-network harness. This was a runner restriction, not a test failure.
+
+TypeScript includes evaluator/guard, both shared worker cores, the five copied
+tests, network setup and Vitest config. It excludes the Deno entrypoint directories
+and does not check SQL, templates or the JavaScript verifier through tsc. The
+verifier was executed directly. DOM types are declarations only; tests remain Node
+and do not run a DOM/browser. No Deno compiler/runtime check has been performed.
+
+Remaining gaps: SQL reconstruction, all pgTAP (including the known excluded email
+test), actual queue/RLS/Vault behavior, Edge runtime, PostgreSQL 17 full-chain
+rehearsal, hosted Auth/media/consumer acceptance and live switch state remain
+unverified. Mocked auto-approval results do not activate or prove real publication.
+No runtime database suite, hosted Supabase operation, worker deployment or real
+email was executed. Deployment authority and automation settings remain unchanged.
+
+Stop after Stage 2A for CTO review. Do not commit subsequent toolchain changes,
+push, open a PR, or begin Stage 2B/database integration, additional test/script
+migration, CI migration, Web cleanup, or ownership transfer without approval.

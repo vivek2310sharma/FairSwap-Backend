@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "src/lib/moderation/*.ts",
+    "src/__tests__/moderation-text-checker.test.ts",
+    "src/__tests__/moderation-target-guard.test.ts",
+    "src/__tests__/moderation-worker.test.ts",
+    "src/__tests__/moderation-worker-vault-auth.test.ts",
+    "tests/unit/email-outbox-worker.test.ts",
+    "tests/setup/no-network.ts",
+    "supabase/functions/_shared/email-outbox-worker.ts",
+    "supabase/functions/_shared/listing-moderation-worker.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": ["node_modules", "supabase/functions/process-*/**"]
+}
