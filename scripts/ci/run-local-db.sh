@@ -130,7 +130,7 @@ NODE
   if [[ $execution == 0 && $cleanup_ok == 1 && $collection == 0 ]]; then exit 0; fi
   # Report only an enumerated stage, never raw tool output, paths or exception text.
   case ${failure_stage:-unclassified} in
-    preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete|port-probe-run|port-probe-inspect|port-probe-binding|port-probe-cleanup|firewall-hooks|firewall-setup|firewall-verify|route-isolation|image-postgres-*|image-pgProve-*|image-authBootstrap-*|image-storageBootstrap-*|image-realtimeBootstrap-*) ;;
+    preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete|port-probe-run|port-probe-inspect|port-probe-binding|port-probe-cleanup|firewall-hooks|firewall-setup|firewall-verify|route-isolation|security-before-sql|security-before-verify|image-postgres-*|image-pgProve-*|image-authBootstrap-*|image-storageBootstrap-*|image-realtimeBootstrap-*) ;;
     *) failure_stage=unclassified ;;
   esac
   if [[ $execution == 0 ]]; then
@@ -140,7 +140,7 @@ NODE
   fi
   printf 'FAIL: database CI stage=%s; raw output withheld\n' "$failure_stage" >&3
   case ${failure_category:-none} in
-    none|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|unclassified|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding) ;;
+    none|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|unclassified|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding|security-parse|security-version|security-ledger|security-vault|security-setting|security-queues|security-buckets|security-rls|security-extensions|security-rpcs|security-cron|security-runtime|security-trigger|security-unclassified) ;;
     *) failure_category=unclassified ;;
   esac
   if [[ ${failure_category:-none} != none ]]; then
@@ -423,13 +423,47 @@ node --input-type=module - "$root/scripts/ci/verify-baseline.mjs" "$project" <<'
 import {pathToFileURL} from 'node:url';const {verifyBaseline}=await import(pathToFileURL(process.argv[2]));verifyBaseline(process.argv[3]);
 NODE
 cli_local migration up --local >"$raw/migrations.log" 2>&1
-failure_stage=security-before
+failure_stage=security-before-sql
 docker exec -i "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
   <"$root/scripts/ci/assert-local-security.sql" >"$raw/security-before.json"
-node --input-type=module - "$root/scripts/ci/verify-db-results.mjs" "$raw/security-before.json" <<'NODE'
-import {pathToFileURL} from 'node:url';import {readFileSync} from 'node:fs';
-const {verifySecurity}=await import(pathToFileURL(process.argv[2]));verifySecurity(JSON.parse(readFileSync(process.argv[3])));
+failure_stage=security-before-verify
+if ! node --input-type=module - "$root/scripts/ci/verify-db-results.mjs" "$raw/security-before.json" \
+  "$root/docs/extraction/evidence/stage2b/r6/result.json" "$raw/security-category.txt" <<'NODE'
+import {pathToFileURL} from 'node:url';
+import {readFileSync,writeFileSync} from 'node:fs';
+const [verifierPath,snapshotPath,referencePath,categoryPath]=process.argv.slice(2);
+const {verifySecurity,expectedMigrationVersions}=await import(pathToFileURL(verifierPath));
+let snapshot;
+try { snapshot=JSON.parse(readFileSync(snapshotPath,'utf8')); }
+catch { writeFileSync(categoryPath,'security-parse'); process.exit(1); }
+try { verifySecurity(snapshot); }
+catch {
+  const expected=JSON.parse(readFileSync(referencePath,'utf8')).security;
+  const canonical=v=>Array.isArray(v)?v.map(canonical).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))):v!==null&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
+  const equal=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
+  const expectedSettings=expected.checks.runtime_settings.filter(row=>['cron.database_name','cron.host','cron.launch_active_jobs'].includes(row.name));
+  const checks=[
+    ['security-version',snapshot.postgresVersion==='15.8'&&snapshot.version_num===150008],
+    ['security-ledger',equal(snapshot.migration_versions,expectedMigrationVersions())&&snapshot.migration_versions?.length===58],
+    ['security-vault',snapshot.vault_count===0],
+    ['security-setting',snapshot.moderation_automation_enabled==='false'],
+    ['security-queues',snapshot.httpRequests===0&&snapshot.httpResponses===0],
+    ['security-buckets',equal(snapshot.checks?.buckets,expected.checks.buckets)],
+    ['security-rls',equal(snapshot.checks?.rls,expected.checks.rls)],
+    ['security-extensions',equal(snapshot.checks?.extensions,expected.checks.extensions)],
+    ['security-rpcs',equal(snapshot.checks?.sensitive_rpcs,expected.checks.sensitive_rpcs)],
+    ['security-cron',equal(snapshot.checks?.cron_jobs,expected.checks.cron_jobs)],
+    ['security-runtime',equal(snapshot.checks?.runtime_settings,expectedSettings)],
+    ['security-trigger',equal(snapshot.triggerAclContext,expected.triggerAclContext)],
+  ];
+  writeFileSync(categoryPath,checks.find(([,passed])=>!passed)?.[0]??'security-unclassified');
+  process.exit(1);
+}
 NODE
+then
+  failure_category=$(cat "$raw/security-category.txt" 2>/dev/null || printf 'security-unclassified')
+  exit 1
+fi
 failure_stage=pgtap
 while IFS= read -r file; do
   cp -- "$root/supabase/tests/$file" "$project/supabase/tests/$file"
