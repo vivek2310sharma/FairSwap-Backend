@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "scope": "Stage 3 independent PG17 rehearsal; runtime UNVERIFIED",
+  "database": {
+    "cliVersion": "2.117.0",
+    "cliArchive": "https://github.com/supabase/cli/releases/download/v2.117.0/supabase_linux_amd64.tar.gz",
+    "cliArchiveSha256": "69c05f85b9e47ee706d30f1a6ca8a526b4e337bfd12c7ef1ef522d24e7280d24",
+    "postgresVersion": "17.6",
+    "serverVersionNum": 170006,
+    "dockerMinimumMajor": 28,
+    "dockerExactVersion": null,
+    "platform": "linux/amd64",
+    "images": {
+      "postgres": {
+        "tag": "public.ecr.aws/supabase/postgres:17.6.1.167",
+        "digest": "sha256:6942962433a569e87f228b4d4ab7e11db5deca64e43babb3a038443ad6c4f1bb"
+      },
+      "pgProve": {
+        "tag": "public.ecr.aws/supabase/pg_prove:3.36",
+        "digest": "sha256:eda7c5e68719e9c8287e78c017118407b48df904a51c935f5ab6098b8c0bc6bc"
+      },
+      "authBootstrap": {
+        "tag": "public.ecr.aws/supabase/gotrue:v2.196.0",
+        "digest": "sha256:c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232"
+      },
+      "storageBootstrap": {
+        "tag": "public.ecr.aws/supabase/storage-api:v1.72.1",
+        "digest": "sha256:105a2584129c9600aebed6f5ac49ca4371c92b996ecd1af7179750333e9e2120"
+      },
+      "realtimeBootstrap": {
+        "tag": "public.ecr.aws/supabase/realtime:v2.130.0",
+        "digest": "sha256:002193c9ff840a4946918641901bb6aa9e2036dc9ff7590e2b11e91d1e06bf86"
+      }
+    },
+    "pinEvidence": [
+      "CLI archive hash, bootstrap image index pins and action SHAs reused from the accepted cd9d697 implementation without modifying PG15.",
+      "Step 1A inherited source/anonymous registry observation: CLI 2.117.0 selects postgres:17.6.1.167, exact index 694296... and amd64 child 16c094...; no runtime claim.",
+      "PG17 runner checks both raw registry hashes, index platform descriptor, child/index image ID equality and actual 17.6/170006. Other immutable bootstrap images retain accepted Docker Hub provisioning.",
+      "PG15 extension version expectations remain fail-closed in the separate PG17 validator; actual PG17 extension/bootstrap compatibility remains UNVERIFIED."
+    ],
+    "runtimeValidation": "UNVERIFIED: future owner-authorized Ubuntu 24.04 CI only. Exact index, amd64 child, actual server 17.6/170006, bootstrap and security must pass.",
+    "postgresChildDigest": "sha256:16c0944c77885446d4f2ebbb2191b357feeb3b1295bde2fb1978c113129dbeb4"
+  },
+  "node": "24.15.0",
+  "pnpm": "10.12.1",
+  "unitIsolation": {
+    "file": "tests/setup/no-network.ts",
+    "sha256": "c4a49badd88b567fa99b198f263f37308a16796bd026020522d29b0e2e95ce5f",
+    "verification": "2026-10-16 P1.1: raw SHA-256 recomputed from the unchanged setup; raw Git blob matches HEAD:tests/setup/no-network.ts"
+  },
+  "packages": {
+    "@supabase/supabase-js": "2.116.0",
+    "zod": "3.24.2",
+    "@types/node": "20.19.43",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "evidence": {
+    "historical": "docs/extraction/POINT1_BASELINE.md: Stage 2A local verification",
+    "localVersionProbe": "2026-10-16: node --version = v24.15.0; corepack pnpm --version = 10.12.1",
+    "packagePins": "package.json and pnpm-lock.yaml inspected at 495d6188b678587ab283e51a4aae1951e60c0197"
+  },
+  "actions": {
+    "actions/checkout": {
+      "tag": "v4.2.2",
+      "commit": "11bd71901bbe5b1630ceea73d27597364c9af683"
+    },
+    "actions/setup-node": {
+      "tag": "v4.4.0",
+      "commit": "49933ea5288caeca8642d1e84afbd3f7d6820020"
+    },
+    "actions/upload-artifact": {
+      "tag": "v4.6.2",
+      "commit": "ea165f8d65b6e75b540449e92b4886f43607fa02"
+    }
+  },
+  "actionPinVerification": "2026-10-16: git ls-remote --tags against each public https://github.com/actions/<name>.git repository and its exact refs/tags/<tag>",
+  "unresolvedValidations": [
+    "Ubuntu 24.04 installation with --frozen-lockfile --ignore-scripts --engine-strict and Linux optional binaries has not run.",
+    "GitHub-hosted execution, Corepack availability/bootstrap, action execution and artifact upload have not run.",
+    "Node and pnpm distribution checksums are not independently recorded here; no digest is asserted.",
+    "P2 database runtime, actual server version, native Docker and IPv4/IPv6 isolation proof have not executed locally; Docker patch version is not pinned."
+  ],
+  "implementationBase": "cd9d697dd620375c681f2cff42340011d6242201"
+}

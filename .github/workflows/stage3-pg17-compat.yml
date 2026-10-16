@@ -1,0 +1,79 @@
+name: Stage 3 PG17 compatibility rehearsal
+on:
+  pull_request:
+    branches: [chore/backend-extraction-baseline]
+permissions:
+  contents: read
+concurrency:
+  group: stage3-pg17-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  pg17-compatibility:
+    if: >-
+      github.repository == 'vivek2310sharma/FairSwap-Backend' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'test/stage3-moderation-pg17-compat'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout exact PR head without credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2; existing verified pin
+        timeout-minutes: 2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Set up pinned Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0; existing verified pin
+        timeout-minutes: 3
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+      - name: Reject branch, base SHA and source drift
+        timeout-minutes: 1
+        run: node scripts/stage3/verify-source.mjs
+      - name: Verify source and static contracts
+        timeout-minutes: 2
+        run: |
+          test "$(node -p process.versions.node)" = 24.15.0
+          node scripts/ci/verify-baseline.mjs
+          bash -n scripts/stage3/run-local-db.sh
+          node --test scripts/stage3/verification.test.mjs
+      - name: Verify the unchanged unit foundation
+        timeout-minutes: 7
+        run: |
+          test "$(corepack pnpm --version)" = 10.12.1
+          corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+          corepack pnpm typecheck
+          node scripts/ci/verify-unit-results.mjs --check-isolation
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            corepack pnpm test:unit --reporter=default --reporter=json \
+            --outputFile="$RUNNER_TEMP/stage3-unit.json"
+          node scripts/ci/verify-unit-results.mjs "$RUNNER_TEMP/stage3-unit.json" \
+            --summary "$RUNNER_TEMP/stage3-unit-summary.json"
+      - name: Rehearse isolated PG17 baseline without compatibility corrections
+        id: database
+        timeout-minutes: 23
+        run: |
+          timeout --signal=TERM --kill-after=30s 20m \
+            bash scripts/stage3/run-local-db.sh "$RUNNER_TEMP/stage3-pg17-evidence"
+      - name: Require complete sanitized evidence
+        if: ${{ !cancelled() && steps.database.outcome != 'skipped' }}
+        timeout-minutes: 1
+        run: node scripts/stage3/verify-db-results.mjs --verify "$RUNNER_TEMP/stage3-pg17-evidence"
+      - name: Preserve allowlisted evidence even when compatibility fails
+        if: ${{ always() && steps.database.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2; existing verified pin
+        timeout-minutes: 2
+        with:
+          name: stage3-pg17-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/stage3-pg17-evidence/result.json
+            ${{ runner.temp }}/stage3-pg17-evidence/suite-results.json
+            ${{ runner.temp }}/stage3-pg17-evidence/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
