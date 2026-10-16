@@ -34,6 +34,8 @@ snapshotted=0
 db_port=0
 exec 3>&1
 exec >>"$raw/runner.log" 2>&1
+# Fixed, non-sensitive phase marker for fail-closed GitHub diagnostics.
+failure_stage=preflight
 
 inventory() {
   docker ps -aq --no-trunc | sort >"$raw/containers-$1.txt" || return 1
@@ -103,6 +105,17 @@ NODE
     node "$root/scripts/ci/verify-db-results.mjs" --collect "$task/cleanup-failed" "$evidence" >&3 2>&3
   fi
   if [[ $execution == 0 && $cleanup_ok == 1 && $collection == 0 ]]; then exit 0; fi
+  # Report only an enumerated stage, never raw tool output, paths or exception text.
+  case ${failure_stage:-unclassified} in
+    preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete) ;;
+    *) failure_stage=unclassified ;;
+  esac
+  if [[ $execution == 0 ]]; then
+    if [[ $cleanup_ok != 1 ]]; then failure_stage=cleanup
+    else failure_stage=artifact-validation
+    fi
+  fi
+  printf 'FAIL: database CI stage=%s; raw output withheld\n' "$failure_stage" >&3
   echo 'FAIL: database CI or cleanup incomplete; see sanitized failure artifact' >&3
   exit 1
 }
@@ -122,9 +135,11 @@ snapshotted=1
 [[ -z $(docker ps -aq --filter "label=com.supabase.cli.project=$project_id") ]]
 [[ -z $(docker volume ls -q --filter "label=com.supabase.cli.project=$project_id") ]]
 ! docker network inspect "$network" >/dev/null 2>&1
+failure_stage=manifest-before
 node "$root/scripts/ci/verify-baseline.mjs"
 
 # Complete all downloads before creating the isolated network or database.
+failure_stage=cli-download
 mapfile -t cli_pins < <(node --input-type=module - "$root/scripts/ci/toolchain.json" <<'NODE'
 import {readFileSync} from 'node:fs'; const p=JSON.parse(readFileSync(process.argv[2])).database;
 console.log(p.cliArchive);console.log(p.cliArchiveSha256);
@@ -134,10 +149,12 @@ curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location "${cli_p
 printf '%s  %s\n' "${cli_pins[1]}" "$task/cli.tar.gz" | sha256sum -c -
 tar -xzf "$task/cli.tar.gz" -C "$task/bin" supabase
 chmod 700 "$cli"
+failure_stage=cli-check
 [[ $(cli_local --version) == 2.117.0 ]]
 cli_local db start --help >"$raw/start-help.txt"
 cli_local migration up --help >"$raw/migration-help.txt"
 cli_local test db --help >"$raw/test-help.txt"
+failure_stage=images
 while IFS=$'\t' read -r key tag digest; do
   [[ $tag =~ ^public.ecr.aws/supabase/[a-z_-]+:[A-Za-z0-9._-]+$ && $digest =~ ^sha256:[a-f0-9]{64}$ ]]
   ref="${tag%:*}@$digest"
@@ -208,10 +225,12 @@ port = ${ports[3]}
 [db.vault]
 EOF
 v6="fd$(node -p 'crypto.randomBytes(1).toString("hex")'):$(node -p 'crypto.randomBytes(2).toString("hex")'):$(node -p 'crypto.randomBytes(2).toString("hex")')::/64"
+failure_stage=network-setup
 docker network create --driver bridge --internal --ipv6 --subnet "$v6" \
   --opt com.docker.network.bridge.host_binding_ipv4=127.0.0.1 \
   --label "com.supabase.cli.project=$project_id" "$network"
 # Verify implicit publishing behavior before starting even the empty base database.
+failure_stage=port-probe
 docker run -d --pull never --name "$probe" --label "com.supabase.cli.project=$project_id" \
   --network "$network" -p "${ports[4]}:5432" --entrypoint sleep "$pg_ref" infinity
 docker inspect "$probe" >"$raw/binding-probe.json"
@@ -221,6 +240,7 @@ const p=JSON.parse(readFileSync(process.argv[2]))[0].NetworkSettings.Ports['5432
 assert.ok(Array.isArray(p)&&p.length>0&&p.every(x=>x.HostIp==='127.0.0.1'||x.HostIp==='::1'));
 NODE
 docker rm -f "$probe"
+failure_stage=db-start
 cli_local db start >"$raw/start.log" 2>&1
 
 check_isolation() {
@@ -265,9 +285,11 @@ NODE
     -e PGPASSWORD=postgres -e PGCONNECT_TIMEOUT=5 --entrypoint psql "$prove_ref" -X -Atq -h "$db" -U postgres -d postgres -c 'SELECT 1') == 1 ]]
   json_true "$output" internalNetwork loopbackOnly nativeNamespace hostSql runnerSql ipv4Denied ipv6Denied probesExecuted noExtraNetworks
 }
+failure_stage=isolation-before
 check_isolation "$raw/isolation-before.json"
 
 # Only now introduce FairSwap's byte-preserved migration history and nine required tests.
+failure_stage=migrations
 mkdir -p "$project/supabase/migrations" "$project/supabase/tests" "$project/docs/extraction"
 cp -- "$root/docs/extraction/MIGRATION_MANIFEST.sha256" "$project/docs/extraction/"
 cp -- "$root"/supabase/migrations/*.sql "$project/supabase/migrations/"
@@ -275,12 +297,14 @@ node --input-type=module - "$root/scripts/ci/verify-baseline.mjs" "$project" <<'
 import {pathToFileURL} from 'node:url';const {verifyBaseline}=await import(pathToFileURL(process.argv[2]));verifyBaseline(process.argv[3]);
 NODE
 cli_local migration up --local >"$raw/migrations.log" 2>&1
+failure_stage=security-before
 docker exec -i "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
   <"$root/scripts/ci/assert-local-security.sql" >"$raw/security-before.json"
 node --input-type=module - "$root/scripts/ci/verify-db-results.mjs" "$raw/security-before.json" <<'NODE'
 import {pathToFileURL} from 'node:url';import {readFileSync} from 'node:fs';
 const {verifySecurity}=await import(pathToFileURL(process.argv[2]));verifySecurity(JSON.parse(readFileSync(process.argv[3])));
 NODE
+failure_stage=pgtap
 while IFS= read -r file; do
   cp -- "$root/supabase/tests/$file" "$project/supabase/tests/$file"
   cmp -- "$root/supabase/tests/$file" "$project/supabase/tests/$file"
@@ -292,13 +316,17 @@ done < <(node --input-type=module - "$root/scripts/ci/verify-db-results.mjs" <<'
 import {pathToFileURL} from 'node:url';const {requiredSuites}=await import(pathToFileURL(process.argv[2]));console.log(Object.keys(requiredSuites).join('\n'));
 NODE
 )
+failure_stage=security-after
 docker exec -i "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
   <"$root/scripts/ci/assert-local-security.sql" >"$raw/security-after.json"
+failure_stage=isolation-after
 check_isolation "$raw/isolation-after.json"
+failure_stage=manifest-after
 node "$root/scripts/ci/verify-baseline.mjs"
 node --input-type=module - "$raw/manifest.json" "$root/scripts/ci/verify-baseline.mjs" "$project" <<'NODE'
 import {pathToFileURL} from 'node:url';import {writeFileSync} from 'node:fs';
 const {manifestSha256,verifyBaseline}=await import(pathToFileURL(process.argv[3]));verifyBaseline(process.argv[4]);
 writeFileSync(process.argv[2],JSON.stringify({sha256:manifestSha256,before:true,after:true}));
 NODE
+failure_stage=complete
 # EXIT trap removes task resources, validates all results and emits only sanitized evidence.
