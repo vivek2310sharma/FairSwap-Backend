@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 // Static/regression checks only. Synthetic validator inputs are not runtime evidence.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -199,12 +200,12 @@ test('Bash and collector enums agree exactly; all 89 image stages are used',()=>
 test('formerly grouped initial commands have distinct preceding stages',()=>{
  const checks=[
  ['image-postgres-buildx-check','docker buildx version'],
- ['image-postgres-index-fetch','if ! docker buildx imagetools inspect --raw "$pg_repository@$pg_index"'],
+ ['image-postgres-index-fetch','registry_fetch "$raw/pg17-index.json"'],
  ['image-postgres-index-digest','"'+ '$'+'{pg_index#sha256:}" "$raw/pg17-index.json" | sha256sum -c -'],
  ['image-postgres-amd64-descriptor','node --input-type=module - "$raw/pg17-index.json" "$pg_child"'],
- ['image-postgres-child-fetch','if ! docker buildx imagetools inspect --raw "$pg_repository@$pg_child"'],
+ ['image-postgres-child-fetch','registry_fetch "$raw/pg17-child.json"'],
  ['image-postgres-child-digest','"'+ '$'+'{pg_child#sha256:}" "$raw/pg17-child.json" | sha256sum -c -'],
- ['image-postgres-child-pull','if ! docker pull --platform linux/amd64 "$pg_repository@$pg_child"'],
+ ['image-postgres-child-pull','registry_fetch "$raw/pg17-child-pull.stdout"'],
  ['image-postgres-child-id-inspect',"pg_child_id=$(docker image inspect -f '{{.Id}}'"],
  ];let previous=-1;
  for(const [stage,cmd] of checks){const marker=runner.indexOf('image_phase '+stage+' '),operation=runner.indexOf(cmd,marker);assert.ok(marker>previous&&operation>marker);previous=operation}
@@ -283,3 +284,129 @@ test('image diagnostic CLI cannot produce success or print raw diagnostics',()=>
   assert.equal(JSON.parse(readFileSync(path.join(out,'result.json'),'utf8')).success,false);
  }finally{rmSync(dir,{recursive:true,force:true})}
 });
+
+(function retrySpecs(){
+const helperMatch=runner.match(/# BEGIN bounded registry retry helpers\n([\s\S]*?)# END bounded registry retry helpers/);
+assert.ok(helperMatch);
+const registryHelpers=helperMatch[1];
+const q=s=>"'"+String(s).replace(/'/g,"'\\''")+"'";
+const pinnedRef='public.ecr.aws/supabase/postgres@'+pins.database.images.postgres.digest;
+const childRef='public.ecr.aws/supabase/postgres@'+pins.database.postgresChildDigest;
+function mockedFetch(responses,{pull=false,operations=1,ref=pinnedRef,expectedDigest=null,afterAttempt=false}={}){
+ assert.doesNotMatch(registryHelpers,/\bcommand\s+docker\b|\/(?:usr|bin)\/[^\s]*docker/);
+ const responseCases=responses.map((r,i)=>`${i+1}) printf '%s' ${q(r.output??'synthetic immutable manifest')}; printf '%s\\n' ${q(r.error??'')} >&2; return ${r.code??0} ;;`);
+ const argv=pull?['docker','pull','--platform','linux/amd64',ref]:['docker','buildx','imagetools','inspect','--raw',ref];
+ const program=[
+ 'set -euo pipefail','umask 077',registryHelpers,
+ 'raw=$(mktemp -d /tmp/fairswap-registry-mock.XXXXXXXX)',
+ 'trap \'[[ $raw == /tmp/fairswap-registry-mock.* ]] && rm -rf -- "$raw"\' EXIT',
+ 'calls=0; failure_stage=image-postgres-index-fetch; failure_category=manifest-retrieval-failed',
+ ': >"$raw/args"; : >"$raw/sleeps"; : >"$raw/events"',
+ 'docker() {',
+ ' calls=$((calls+1)); printf "CALL:%s\\n" "$calls" >>"$raw/args"',
+ ' printf "ARG:%s\\n" "$@" >>"$raw/args"',
+ ' case "$calls" in',...responseCases,
+ ' *) printf "synthetic unexpected call\\n" >&2; return 1 ;;',
+ ' esac','}',
+ 'sleep() { printf "%s\\n" "$1" >>"$raw/sleeps"; }',
+ 'readonly -f docker sleep',
+ 'status=0',
+ ...Array.from({length:operations},(_,i)=>`if [[ $status == 0 ]]; then registry_fetch "$raw/out-${i}" "$raw/fetch-${i}" ${pull?'image-pull-failed':'manifest-retrieval-failed'} ${argv.map(q).join(' ')} || status=$?; fi`),
+ ...(expectedDigest?[`if [[ $status == 0 ]]; then if ! printf '%s  %s\\n' ${q(expectedDigest)} "$raw/out-0" | sha256sum -c - >"$raw/digest-check" 2>&1; then status=1; failure_category=digest-check-failed; fi; fi`]:[]),
+ 'if [[ $status == 0 ]]; then printf "digest-and-security-sentinel\\n" >>"$raw/events"; fi',
+ 'printf "STATUS:%s\\nCATEGORY:%s\\nCALLS:%s\\n" "$status" "$failure_category" "$calls"',
+ 'while IFS= read -r delay; do printf "WAIT:%s\\n" "$delay"; done <"$raw/sleeps"',
+ 'cat "$raw/args"',
+ 'printf "ATTEMPT_FILES:%s\\n" "$(find "$raw" -type f -name \'*attempt-*\' | wc -l)"',
+ 'printf "SECURITY:%s\\n" "$(wc -l <"$raw/events")"',
+ 'if [[ -f $raw/out-0 ]]; then printf "OUTPUT_SHA:%s\\n" "$(sha256sum "$raw/out-0" | cut -d \' \' -f 1)"; fi',
+ 'exit 0',
+ ].join('\n')+'\n';
+ const win=process.platform==='win32';
+ const command=win?'wsl.exe':'bash';
+ const args=win?['-d','Ubuntu','--exec','/bin/bash','--noprofile','--norc','-euo','pipefail','-s']:['--noprofile','--norc','-euo','pipefail','-s'];
+ const output=execFileSync(command,args,{input:program,encoding:'utf8',stdio:['pipe','pipe','pipe'],timeout:20000});
+ const first=key=>output.match(new RegExp('^'+key+':([^\\r\\n]+)$','m'))?.[1];
+ const calls=[];
+ for(const line of output.split(/\r?\n/)){
+  if(line.startsWith('CALL:'))calls.push([]);
+  else if(line.startsWith('ARG:'))calls.at(-1).push(line.slice(4));
+ }
+ return {status:Number(first('STATUS')),category:first('CATEGORY'),count:Number(first('CALLS')),
+ waits:[...output.matchAll(/^WAIT:(\d+)$/gm)].map(m=>Number(m[1])),
+ attemptFiles:Number(first('ATTEMPT_FILES')),security:Number(first('SECURITY')),
+ outputSha:first('OUTPUT_SHA'),argv:calls};
+}
+const throttled={code:1,error:'HTTP/1.1 429 Too Many Requests; fixture-not-a-real-secret'};
+test('retry: throttling followed by success keeps immutable argv and bytes',()=>{
+ const r=mockedFetch([throttled,{output:'exact successful manifest bytes'}]);
+ assert.equal(r.status,0);assert.equal(r.category,'none');assert.equal(r.count,2);
+ assert.equal(r.waits.length,1);assert.ok(r.waits[0]>=10&&r.waits[0]<=20);
+ assert.deepEqual(r.argv[0],r.argv[1]);assert.equal(r.argv[0].at(-1),pinnedRef);
+ assert.equal(r.outputSha,createHash('sha256').update('exact successful manifest bytes').digest('hex'));
+ assert.equal(r.attemptFiles,4);assert.equal(r.security,1);
+});
+test('retry: all three throttled attempts fail with existing safe diagnostic',()=>{
+ const r=mockedFetch([throttled,throttled,throttled]);
+ assert.equal(r.status,1);assert.equal(r.category,'rate-limited');assert.equal(r.count,3);
+ assert.equal(r.waits.length,2);assert.ok(r.waits[0]>=10&&r.waits[0]<=20);assert.ok(r.waits[1]>=30&&r.waits[1]<=50);
+ assert.ok(r.waits.reduce((a,b)=>a+b,0)<=70);assert.equal(r.attemptFiles,6);assert.equal(r.security,0);
+ assert.deepEqual(r.argv[0],r.argv[1]);assert.deepEqual(r.argv[1],r.argv[2]);
+ const artifact=collectDiagnostic({stage:'image-postgres-index-fetch',category:r.category});
+ assert.equal(artifact.success,false);assert.deepEqual(artifact.diagnostic,{stage:'image-postgres-index-fetch',category:'rate-limited'});
+ assert.ok(!JSON.stringify(artifact).includes(throttled.error));
+});
+test('retry: two throttles then success stops exactly at attempt three',()=>{
+ const r=mockedFetch([throttled,throttled,{}],{pull:true,ref:childRef});
+ assert.equal(r.status,0);assert.equal(r.count,3);assert.equal(r.security,1);
+ assert.ok(r.argv.every(a=>JSON.stringify(a)===JSON.stringify(r.argv[0])));
+ assert.deepEqual(r.argv[0],['pull','--platform','linux/amd64',childRef]);
+});
+for(const [name,error,category] of [
+ ['unauthorized','HTTP/1.1 401 Unauthorized; rate limit exceeded','registry-denied'],
+ ['forbidden','HTTP/1.1 403 Forbidden; TooManyRequests','registry-denied'],
+ ['unknown manifest','manifest unknown; HTTP 429 Too Many Requests','manifest-not-found'],
+ ['digest mismatch','manifest digest mismatch; TooManyRequests','digest-check-failed'],
+ ['malformed manifest','malformed manifest; rate limit exceeded','descriptor-check-failed'],
+ ['malformed JSON','invalid JSON manifest; HTTP 429 Too Many Requests','descriptor-check-failed'],
+ ['unsupported platform','no matching manifest for platform; TooManyRequests','unsupported-manifest'],
+ ['unsupported media type','unsupported media type; HTTP 429 Too Many Requests','unsupported-manifest'],
+ ['storage','no space left on device; HTTP 429 Too Many Requests','storage-error'],
+ ['transport','connection refused','transport-error'],
+ ['ambiguous mention','generic error with rate limit documentation','manifest-retrieval-failed'],
+ ['unrelated number','synthetic error sha256:a429b','manifest-retrieval-failed'],
+ ['arbitrary error','fixture-not-a-real-secret','manifest-retrieval-failed'],
+])test('retry: immediate fatal/non-throttle failure: '+name,()=>{
+ const r=mockedFetch([{code:1,error}]);
+ assert.equal(r.status,1);assert.equal(r.category,category);assert.equal(r.count,1);assert.deepEqual(r.waits,[]);assert.equal(r.security,0);
+});
+test('retry: a fatal response after throttling stops before attempt three',()=>{
+ const r=mockedFetch([throttled,{code:1,error:'401 unauthorized'}]);
+ assert.equal(r.status,1);assert.equal(r.category,'registry-denied');assert.equal(r.count,2);assert.equal(r.waits.length,1);
+});
+test('retry: a successful request followed by a digest mismatch never fetches again',()=>{
+ const r=mockedFetch([{output:'wrong manifest bytes'}],{expectedDigest:'0'.repeat(64)});
+ assert.equal(r.status,1);assert.equal(r.category,'digest-check-failed');assert.equal(r.count,1);assert.deepEqual(r.waits,[]);assert.equal(r.security,0);
+});
+test('retry: mutable/invalid references are rejected before commands or waiting',()=>{
+ for(const ref of ['public.ecr.aws/supabase/postgres:latest','public.ecr.aws/supabase/postgres@sha256:bad']){
+  const r=mockedFetch([],{ref});assert.equal(r.status,1);assert.equal(r.category,'pin-check-failed');assert.equal(r.count,0);assert.deepEqual(r.waits,[]);
+ }
+});
+test('retry: separate task-controlled registry operations are paced',()=>{
+ const r=mockedFetch([{},{}],{operations:2});
+ assert.equal(r.status,0);assert.equal(r.count,2);assert.deepEqual(r.waits,[5]);assert.equal(r.security,1);
+});
+test('retry: untrusted Retry-After text cannot expand waits',()=>{
+ const r=mockedFetch([{code:1,error:'HTTP 429 Too Many Requests; Retry-After: 99999999'},{}]);
+ assert.equal(r.status,0);assert.equal(r.count,2);assert.ok(r.waits[0]>=10&&r.waits[0]<=20);
+});
+test('retry: zero delays on first successful operation; no retry cache or tag fallback',()=>{
+ const r=mockedFetch([{}]);assert.equal(r.count,1);assert.deepEqual(r.waits,[]);assert.equal(r.category,'none');
+ assert.ok(registryHelpers.includes('local -ar command_args=("$@")'));
+ assert.doesNotMatch(registryHelpers,/docker\s+(?:login|start|run)|\bcurl\b|Retry-After.*parse/);
+ assert.equal((runner.match(/^\s*registry_fetch "\$raw\/|^\s*registry_fetch "\$pull_log/gm)||[]).length,4);
+});
+})();
+
+test('retry: network/security/bootstrap/SQL execution tail remains byte-for-byte unchanged',()=>{const tail=runner.slice(runner.indexOf('failure_stage=network-setup\n'));assert.equal(createHash('sha256').update(tail).digest('hex'),"3f8abb31b28a17847de7be3e53beab4b23029c3cb0120c9bc95c5cb47fc5a6cf")});

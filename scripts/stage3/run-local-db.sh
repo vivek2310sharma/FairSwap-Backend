@@ -201,31 +201,82 @@ cli_local test db --help >"$raw/test-help.txt"
 failure_stage=images
 # Stage/category arguments are fixed literals or validated role/operation pairs.
 image_phase() { failure_stage=$1; failure_category=$2; }
+# BEGIN bounded registry retry helpers
 classify_registry_failure() {
-  # Read only task-private stderr; publish a fixed category, never matched text.
-  if grep -Eiq 'toomanyrequests|too many requests|rate limit|(^|[^0-9])429([^0-9]|$)' "$1"; then
-    failure_category=rate-limited
-  elif grep -Eiq 'manifest unknown|manifest.*not found|blob unknown|(^|[^0-9])404([^0-9]|$)' "$1"; then
-    failure_category=manifest-not-found
+  # Fatal content/authentication errors take precedence over any throttle wording.
+  if grep -Eiq 'digest.*(mismatch|does not match|verification failed)|checksum.*(mismatch|failed)' "$1"; then
+    failure_category=digest-check-failed
+  elif grep -Eiq '(malformed|invalid).*(manifest|json)|error parsing.*manifest|invalid character.*(json|looking for)' "$1"; then
+    failure_category=descriptor-check-failed
+  elif grep -Eiq 'unsupported.*manifest|unsupported media type|unsupported.*platform|no matching manifest' "$1"; then
+    failure_category=unsupported-manifest
   elif grep -Eiq 'denied|unauthorized|authentication|authorization|forbidden|(^|[^0-9])(401|403)([^0-9]|$)' "$1"; then
     failure_category=registry-denied
-  elif grep -Eiq 'unsupported.*manifest|unsupported media type|no matching manifest' "$1"; then
-    failure_category=unsupported-manifest
+  elif grep -Eiq 'manifest unknown|manifest.*not found|blob unknown|(^|[^0-9])404([^0-9]|$)' "$1"; then
+    failure_category=manifest-not-found
   elif grep -Eiq 'no space left on device|insufficient (disk|storage)' "$1"; then
     failure_category=storage-error
+  elif grep -Eiq 'toomanyrequests|too many requests|rate[ -]?limit(ed|[[:space:]]+(exceeded|reached))|HTTP(/[0-9.]+)?[[:space:]]+429([^0-9]|$)|status([[:space:]]+code)?[^[:alnum:]]*429([^0-9]|$)' "$1"; then
+    failure_category=rate-limited
   elif grep -Eiq 'timeout|connection reset|connection refused|network unreachable|no route to host|TLS handshake|context deadline|EOF|proxyconnect' "$1"; then
     failure_category=transport-error
   fi
 }
+registry_retry_delay() {
+  case "$1" in
+    1) printf '%s\n' "$((10 + RANDOM % 11))" ;;
+    2) printf '%s\n' "$((30 + RANDOM % 21))" ;;
+    *) return 1 ;;
+  esac
+}
+registry_fetch_started=0
+registry_fetch() {
+  local output=$1 logbase=$2 default_category=$3
+  shift 3
+  local -ar command_args=("$@")
+  # Only these immutable manifest/pull commands may enter retry handling.
+  if [[ ${#command_args[@]} == 6 && ${command_args[0]} == docker && ${command_args[1]} == buildx \
+        && ${command_args[2]} == imagetools && ${command_args[3]} == inspect && ${command_args[4]} == --raw ]] \
+      || [[ ${#command_args[@]} == 5 && ${command_args[0]} == docker && ${command_args[1]} == pull \
+        && ${command_args[2]} == --platform && ${command_args[3]} == linux/amd64 ]]; then
+    :
+  else failure_category=pin-check-failed; return 1
+  fi
+  local -r reference="${command_args[-1]}"
+  [[ $reference =~ ^(public.ecr.aws/)?supabase/[a-z_-]+@sha256:[a-f0-9]{64}$ ]] \
+    || { failure_category=pin-check-failed; return 1; }
+  # Pacing is per task-controlled operation, not a claim about Docker's internal HTTP requests.
+  if [[ $registry_fetch_started == 1 ]]; then sleep 5 || return 1; fi
+  registry_fetch_started=1
+  local attempt stdout_attempt stderr_attempt delay
+  for attempt in 1 2 3; do
+    stdout_attempt="$output.attempt-$attempt"
+    stderr_attempt="$logbase.attempt-$attempt.log"
+    failure_category=$default_category
+    if "${command_args[@]}" >"$stdout_attempt" 2>"$stderr_attempt"; then
+      # Copy exact successful bytes only; never trim/reformat manifests.
+      failure_category=evidence-write-failed
+      cp -- "$stdout_attempt" "$output" || return 1
+      failure_category=none
+      return 0
+    fi
+    classify_registry_failure "$stderr_attempt"
+    [[ $failure_category == rate-limited && $attempt -lt 3 ]] || return 1
+    # CLI stderr is not a trustworthy Retry-After header source. Use this bounded schedule only.
+    delay=$(registry_retry_delay "$attempt") || return 1
+    sleep "$delay" || return 1
+  done
+  return 1
+}
+# END bounded registry retry helpers
 image_phase image-postgres-buildx-check required-tool-check-failed
 docker buildx version >"$raw/buildx-version.txt" 2>"$raw/buildx-check.log"
 pg_index='sha256:6942962433a569e87f228b4d4ab7e11db5deca64e43babb3a038443ad6c4f1bb'
 pg_child='sha256:16c0944c77885446d4f2ebbb2191b357feeb3b1295bde2fb1978c113129dbeb4'
 pg_repository='public.ecr.aws/supabase/postgres'
 image_phase image-postgres-index-fetch manifest-retrieval-failed
-if ! docker buildx imagetools inspect --raw "$pg_repository@$pg_index" >"$raw/pg17-index.json" 2>"$raw/pg17-index-fetch.log"; then
-  classify_registry_failure "$raw/pg17-index-fetch.log"; exit 1
-fi
+registry_fetch "$raw/pg17-index.json" "$raw/pg17-index-fetch" manifest-retrieval-failed \
+  docker buildx imagetools inspect --raw "$pg_repository@$pg_index"
 image_phase image-postgres-index-digest digest-check-failed
 printf '%s  %s\n' "${pg_index#sha256:}" "$raw/pg17-index.json" | sha256sum -c -
 image_phase image-postgres-amd64-descriptor descriptor-check-failed
@@ -236,15 +287,13 @@ const matches=index.manifests?.filter(x=>x.platform?.os==='linux'&&x.platform?.a
 if(matches?.length!==1||matches[0].digest!==child) process.exit(1);
 NODE
 image_phase image-postgres-child-fetch manifest-retrieval-failed
-if ! docker buildx imagetools inspect --raw "$pg_repository@$pg_child" >"$raw/pg17-child.json" 2>"$raw/pg17-child-fetch.log"; then
-  classify_registry_failure "$raw/pg17-child-fetch.log"; exit 1
-fi
+registry_fetch "$raw/pg17-child.json" "$raw/pg17-child-fetch" manifest-retrieval-failed \
+  docker buildx imagetools inspect --raw "$pg_repository@$pg_child"
 image_phase image-postgres-child-digest digest-check-failed
 printf '%s  %s\n' "${pg_child#sha256:}" "$raw/pg17-child.json" | sha256sum -c -
 image_phase image-postgres-child-pull image-pull-failed
-if ! docker pull --platform linux/amd64 "$pg_repository@$pg_child" >"$raw/pg17-child-pull.log" 2>&1; then
-  classify_registry_failure "$raw/pg17-child-pull.log"; exit 1
-fi
+registry_fetch "$raw/pg17-child-pull.stdout" "$raw/pg17-child-pull" image-pull-failed \
+  docker pull --platform linux/amd64 "$pg_repository@$pg_child"
 image_phase image-postgres-child-id-inspect image-inspect-failed
 pg_child_id=$(docker image inspect -f '{{.Id}}' "$pg_repository@$pg_child")
 # Check the producer directly: process-substitution failure must not look like an empty successful loop.
@@ -265,9 +314,8 @@ while IFS=$'\t' read -r key tag digest; do
   [[ $source_ref =~ ^(public.ecr.aws/)?supabase/[a-z_-]+@sha256:[a-f0-9]{64}$ ]]
   image_phase "image-$key-pull" image-pull-failed
   pull_log="$raw/image-pull-$key.log"
-  if ! docker pull --platform linux/amd64 "$source_ref" >"$pull_log" 2>&1; then
-    classify_registry_failure "$pull_log"; exit 1
-  fi
+  registry_fetch "$pull_log.stdout" "$pull_log" image-pull-failed \
+    docker pull --platform linux/amd64 "$source_ref"
   image_phase "image-$key-id-inspect" image-inspect-failed
   id=$(docker image inspect -f '{{.Id}}' "$source_ref")
   image_phase "image-$key-platform-inspect" image-inspect-failed

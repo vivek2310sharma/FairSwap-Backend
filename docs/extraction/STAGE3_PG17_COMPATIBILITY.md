@@ -816,3 +816,109 @@ manual dispatches, Docker/PostgreSQL starts, privileged installs, hosted Supabas
 connections/operations or configuration changes. No task runtime resources were
 created. Static regression temporary directories were removed by test cleanup.
 **STOP for CTO review: DIAGNOSTICS_PREPARED_AWAITING_CI_AUTHORIZATION.**
+
+## Step 1G — Bounded registry rate-limit recovery (source only)
+
+Classification: **RATE_LIMIT_RETRY_PREPARED_AWAITING_CI_AUTHORIZATION**.
+
+### Evidence and scope
+
+The accepted Step 1F observation is run 38952406057 failing at
+`image-postgres-index-fetch` with category `rate-limited`. This preparation did
+not execute another workflow, contact a registry, or observe a PG17 server.
+The previous 0/344 executed SQL assertions remain historical evidence; no new
+SQL execution or compatibility acceptance is claimed.
+
+Local preparation starts from Stage 3 HEAD
+84c1304f635afb6fef67bb00df8b115f5a9245cd, base
+cd9d697dd620375c681f2cff42340011d6242201. Read-only `git ls-remote` reconfirmed
+both exact remote refs. Only run-local-db.sh, verification.test.mjs and this
+append-only report change. verify-db-results.mjs remains byte-for-byte unchanged.
+
+### Bounded recovery and failure behavior
+
+The wrapper admits only immutable digest-qualified Buildx raw-manifest fetches
+and linux/amd64 Docker pulls for the existing Supabase image references.
+Each operation has at most three total attempts, including its original attempt.
+Only clearly classified registry throttling can advance to another attempt.
+Jittered waits are 10–20 seconds before attempt two and 30–50 seconds before
+attempt three: at most 70 seconds of retry waits per operation.
+Separate task-controlled registry operations have a five-second pacing delay.
+There are eight operations (two manifest fetches, the child pull and five pinned
+role pulls), so the maximum total programmed waits are 8*70 + 7*5 = 595 seconds
+(9m55s), with at most 24 task-controlled command attempts. Command/network time
+is additional; the existing enclosing 20-minute execution timeout is unchanged.
+
+CLI diagnostic text does not expose trustworthy HTTP response headers.
+Retry-After text is therefore not trusted or parsed; the bounded schedule applies.
+No extra registry probes, fallback registry, mutable-tag pull, credentials,
+authentication, new cache or external service is introduced.
+
+Fatal digest/content, malformed-manifest, unsupported-platform, authorization,
+not-found and storage diagnostics take precedence over throttle wording.
+Ambiguous rate-limit mentions and unrelated embedded 429 digits do not qualify.
+Transport errors are not retried. Invalid command/reference shapes fail before
+any command or wait. Successful fetch bytes are copied exactly and then undergo
+the original index SHA-256, Linux/amd64 descriptor, child SHA-256, image ID,
+platform and repository-digest checks. Digest or security verification does not
+enter retry handling. Exhaustion returns nonzero with the existing fixed
+stage/category; it cannot produce successful evidence.
+
+Every attempt writes separate stdout/stderr files inside existing task-private
+storage. Raw diagnostics never enter sanitized artifacts; the existing evidence
+allowlist, strict success contract and automatic cleanup remain unchanged.
+Unknown fields/stages cannot escape sanitization. Cleanup failure remains fatal.
+A regression pins the exact existing runner tail from network-setup onward;
+firewall, connectivity, egress-denial, bootstrap, migrations, security and SQL
+execution code remain byte-for-byte unchanged. All other tracked source bytes
+were compared against the pre-edit snapshot, including image/toolchain pins,
+the 74-assertion SQL suite, PG15 implementation and canonical migrations.
+
+### Actual local verification
+
+- Node 24.15.0: `node --test scripts/stage3/verification.test.mjs`:
+  **197 passed, zero failed/skipped/cancelled** (174 existing plus 23 new tests).
+  An initial attempt had 196 passes and one WSL startup/VM crash; the unchanged
+  suite then passed. No retry was added to the test harness.
+- Mocked Bash commands exercise throttle-then-success, exhaustion at three,
+  immediate fatal/non-throttle responses, mixed fatal/throttle text, immutable
+  argv and exact output bytes, digest mismatch without refetch, invalid pins,
+  bounded jitter, ignored untrusted Retry-After text and inter-operation pacing.
+  Docker and sleep are shell stubs; no live Docker/registry operation or real
+  retry wait occurred. Mock temporary directories are removed by an EXIT trap.
+- Broader unchanged CI suites were also attempted with
+  `node --test scripts/ci/verification.test.mjs scripts/ci/db-verification.test.mjs scripts/stage3/verification.test.mjs`:
+  **266 reported tests, 264 passed, two failed, zero skipped/cancelled**.
+  The unit-validator module cannot load missing TypeScript in this isolated
+  worktree. The PG15 successful-collector fixture fails because its unchanged
+  collector invokes verifyBaseline against Windows checkout bytes; this
+  checkout's manifest differs from canonical raw bytes due to CRLF conversion.
+  No package installation, file normalization, PG15 edit or relaxed check was
+  used to conceal these local limitations. The whole combined suite is NOT PASS.
+- `node --check`: all four Stage 3 JavaScript modules PASS; syntax checks for
+  all 17 embedded runner Node programs PASS.
+- WSL Ubuntu `bash -n scripts/stage3/run-local-db.sh`: PASS.
+- Existing `node scripts/ci/verify-baseline.mjs` against the retained exact-byte
+  Linux clone: PASS, approved raw manifest digest
+  eb2dfee779a15634927cfbf25fcd6ffc59df591a585d1ec8f5f3d40e5caaf1dd
+  and all 58 canonical migration hashes. Independently recomputed the current
+  Stage 3 HEAD manifest and all 58 migration Git blobs: PASS.
+- Tracked-file byte inventory comparison and Git diff integrity/scope checks:
+  only the three allowed paths; no staged changes. Prior report bytes retained.
+
+### Limits and stop
+
+Shared-runner throttling may persist through all three attempts. Docker/Buildx
+can make internal HTTP requests outside task-level pacing. Ambiguous throttling
+text deliberately fails without retry. Live registry recovery, Linux container
+isolation and PG17 compatibility remain UNVERIFIED by Step 1G.
+The two unchanged CI-suite local limitations above remain visible.
+
+The original baseline branch remains at
+972685ed13cbc7829539ceb3d6dcfcc36bd38fc4. All four original dirty developer
+documents retain their recorded exact hashes and remain unstaged; both worktrees
+and empty indexes are preserved. Source preparation performed zero commits,
+pushes, GitHub writes, PR/Issue updates, CI runs/reruns, Docker/PostgreSQL starts,
+hosted Supabase connections/operations, or hosted configuration changes.
+No runtime task resources were created. STOP for CTO review; publication and
+another CI execution require separate authorization.
