@@ -1,0 +1,476 @@
+{
+  "security": {
+    "postgresVersion": "15.8",
+    "migrations": 58,
+    "pre": {
+      "migration_versions": [
+        "20260914000001",
+        "20260914000002",
+        "20260914000003",
+        "20260914000004",
+        "20260914000005",
+        "20260914000006",
+        "20260914000007",
+        "20260914000008",
+        "20260914000009",
+        "20260914000010",
+        "20260914000011",
+        "20260914000012",
+        "20260914000013",
+        "20260914000014",
+        "20260914000015",
+        "20260914000016",
+        "20260914000017",
+        "20260916000018",
+        "20260916000019",
+        "20260918000020",
+        "20260918000021",
+        "20260926000022",
+        "20260926000023",
+        "20260926000024",
+        "20260929000025",
+        "20260930000026",
+        "20260930000027",
+        "20260930000028",
+        "20261001000029",
+        "20261001000030",
+        "20261001000031",
+        "20261001000032",
+        "20261002000033",
+        "20261007153735",
+        "20261007153744",
+        "20261007161425",
+        "20261008210921",
+        "20261009163210",
+        "20261009201151",
+        "20261009202059",
+        "20261009203141",
+        "20261009203412",
+        "20261009215128",
+        "20261010064518",
+        "20261010064519",
+        "20261010071050",
+        "20261010080000",
+        "20261010084523",
+        "20261010084524",
+        "20261010090000",
+        "20261010091239",
+        "20261011000038",
+        "20261011000039",
+        "20261011092234",
+        "20261011095100",
+        "20261012120000",
+        "20261013192336",
+        "20261013235311"
+      ],
+      "moderation_automation_enabled": "false",
+      "vault_count": 0,
+      "version_num": "150008"
+    },
+    "post": {
+      "migration_versions": [
+        "20260914000001",
+        "20260914000002",
+        "20260914000003",
+        "20260914000004",
+        "20260914000005",
+        "20260914000006",
+        "20260914000007",
+        "20260914000008",
+        "20260914000009",
+        "20260914000010",
+        "20260914000011",
+        "20260914000012",
+        "20260914000013",
+        "20260914000014",
+        "20260914000015",
+        "20260914000016",
+        "20260914000017",
+        "20260916000018",
+        "20260916000019",
+        "20260918000020",
+        "20260918000021",
+        "20260926000022",
+        "20260926000023",
+        "20260926000024",
+        "20260929000025",
+        "20260930000026",
+        "20260930000027",
+        "20260930000028",
+        "20261001000029",
+        "20261001000030",
+        "20261001000031",
+        "20261001000032",
+        "20261002000033",
+        "20261007153735",
+        "20261007153744",
+        "20261007161425",
+        "20261008210921",
+        "20261009163210",
+        "20261009201151",
+        "20261009202059",
+        "20261009203141",
+        "20261009203412",
+        "20261009215128",
+        "20261010064518",
+        "20261010064519",
+        "20261010071050",
+        "20261010080000",
+        "20261010084523",
+        "20261010084524",
+        "20261010090000",
+        "20261010091239",
+        "20261011000038",
+        "20261011000039",
+        "20261011092234",
+        "20261011095100",
+        "20261012120000",
+        "20261013192336",
+        "20261013235311"
+      ],
+      "moderation_automation_enabled": "false",
+      "vault_count": 0,
+      "version_num": "150008"
+    },
+    "checks": {
+      "buckets": [
+        {
+          "id": "listing-derivatives",
+          "public": false
+        },
+        {
+          "id": "listing-originals",
+          "public": false
+        }
+      ],
+      "cron_jobs": [
+        {
+          "active": true,
+          "command": "SELECT app_security.invoke_email_outbox_retry_batch();",
+          "database": "postgres",
+          "jobname": "process-email-outbox-retries",
+          "schedule": "*/5 * * * *",
+          "username": "postgres"
+        },
+        {
+          "active": true,
+          "command": "SELECT app_security.invoke_moderation_retry_batch();",
+          "database": "postgres",
+          "jobname": "process-moderation-queue-retries",
+          "schedule": "*/2 * * * *",
+          "username": "postgres"
+        }
+      ],
+      "extensions": {
+        "pg_cron": "1.6",
+        "pg_net": "0.14.0",
+        "supabase_vault": "0.3.1"
+      },
+      "rls": [
+        {
+          "anon_any_dml": false,
+          "authenticated_any_dml": false,
+          "policies": 1,
+          "relforcerowsecurity": false,
+          "relname": "email_outbox",
+          "relrowsecurity": true
+        },
+        {
+          "anon_any_dml": false,
+          "authenticated_any_dml": true,
+          "policies": 4,
+          "relforcerowsecurity": false,
+          "relname": "listing_media",
+          "relrowsecurity": true
+        },
+        {
+          "anon_any_dml": false,
+          "authenticated_any_dml": false,
+          "policies": 3,
+          "relforcerowsecurity": false,
+          "relname": "listings",
+          "relrowsecurity": true
+        }
+      ],
+      "runtime_settings": [
+        {
+          "name": "cron.database_name",
+          "setting": "postgres"
+        },
+        {
+          "name": "cron.enable_superuser_jobs",
+          "setting": "on"
+        },
+        {
+          "name": "cron.host",
+          "setting": "localhost"
+        },
+        {
+          "name": "cron.launch_active_jobs",
+          "setting": "on"
+        },
+        {
+          "name": "cron.log_min_messages",
+          "setting": "warning"
+        },
+        {
+          "name": "cron.log_run",
+          "setting": "on"
+        },
+        {
+          "name": "cron.log_statement",
+          "setting": "on"
+        },
+        {
+          "name": "cron.max_running_jobs",
+          "setting": "32"
+        },
+        {
+          "name": "cron.timezone",
+          "setting": "GMT"
+        },
+        {
+          "name": "cron.use_background_workers",
+          "setting": "off"
+        },
+        {
+          "name": "shared_preload_libraries",
+          "setting": "pg_stat_statements, pgaudit, plpgsql, plpgsql_check, pg_cron, pg_net, pgsodium, timescaledb, auto_explain, pg_tle, plan_filter, supabase_vault"
+        }
+      ],
+      "sensitive_rpcs": [
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "app_security.claim_moderation_batch(integer,integer,uuid)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": true,
+          "security_definer": true,
+          "service_execute": false,
+          "signature": "app_security.get_listing_moderation_findings(uuid)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": true,
+          "security_definer": true,
+          "service_execute": false,
+          "signature": "app_security.get_seller_moderation_workflow_status(uuid)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "app_security.impl_claim_email_outbox_batch(integer,uuid,integer)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "app_security.impl_claim_email_outbox_job_by_id(uuid,uuid,integer)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "app_security.impl_complete_email_outbox_job(uuid,uuid,text)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "app_security.impl_fail_email_outbox_job(uuid,uuid,text,integer,text,boolean,integer,integer)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": true,
+          "security_definer": true,
+          "service_execute": false,
+          "signature": "app_security.impl_moderate_listing_reviewed(uuid,text,text,integer,listing_status_enum)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "app_security.impl_moderate_listing(uuid,text,text)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "app_security.impl_verify_moderation_worker_secret(text)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "app_security.invoke_email_outbox_retry_batch()"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "app_security.invoke_moderation_retry_batch()"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "app_security.trg_fn_notify_email_outbox_worker()"
+        },
+        {
+          "anon_execute": true,
+          "authenticated_execute": true,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "app_security.trg_fn_notify_moderation_worker()"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": false,
+          "service_execute": true,
+          "signature": "claim_email_outbox_batch(integer,uuid,integer)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": false,
+          "service_execute": true,
+          "signature": "claim_email_outbox_job_by_id(uuid,uuid,integer)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": false,
+          "service_execute": true,
+          "signature": "claim_moderation_batch(integer,integer,uuid)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": false,
+          "service_execute": true,
+          "signature": "complete_email_outbox_job(uuid,uuid,text)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": false,
+          "service_execute": true,
+          "signature": "fail_email_outbox_job(uuid,uuid,text,integer,text,boolean,integer,integer)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": true,
+          "security_definer": false,
+          "service_execute": true,
+          "signature": "get_listing_moderation_findings(uuid)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": true,
+          "security_definer": false,
+          "service_execute": true,
+          "signature": "get_seller_moderation_workflow_status(uuid)"
+        },
+        {
+          "anon_execute": true,
+          "authenticated_execute": true,
+          "security_definer": true,
+          "service_execute": true,
+          "signature": "handle_listing_moderation_enqueue()"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": false,
+          "service_execute": true,
+          "signature": "impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": true,
+          "security_definer": false,
+          "service_execute": true,
+          "signature": "moderate_listing_reviewed(uuid,text,text,integer,listing_status_enum)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": false,
+          "service_execute": true,
+          "signature": "moderate_listing(uuid,text,text)"
+        },
+        {
+          "anon_execute": false,
+          "authenticated_execute": false,
+          "security_definer": false,
+          "service_execute": true,
+          "signature": "verify_moderation_worker_secret(text)"
+        }
+      ]
+    },
+    "httpRequests": 0,
+    "httpResponses": 0,
+    "triggerAclContext": [
+      {
+        "anon_private_schema_usage": true,
+        "authenticated_private_schema_usage": true,
+        "returns": "trigger",
+        "signature": "handle_listing_moderation_enqueue()"
+      },
+      {
+        "anon_private_schema_usage": true,
+        "authenticated_private_schema_usage": true,
+        "returns": "trigger",
+        "signature": "app_security.trg_fn_notify_moderation_worker()"
+      }
+    ]
+  },
+  "diagnostic": {
+    "file": "schema_email_outbox.test.sql",
+    "cliExitCode": 1,
+    "psqlExitCode": 3,
+    "plannedAssertions": 34,
+    "staticAssertionCalls": 32,
+    "executedAssertions": 31,
+    "failedAssertions": 0,
+    "firstError": "line 59: function has_constraint(unknown, unknown, unknown, unknown) does not exist",
+    "sqlstate": "Not emitted; undefined_function corresponds to 42883 (inferred)",
+    "isDefinerAndIsntDefiner": "Four checks each passed; helper definitions present in installed pgTAP SQL",
+    "planDiscrepancy": "Independent defect: 34 planned versus 32 source assertion calls; runtime stops at call 32 so 31 emitted",
+    "constraintExists": true,
+    "noRetry": true
+  },
+  "cleanup": {
+    "taskResourcesRemoved": true,
+    "taskPortClosed": true,
+    "allDockerInventoriesIdentical": true
+  },
+  "git": {
+    "branch": "chore/backend-extraction-baseline",
+    "head": "570c573cecaa65545ccc9e9e57fd879032861c30",
+    "status": " M AGENTS.md\n M README.md\n M docs/extraction/POINT1_BASELINE.md\n M docs/operations/DEPLOYMENT_OWNERSHIP.md\n?? docs/extraction/STAGE2B_VERIFICATION.md\n",
+    "uncommittedFilesByteIdentical": true
+  }
+}

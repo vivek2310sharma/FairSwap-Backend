@@ -1,0 +1,172 @@
+{
+  "formatVersion": 1,
+  "preparedOn": "2026-10-16",
+  "scope": "Existing R3-R6 evidence only; no technical reruns",
+  "hashAlgorithm": "SHA-256",
+  "sourceRoot": "<LOCAL_TEMP>",
+  "pathPlaceholder": "<DISPOSABLE_PROJECT>",
+  "inspection": {
+    "eachCandidateInspected": true,
+    "credentialOrTokenValuesFound": 0,
+    "personallyIdentifyingProjectPathsRedacted": 12,
+    "missingRequestedEvidence": [],
+    "notes": [
+      "Result JSON files retained byte-for-byte.",
+      "Ten runner logs retained with only absolute disposable-project path redactions.",
+      "Logs contain the existing pg_prove TAP summaries and diagnostic output; no missing individual ok lines were synthesized.",
+      "Vault/secret identifiers, zero counts, function names, localhost mappings, Git status, public documentation URLs and cryptographic digests are non-secret evidence retained for review.",
+      "Original sources remain outside the repository; no unsafe raw logs or environment files were copied.",
+      "Retained runner logs use .tap.txt because repository ignore rules exclude .log; original filenames remain in sourcePath."
+    ]
+  },
+  "files": [
+    {
+      "retainedPath": "r3/result.json",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br3-759146b7/evidence/result.json",
+      "sourceSha256": "6a9d5ac765cb16e2b49cf401ff0accbf60d9f77cae198eff94a7a1c5be679086",
+      "retainedSha256": "6a9d5ac765cb16e2b49cf401ff0accbf60d9f77cae198eff94a7a1c5be679086",
+      "redactions": []
+    },
+    {
+      "retainedPath": "r4/result.json",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br4-e0dc6b3e/evidence/verified-result.json",
+      "sourceSha256": "0db4db1143253a444c8341e63fa27c2860e31a69acc43a6a78ec3693951a115b",
+      "retainedSha256": "0db4db1143253a444c8341e63fa27c2860e31a69acc43a6a78ec3693951a115b",
+      "redactions": []
+    },
+    {
+      "retainedPath": "r5/result.json",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br5-f548117c/evidence/result.json",
+      "sourceSha256": "ba29c00427ffd542d6f629f2220ba2ee38f0b43627f5e638681d054378f30ce4",
+      "retainedSha256": "ba29c00427ffd542d6f629f2220ba2ee38f0b43627f5e638681d054378f30ce4",
+      "redactions": []
+    },
+    {
+      "retainedPath": "r6/result.json",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br6-653328e1/evidence/result.json",
+      "sourceSha256": "102e070e0c35ec921e3cb9d3e5994abc7e5642fe9c3d8dd6421ef6818a5c81aa",
+      "retainedSha256": "102e070e0c35ec921e3cb9d3e5994abc7e5642fe9c3d8dd6421ef6818a5c81aa",
+      "redactions": []
+    },
+    {
+      "retainedPath": "r6/email-diagnostic.tap.txt",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br6-653328e1/evidence/email-diagnostic.log",
+      "sourceSha256": "befc1e9008194496875d317c1e6d787f019ef8988dcbc65c244b161565a661ae",
+      "retainedSha256": "4509f362302355a2440a50715e6dd18d69ca9f09d2bd65bee336540761188561",
+      "redactions": [
+        {
+          "kind": "personally identifying absolute disposable-project path",
+          "occurrences": 3
+        }
+      ]
+    },
+    {
+      "retainedPath": "r5/admin_medium_operation.tap.txt",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br5-f548117c/evidence/admin_medium_operation.log",
+      "sourceSha256": "b2690a331c5b53f2dfaacd0dbf7543c6a4129841a2344e8f661c8db3d78536dc",
+      "retainedSha256": "76a53c4c8e751993e94b7eba753ae84888b45c432c4755418b66f886b968966f",
+      "redactions": [
+        {
+          "kind": "personally identifying absolute disposable-project path",
+          "occurrences": 1
+        }
+      ]
+    },
+    {
+      "retainedPath": "r5/admin_reviewed_contract.tap.txt",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br5-f548117c/evidence/admin_reviewed_contract.log",
+      "sourceSha256": "935e445454aae44f7fed85af20dfd5f009e336e95baadc173515cfa8622f881e",
+      "retainedSha256": "6d4dfda07b8c7f7d8e09a9a5f0e2c67f504daf2e9180cba3176d961646344881",
+      "redactions": [
+        {
+          "kind": "personally identifying absolute disposable-project path",
+          "occurrences": 1
+        }
+      ]
+    },
+    {
+      "retainedPath": "r5/listings_insert_category_eligibility.tap.txt",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br5-f548117c/evidence/listings_insert_category_eligibility.log",
+      "sourceSha256": "8f3188446d2a2fb5788c6b5ddd35b8e01aafde4a75e10acb2c5434b93a2e7add",
+      "retainedSha256": "17fb7c0d168724f515851f3fd7e69b6444057f5a4d1f256cc30ea483120bc1aa",
+      "redactions": [
+        {
+          "kind": "personally identifying absolute disposable-project path",
+          "occurrences": 1
+        }
+      ]
+    },
+    {
+      "retainedPath": "r5/moderation_vault_dispatch_auth.tap.txt",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br5-f548117c/evidence/moderation_vault_dispatch_auth.log",
+      "sourceSha256": "093c98ab03a8b74fc7420e107dec7a7e5dcf35a1aa2192bdf2d7448426630a1d",
+      "retainedSha256": "603424c550748448f65379806bb492fbeebbc84ea4162bc62391a5c78cce43c8",
+      "redactions": [
+        {
+          "kind": "personally identifying absolute disposable-project path",
+          "occurrences": 1
+        }
+      ]
+    },
+    {
+      "retainedPath": "r5/pending_review_media_invalidation.tap.txt",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br5-f548117c/evidence/pending_review_media_invalidation.log",
+      "sourceSha256": "a7649a61a1725f32cb0701a5946bfa52f06dc70ef72a439b7a17eb422d13c27e",
+      "retainedSha256": "d193af6c0675563f398d48d02850b59d6f1757245cdac2a3322905eae1122136",
+      "redactions": [
+        {
+          "kind": "personally identifying absolute disposable-project path",
+          "occurrences": 1
+        }
+      ]
+    },
+    {
+      "retainedPath": "r5/schema_listings.tap.txt",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br5-f548117c/evidence/schema_listings.log",
+      "sourceSha256": "f75ebd621d9eaa3408777d6f8e56bea359f506998e69c2f3b47e1ce222c85528",
+      "retainedSha256": "e080d87c67fd95293c96415a6f45a76f0b14234122ba46e6c147f9b269b8608b",
+      "redactions": [
+        {
+          "kind": "personally identifying absolute disposable-project path",
+          "occurrences": 1
+        }
+      ]
+    },
+    {
+      "retainedPath": "r5/schema_post_ad_category_metadata.tap.txt",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br5-f548117c/evidence/schema_post_ad_category_metadata.log",
+      "sourceSha256": "9c8c3c5865c209dd50125c67901aefc29c01c1efc12b3ce83e0b6a2f08c3b3b5",
+      "retainedSha256": "1949060efbcd55666968906ecd540d503405334080f36917ef1566f4cdd9ee97",
+      "redactions": [
+        {
+          "kind": "personally identifying absolute disposable-project path",
+          "occurrences": 1
+        }
+      ]
+    },
+    {
+      "retainedPath": "r5/schema_security.tap.txt",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br5-f548117c/evidence/schema_security.log",
+      "sourceSha256": "14ae1947a45016e75ce0d20d817e9811322e4474f64b505c448826b642407f42",
+      "retainedSha256": "d1b752bc4d1cc896f4b17d2d35493dc826d43504725d2d0ac319b1d210445ff2",
+      "redactions": [
+        {
+          "kind": "personally identifying absolute disposable-project path",
+          "occurrences": 1
+        }
+      ]
+    },
+    {
+      "retainedPath": "r5/seller_listing_category_context.tap.txt",
+      "sourcePath": "<LOCAL_TEMP>/fairswap-stage2br5-f548117c/evidence/seller_listing_category_context.log",
+      "sourceSha256": "263d181e17d3a602eb9e1d242f398a3316bf3b29039694165926ff921e8f90a4",
+      "retainedSha256": "7a4e7f050b32522374606b64f0476c7eb42dcedff70bc1f1a5aae10227249e37",
+      "redactions": [
+        {
+          "kind": "personally identifying absolute disposable-project path",
+          "occurrences": 1
+        }
+      ]
+    }
+  ]
+}

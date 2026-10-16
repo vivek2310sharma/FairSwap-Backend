@@ -1,0 +1,22 @@
+{
+  "result": "PASS",
+  "probeMapping": [
+    "127.0.0.1:55609 -> 5432/tcp",
+    "[::1]:55609 -> 5432/tcp"
+  ],
+  "databaseMapping": [
+    "127.0.0.1:55612 -> 5432/tcp",
+    "[::1]:55612 -> 5432/tcp"
+  ],
+  "postgresVersion": "15.8 (150008)",
+  "hostSqlConnectivity": "PASS",
+  "vaultSecrets": 0,
+  "bootstrapError": null,
+  "preflightError": "An initial unsanitized --version invocation failed writing CLI telemetry outside the sandbox (EPERM). Subsequent isolated-environment --version succeeded: 2.117.0.",
+  "git": {
+    "branch": "chore/backend-extraction-baseline",
+    "head": "570c573cecaa65545ccc9e9e57fd879032861c30",
+    "status": " M AGENTS.md\n M README.md\n M docs/extraction/POINT1_BASELINE.md\n M docs/operations/DEPLOYMENT_OWNERSHIP.md\n?? docs/extraction/STAGE2B_VERIFICATION.md\n",
+    "uncommittedBytesPreserved": true
+  }
+}

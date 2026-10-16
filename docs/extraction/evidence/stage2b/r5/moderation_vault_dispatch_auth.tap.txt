@@ -1,0 +1,7 @@
+Connecting to local database...
+<DISPOSABLE_PROJECT>/supabase/tests/moderation_vault_dispatch_auth.test.sql .. ok
+All tests successful.
+Files=1, Tests=11,  0 wallclock secs ( 0.01 usr +  0.01 sys =  0.02 CPU)
+Result: PASS
+A new version of Supabase CLI is available: v2.121.0 (currently installed v2.117.0)
+We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli
