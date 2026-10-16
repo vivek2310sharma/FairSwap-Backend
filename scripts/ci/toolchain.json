@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "scope": "Stage 2C-P1 static and unit CI only",
+  "node": "24.15.0",
+  "pnpm": "10.12.1",
+  "unitIsolation": {
+    "file": "tests/setup/no-network.ts",
+    "sha256": "c4a49badd88b567fa99b198f263f37308a16796bd026020522d29b0e2e95ce5f",
+    "verification": "2026-10-16 P1.1: raw SHA-256 recomputed from the unchanged setup; raw Git blob matches HEAD:tests/setup/no-network.ts"
+  },
+  "packages": {
+    "@supabase/supabase-js": "2.116.0",
+    "zod": "3.24.2",
+    "@types/node": "20.19.43",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "evidence": {
+    "historical": "docs/extraction/POINT1_BASELINE.md: Stage 2A local verification",
+    "localVersionProbe": "2026-10-16: node --version = v24.15.0; corepack pnpm --version = 10.12.1",
+    "packagePins": "package.json and pnpm-lock.yaml inspected at 495d6188b678587ab283e51a4aae1951e60c0197"
+  },
+  "actions": {
+    "actions/checkout": {
+      "tag": "v4.2.2",
+      "commit": "11bd71901bbe5b1630ceea73d27597364c9af683"
+    },
+    "actions/setup-node": {
+      "tag": "v4.4.0",
+      "commit": "49933ea5288caeca8642d1e84afbd3f7d6820020"
+    },
+    "actions/upload-artifact": {
+      "tag": "v4.6.2",
+      "commit": "ea165f8d65b6e75b540449e92b4886f43607fa02"
+    }
+  },
+  "actionPinVerification": "2026-10-16: git ls-remote --tags against each public https://github.com/actions/<name>.git repository and its exact refs/tags/<tag>",
+  "unresolvedValidations": [
+    "Ubuntu 24.04 installation with --frozen-lockfile --ignore-scripts --engine-strict and Linux optional binaries has not run.",
+    "GitHub-hosted execution, Corepack availability/bootstrap, action execution and artifact upload have not run.",
+    "Node and pnpm distribution checksums are not independently recorded here; no digest is asserted.",
+    "Database images, Docker versions, PostgreSQL, Supabase CLI and Linux network isolation are outside P1."
+  ]
+}

@@ -1,0 +1,97 @@
+name: Backend static and unit CI (Stage 2C-P1)
+
+on:
+  pull_request:
+  push:
+    branches: [main, chore/backend-extraction-baseline]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-unit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-integrity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        timeout-minutes: 3
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+
+      - name: Verify runtime and package pins
+        timeout-minutes: 2
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const pins = JSON.parse(readFileSync('scripts/ci/toolchain.json', 'utf8'));
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          if (process.versions.node !== pins.node) throw new Error('Node version mismatch');
+          if (pkg.packageManager !== `pnpm@${pins.pnpm}` || pkg.engines.pnpm !== pins.pnpm) throw new Error('pnpm pin mismatch');
+          for (const [name, version] of Object.entries(pins.packages)) {
+            if ((pkg.dependencies?.[name] ?? pkg.devDependencies?.[name]) !== version) throw new Error('Package pin mismatch');
+          }
+          const pnpm = execFileSync('corepack', ['pnpm', '--version'], { encoding: 'utf8' }).trim();
+          if (pnpm !== pins.pnpm) throw new Error('pnpm runtime mismatch');
+          console.log(`Verified Node ${pins.node}, pnpm ${pnpm} and package pins`);
+          NODE
+
+      - name: Install frozen dependencies without lifecycle scripts
+        timeout-minutes: 4
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+
+      - name: Verify approved migration bytes (no database execution)
+        timeout-minutes: 1
+        run: node scripts/ci/verify-baseline.mjs
+
+      - name: Typecheck
+        timeout-minutes: 2
+        run: corepack pnpm typecheck
+
+      - name: Run validator regression checks
+        timeout-minutes: 1
+        run: node --test scripts/ci/verification.test.mjs
+
+      - name: Run the five unit files with network-blocking setup
+        id: unit
+        timeout-minutes: 3
+        run: |
+          node scripts/ci/verify-unit-results.mjs --check-isolation
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            corepack pnpm test:unit --reporter=default --reporter=json \
+            --outputFile="$RUNNER_TEMP/backend-unit-results.json"
+
+      - name: Verify exact results and create sanitized summary
+        id: results
+        if: ${{ !cancelled() && steps.unit.outcome != 'skipped' }}
+        timeout-minutes: 1
+        run: |
+          node scripts/ci/verify-unit-results.mjs "$RUNNER_TEMP/backend-unit-results.json" \
+            --summary "$RUNNER_TEMP/backend-ci-artifacts/unit-summary.json"
+
+      - name: Upload sanitized unit summary only
+        if: ${{ !cancelled() && steps.results.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        timeout-minutes: 2
+        with:
+          name: backend-unit-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/backend-ci-artifacts/unit-summary.json
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
