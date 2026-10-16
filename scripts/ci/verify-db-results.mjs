@@ -8,6 +8,22 @@ const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const readJson = file => JSON.parse(readFileSync(file, "utf8"));
 const pins = readJson(path.join(repositoryRoot, "scripts/ci/toolchain.json")).database;
 const accepted = readJson(path.join(repositoryRoot, "docs/extraction/evidence/stage2b/r6/result.json")).security;
+// Stage 2B's historical "listings" any-DML boolean recorded whole-table
+// privileges, while the new catalog SQL includes column-level grants. Preserve
+// that historical artifact and require the real, narrower grant boundaries here.
+export const expectedRls = accepted.checks.rls.map(row => row.relname === "listings"
+  ? { ...row, authenticated_any_dml: true } : row);
+const listingMutableColumns = ["category_attributes","category_id","city_id","condition","description","landmark","locality_id","pin_code","price_paise","price_type","title"];
+const emptyColumnDml = relname => ({ relname, anon_insert: [], anon_update: [],
+  authenticated_insert: [], authenticated_update: [],
+  anon_table_insert: false, anon_table_update: false, anon_table_delete: false,
+  authenticated_table_insert: false, authenticated_table_update: false, authenticated_table_delete: false });
+export const expectedColumnDml = Object.freeze([
+  emptyColumnDml("email_outbox"),
+  { ...emptyColumnDml("listing_media"), authenticated_insert: ["content_type", "file_size_bytes", "listing_id", "original_filename"] },
+  { ...emptyColumnDml("listings"), authenticated_insert: listingMutableColumns,
+    authenticated_update: listingMutableColumns },
+]);
 export const requiredSuites = Object.freeze({
   "admin_medium_operation.test.sql": 6,
   "admin_reviewed_contract.test.sql": 10,
@@ -59,9 +75,13 @@ export function verifySecurity(snapshot) {
   requireCondition(same(snapshot.migration_versions, expectedMigrationVersions()) && snapshot.migration_versions.length === 58);
   requireCondition(snapshot.vault_count === 0 && snapshot.moderation_automation_enabled === "false"
     && snapshot.httpRequests === 0 && snapshot.httpResponses === 0);
-  for (const key of ["buckets", "rls", "extensions", "sensitive_rpcs", "cron_jobs"]) {
+  for (const key of ["buckets", "extensions", "sensitive_rpcs", "cron_jobs"]) {
     requireCondition(same(snapshot.checks?.[key], accepted.checks[key]));
   }
+  requireCondition(same(snapshot.checks?.rls, expectedRls));
+  // Column ACLs must match the exact approved mutable fields; blanket table
+  // UPDATE/INSERT/DELETE and all anon mutations remain explicitly forbidden.
+  requireCondition(same(snapshot.checks?.column_dml, expectedColumnDml));
   const settings = accepted.checks.runtime_settings.filter(row => ["cron.database_name", "cron.host", "cron.launch_active_jobs"].includes(row.name));
   requireCondition(same(snapshot.checks.runtime_settings, settings));
   requireCondition(same(snapshot.triggerAclContext, accepted.triggerAclContext));
@@ -144,7 +164,8 @@ export function collectEvidence(rawDirectory, directory) {
     const security = () => ({
       postgresVersion: "15.8", version_num: 150008, migration_versions: expectedMigrationVersions(),
       vault_count: 0, moderation_automation_enabled: "false", httpRequests: 0, httpResponses: 0,
-      checks: { ...accepted.checks, runtime_settings: accepted.checks.runtime_settings.filter(row => ["cron.database_name", "cron.host", "cron.launch_active_jobs"].includes(row.name)) },
+      checks: { ...accepted.checks, rls: expectedRls, column_dml: expectedColumnDml,
+        runtime_settings: accepted.checks.runtime_settings.filter(row => ["cron.database_name", "cron.host", "cron.launch_active_jobs"].includes(row.name)) },
       triggerAclContext: accepted.triggerAclContext,
     });
     report = { ...candidate,

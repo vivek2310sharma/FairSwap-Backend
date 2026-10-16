@@ -350,3 +350,30 @@ possible external dependency failure; no unsigned or floating-image fallback
 was added. All revised runtime network and cleanup behavior is **UNVERIFIED**
 until GitHub Actions exercises it successfully. Draft PR #1 remains unmerged;
 no hosted Supabase, provider or deployment operations are authorized.
+
+## GitHub security-catalog verification — explicit column ACLs
+
+The first GitHub-hosted database run successfully crossed the scoped firewall,
+started PostgreSQL 15 and completed the migration command, then failed its
+read-only security snapshot comparison. The accepted Stage 2B catalog evidence
+marked `listings.authenticated_any_dml=false` because that historical check
+was not a uniform column-level grant inventory; `listing_media` was handled
+differently. The canonical migration history deliberately grants sellers limited
+column-level INSERT/UPDATE on listings and INSERT on listing_media. Treating the
+historic boolean as proof of no seller mutations is incorrect.
+
+This CI-only correction leaves the Stage 2B evidence, all 58 migrations, all
+RLS policies and existing role grants unchanged. It retains the exact historic
+RLS enablement/policy-count expectations, corrects the new summary for
+`listings.authenticated_any_dml=true`, and **also** requires a read-only
+per-column matrix for `email_outbox`, `listing_media` and `listings`. The matrix
+fails on any unauthorized anon INSERT/UPDATE/DELETE, whole-table seller DML,
+unauthorized seller column, missing approved seller column or unexpected direct
+seller DELETE. The seller listing allowlist comes from Migration 31, with
+`cover_photo_id` UPDATE removed by Migration 33. The media list comes from
+Migration 6, with direct `display_order` UPDATE removed by Migration 33.
+Synthetic regression tests cover both excessive and missing grants.
+
+The revised GitHub pipeline remains **UNVERIFIED** until a hosted run proves the
+full nine-suite/270-assertion contract, both security snapshots and exact
+firewall cleanup. No hosted credentials, migrations or deployment access added.

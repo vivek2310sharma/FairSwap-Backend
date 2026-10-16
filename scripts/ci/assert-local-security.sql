@@ -56,6 +56,28 @@ SELECT jsonb_build_object(
         OR has_any_column_privilege('authenticated',c.oid,'INSERT,UPDATE'))) ORDER BY c.relname)
       FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND c.relname IN ('listings','listing_media','email_outbox')),
+    'column_dml', (SELECT jsonb_agg(jsonb_build_object(
+      'relname', c.relname,
+      'anon_insert', COALESCE((SELECT jsonb_agg(a.attname ORDER BY a.attname)
+          FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+          AND has_column_privilege('anon',c.oid,a.attnum,'INSERT')), '[]'::jsonb),
+      'anon_update', COALESCE((SELECT jsonb_agg(a.attname ORDER BY a.attname)
+          FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+          AND has_column_privilege('anon',c.oid,a.attnum,'UPDATE')), '[]'::jsonb),
+      'authenticated_insert', COALESCE((SELECT jsonb_agg(a.attname ORDER BY a.attname)
+          FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+          AND has_column_privilege('authenticated',c.oid,a.attnum,'INSERT')), '[]'::jsonb),
+      'authenticated_update', COALESCE((SELECT jsonb_agg(a.attname ORDER BY a.attname)
+          FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+          AND has_column_privilege('authenticated',c.oid,a.attnum,'UPDATE')), '[]'::jsonb),
+      'anon_table_insert', has_table_privilege('anon',c.oid,'INSERT'),
+      'anon_table_update', has_table_privilege('anon',c.oid,'UPDATE'),
+      'anon_table_delete', has_table_privilege('anon',c.oid,'DELETE'),
+      'authenticated_table_insert', has_table_privilege('authenticated',c.oid,'INSERT'),
+      'authenticated_table_update', has_table_privilege('authenticated',c.oid,'UPDATE'),
+      'authenticated_table_delete', has_table_privilege('authenticated',c.oid,'DELETE')) ORDER BY c.relname)
+      FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND c.relname IN ('listings','listing_media','email_outbox')),
     'extensions', (SELECT jsonb_object_agg(extname,extversion) FROM pg_extension
       WHERE extname IN ('pg_net','pg_cron','supabase_vault')),
     'sensitive_rpcs', (SELECT jsonb_agg(jsonb_build_object(

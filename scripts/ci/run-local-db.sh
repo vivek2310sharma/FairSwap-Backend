@@ -140,7 +140,7 @@ NODE
   fi
   printf 'FAIL: database CI stage=%s; raw output withheld\n' "$failure_stage" >&3
   case ${failure_category:-none} in
-    none|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|unclassified|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding|security-parse|security-version|security-ledger|security-vault|security-setting|security-queues|security-buckets|security-rls|security-rls-shape|security-rls-email_outbox-*|security-rls-listing_media-*|security-rls-listings-*|security-extensions|security-rpcs|security-cron|security-runtime|security-trigger|security-unclassified) ;;
+    none|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|unclassified|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding|security-parse|security-version|security-ledger|security-vault|security-setting|security-queues|security-buckets|security-rls|security-column-grants|security-rls-shape|security-rls-email_outbox-*|security-rls-listing_media-*|security-rls-listings-*|security-extensions|security-rpcs|security-cron|security-runtime|security-trigger|security-unclassified) ;;
     *) failure_category=unclassified ;;
   esac
   if [[ ${failure_category:-none} != none ]]; then
@@ -432,7 +432,7 @@ if ! node --input-type=module - "$root/scripts/ci/verify-db-results.mjs" "$raw/s
 import {pathToFileURL} from 'node:url';
 import {readFileSync,writeFileSync} from 'node:fs';
 const [verifierPath,snapshotPath,referencePath,categoryPath]=process.argv.slice(2);
-const {verifySecurity,expectedMigrationVersions}=await import(pathToFileURL(verifierPath));
+const {verifySecurity,expectedMigrationVersions,expectedRls,expectedColumnDml}=await import(pathToFileURL(verifierPath));
 let snapshot;
 try { snapshot=JSON.parse(readFileSync(snapshotPath,'utf8')); }
 catch { writeFileSync(categoryPath,'security-parse'); process.exit(1); }
@@ -449,7 +449,8 @@ catch {
     ['security-setting',snapshot.moderation_automation_enabled==='false'],
     ['security-queues',snapshot.httpRequests===0&&snapshot.httpResponses===0],
     ['security-buckets',equal(snapshot.checks?.buckets,expected.checks.buckets)],
-    ['security-rls',equal(snapshot.checks?.rls,expected.checks.rls)],
+    ['security-rls',equal(snapshot.checks?.rls,expectedRls)],
+    ['security-column-grants',equal(snapshot.checks?.column_dml,expectedColumnDml)],
     ['security-extensions',equal(snapshot.checks?.extensions,expected.checks.extensions)],
     ['security-rpcs',equal(snapshot.checks?.sensitive_rpcs,expected.checks.sensitive_rpcs)],
     ['security-cron',equal(snapshot.checks?.cron_jobs,expected.checks.cron_jobs)],
@@ -463,7 +464,7 @@ catch {
     failed='security-rls-shape';
     for(const name of names){
       const observed=snapshot.checks?.rls?.find(row=>row.relname===name);
-      const baseline=expected.checks.rls.find(row=>row.relname===name);
+      const baseline=expectedRls.find(row=>row.relname===name);
       if(!observed||!baseline){failed='security-rls-'+name+'-present';break;}
       const field=fields.find(key=>!equal(observed[key],baseline[key]));
       if(field){failed='security-rls-'+name+'-'+field;break;}

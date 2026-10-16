@@ -6,8 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { manifestSha256 } from "./verify-baseline.mjs";
-import { cleanupKeys, collectEvidence, expectedMigrationVersions, isolationKeys, parseSuiteLog,
-  requiredSuites, verifyDbResults, verifyEvidence } from "./verify-db-results.mjs";
+import { cleanupKeys, collectEvidence, expectedMigrationVersions, expectedColumnDml, expectedRls,
+  isolationKeys, parseSuiteLog, requiredSuites, verifyDbResults, verifyEvidence } from "./verify-db-results.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const pins = JSON.parse(readFileSync(path.join(root, "scripts/ci/toolchain.json"))).database;
@@ -19,6 +19,8 @@ function fixture() {
     vault_count: 0, moderation_automation_enabled: "false", httpRequests: 0, httpResponses: 0,
     checks: structuredClone(accepted.checks), triggerAclContext: structuredClone(accepted.triggerAclContext),
   };
+  security.checks.rls = structuredClone(expectedRls);
+  security.checks.column_dml = structuredClone(expectedColumnDml);
   security.checks.runtime_settings = security.checks.runtime_settings.filter(row => ["cron.database_name", "cron.host", "cron.launch_active_jobs"].includes(row.name));
   // Synthetic validator fixture only; these fields are not runtime evidence.
   return {
@@ -90,6 +92,14 @@ const changes = {
   "outbound request": r => { r.securityAfter.httpRequests = 1; },
   "outbound response": r => { r.securityAfter.httpResponses = 1; },
   "missing RLS": r => { r.securityBefore.checks.rls[0].relrowsecurity = false; },
+  "listings column-level DML summary drift": r => { r.securityBefore.checks.rls[2].authenticated_any_dml = false; },
+  "missing column grant matrix": r => { delete r.securityBefore.checks.column_dml; },
+  "unexpected listing media update grant": r => { r.securityBefore.checks.column_dml[1].authenticated_update.push("display_order"); },
+  "unexpected listing sensitive field grant": r => { r.securityAfter.checks.column_dml[2].authenticated_update.push("seller_id"); },
+  "unexpected listing direct delete grant": r => { r.securityBefore.checks.column_dml[2].authenticated_table_delete = true; },
+  "unexpected anonymous insert grant": r => { r.securityAfter.checks.column_dml[2].anon_insert.push("title"); },
+  "missing seller mutable insert column": r => { r.securityBefore.checks.column_dml[2].authenticated_insert.pop(); },
+  "broadened listing table-level update grant": r => { r.securityBefore.checks.column_dml[2].authenticated_table_update = true; },
   "public bucket": r => { r.securityBefore.checks.buckets[0].public = true; },
   "worker privilege drift": r => { r.securityAfter.checks.sensitive_rpcs[0].anon_execute = true; },
   "missing worker RPC": r => { r.securityAfter.checks.sensitive_rpcs.pop(); },
@@ -188,6 +198,9 @@ test("workflow and executor preserve the local-only fail-closed boundaries", () 
   assert.doesNotMatch(script, /--linked|--db-url|--project-ref|docker (?:system|container|volume|network) prune|--network host/);
   const sql = readFileSync(path.join(root, "scripts/ci/assert-local-security.sql"), "utf8");
   assert.match(sql, /BEGIN READ ONLY/);
+  assert.match(sql, /'column_dml'/);
+  assert.match(sql, /has_column_privilege\('authenticated',c\.oid,a\.attnum,'UPDATE'\)/);
+  assert.match(sql, /has_table_privilege\('authenticated',c\.oid,'DELETE'\)/);
   // Explicit column-level INSERT/UPDATE grants are intentional for seller uploads.
   // The older table-only privilege check incorrectly returned false for these roles.
   for (const role of ["anon", "authenticated"]) {
