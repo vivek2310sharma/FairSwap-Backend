@@ -107,7 +107,7 @@ NODE
   if [[ $execution == 0 && $cleanup_ok == 1 && $collection == 0 ]]; then exit 0; fi
   # Report only an enumerated stage, never raw tool output, paths or exception text.
   case ${failure_stage:-unclassified} in
-    preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete|image-postgres-*|image-pgProve-*|image-authBootstrap-*|image-storageBootstrap-*|image-realtimeBootstrap-*) ;;
+    preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete|port-probe-run|port-probe-inspect|port-probe-binding|port-probe-cleanup|image-postgres-*|image-pgProve-*|image-authBootstrap-*|image-storageBootstrap-*|image-realtimeBootstrap-*) ;;
     *) failure_stage=unclassified ;;
   esac
   if [[ $execution == 0 ]]; then
@@ -117,7 +117,7 @@ NODE
   fi
   printf 'FAIL: database CI stage=%s; raw output withheld\n' "$failure_stage" >&3
   case ${failure_category:-none} in
-    none|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|unclassified) ;;
+    none|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|unclassified|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding) ;;
     *) failure_category=unclassified ;;
   esac
   if [[ ${failure_category:-none} != none ]]; then
@@ -263,15 +263,39 @@ docker network create --driver bridge --internal --ipv6 --subnet "$v6" \
   --opt com.docker.network.bridge.host_binding_ipv4=127.0.0.1 \
   --label "com.supabase.cli.project=$project_id" "$network"
 # Verify implicit publishing behavior before starting even the empty base database.
-failure_stage=port-probe
-docker run -d --pull never --name "$probe" --label "com.supabase.cli.project=$project_id" \
-  --network "$network" -p "${ports[4]}:5432" --entrypoint sleep "$pg_ref" infinity
+failure_stage=port-probe-run
+if ! docker run -d --pull never --name "$probe" --label "com.supabase.cli.project=$project_id" \
+  --network "$network" -p "${ports[4]}:5432" --entrypoint sleep "$pg_ref" infinity \
+  >"$raw/probe-run.log" 2>&1; then
+  failure_category=probe-run-error
+  if grep -Eiq 'port is already allocated|address already in use|port allocation' "$raw/probe-run.log"; then
+    failure_category=probe-port-conflict
+  elif grep -Eiq 'iptables|ip6tables|programming external connectivity|failed to create endpoint' "$raw/probe-run.log"; then
+    failure_category=probe-network-rule-error
+  elif grep -Eiq 'executable file not found|exec:.*sleep|unknown command.*sleep' "$raw/probe-run.log"; then
+    failure_category=probe-entrypoint-error
+  elif grep -Eiq 'no such image|image.*not found|manifest unknown' "$raw/probe-run.log"; then
+    failure_category=probe-image-missing
+  fi
+  exit 1
+fi
+failure_stage=port-probe-inspect
 docker inspect "$probe" >"$raw/binding-probe.json"
-node --input-type=module - "$raw/binding-probe.json" <<'NODE'
-import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
-const p=JSON.parse(readFileSync(process.argv[2]))[0].NetworkSettings.Ports['5432/tcp'];
-assert.ok(Array.isArray(p)&&p.length>0&&p.every(x=>x.HostIp==='127.0.0.1'||x.HostIp==='::1'));
+failure_stage=port-probe-binding
+if ! node --input-type=module - "$raw/binding-probe.json" "$raw/probe-category.txt" <<'NODE'
+import {readFileSync,writeFileSync} from 'node:fs';
+const [file,categoryFile]=process.argv.slice(2);
+const p=JSON.parse(readFileSync(file))[0].NetworkSettings.Ports['5432/tcp'];
+const fail=(category)=>{writeFileSync(categoryFile,category);process.exit(1)};
+if(!Array.isArray(p)||p.length===0) fail('probe-port-missing');
+if(p.some(x=>x.HostIp==='0.0.0.0'||x.HostIp==='::')) fail('probe-wildcard-binding');
+if(!p.every(x=>x.HostIp==='127.0.0.1'||x.HostIp==='::1')) fail('probe-other-binding');
 NODE
+then
+  failure_category=$(cat "$raw/probe-category.txt" 2>/dev/null || printf 'unclassified')
+  exit 1
+fi
+failure_stage=port-probe-cleanup
 docker rm -f "$probe"
 failure_stage=db-start
 cli_local db start >"$raw/start.log" 2>&1
