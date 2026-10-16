@@ -180,6 +180,13 @@ test("workflow and executor preserve the local-only fail-closed boundaries", () 
   assert.match(workflow, /branches: \[main\]/);
   assert.doesNotMatch(workflow, /branches: \[[^\]]*chore\/backend-extraction-baseline/);
   const script = readFileSync(path.join(root, "scripts/ci/run-local-db.sh"), "utf8");
+  // Registry switch never changes image identity or relaxes pin enforcement.
+  assert.ok(script.includes('source_ref="${tag#public.ecr.aws/}"'));
+  assert.ok(script.includes('source_ref="${source_ref%:*}@$digest"'));
+  assert.ok(script.includes('docker pull --platform linux/amd64 "$source_ref"'));
+  assert.ok(!script.includes('docker pull --platform linux/amd64 "$ref"'));
+  assert.ok(script.includes('else docker tag "$source_ref" "$tag"; fi'));
+  assert.ok(script.includes('"docker.io/"+reference'));
   assert.match(script, /--driver bridge --ipv6/);
   assert.doesNotMatch(script, /--driver bridge --internal/);
   assert.match(script, /com\.docker\.network\.bridge\.host_binding_ipv4=127\.0\.0\.1/);

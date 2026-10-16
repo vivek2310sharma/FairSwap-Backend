@@ -377,3 +377,24 @@ Synthetic regression tests cover both excessive and missing grants.
 The revised GitHub pipeline remains **UNVERIFIED** until a hosted run proves the
 full nine-suite/270-assertion contract, both security snapshots and exact
 firewall cleanup. No hosted credentials, migrations or deployment access added.
+
+## Registry provisioning with immutable official Docker Hub images
+
+GitHub-hosted Ubuntu runners intermittently received public ECR rate limits
+on PostgreSQL and Realtime bootstrap pulls. GitHub documentation states that
+hosted runners pulling public Docker Hub images are exempt from its standard
+pull rate limit. Supabase also publishes the corresponding pinned image tags
+in its official Docker Hub namespace.
+
+The executor now retrieves all five images from the official Docker Hub
+`supabase/<image>@sha256:<original pinned index digest>` references before
+creating its firewall-restricted network. It verifies each exact registry
+repository digest, linux/amd64 platform and image ID, then preloads the existing
+`public.ecr.aws/supabase/*:<version>` tags for compatibility with CLI 2.117.0.
+The original `toolchain.json` digest pins and result-verification contract
+remain unchanged. If any Docker Hub digest is absent or different, CI stops
+with no unpinned fallback. The local database runtime, RLS and pgTAP coverage,
+cleanup rules, and authorized deployment boundaries are unchanged.
+
+This is a CI infrastructure change, not proof of passing database execution.
+Full GitHub validation is pending after the registry change.

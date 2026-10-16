@@ -190,11 +190,16 @@ while IFS=$'\t' read -r key tag digest; do
   case "$key" in postgres|pgProve|authBootstrap|storageBootstrap|realtimeBootstrap) ;; *) exit 1 ;; esac
   failure_stage="image-$key-validate"
   [[ $tag =~ ^public.ecr.aws/supabase/[a-z_-]+:[A-Za-z0-9._-]+$ && $digest =~ ^sha256:[a-f0-9]{64}$ ]]
-  ref="${tag%:*}@$digest"
+  # Preserve the immutable ECR tag/digest pin. Pull the same digest from the
+  # official Supabase Docker Hub repository before enabling network isolation.
+  # Never fall back to mutable tag-only pulls.
+  source_ref="${tag#public.ecr.aws/}"
+  source_ref="${source_ref%:*}@$digest"
+  [[ $source_ref =~ ^supabase/[a-z_-]+@sha256:[a-f0-9]{64}$ ]]
   failure_stage="image-$key-pull"
   # Keep registry diagnostics in task-private storage. Export fixed categories only.
   pull_log="$raw/image-pull-$key.log"
-  if ! docker pull --platform linux/amd64 "$ref" >"$pull_log" 2>&1; then
+  if ! docker pull --platform linux/amd64 "$source_ref" >"$pull_log" 2>&1; then
     failure_category=unclassified
     if grep -Eiq 'toomanyrequests|too many requests|rate limit|(^|[^0-9])429([^0-9]|$)' "$pull_log"; then
       failure_category=rate-limited
@@ -212,15 +217,22 @@ while IFS=$'\t' read -r key tag digest; do
     exit 1
   fi
   failure_stage="image-$key-inspect"
-  id=$(docker image inspect -f '{{.Id}}' "$ref")
-  [[ $(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$ref") == linux/amd64 ]]
+  id=$(docker image inspect -f '{{.Id}}' "$source_ref")
+  [[ $(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$source_ref") == linux/amd64 ]]
   failure_stage="image-$key-digest"
-  docker image inspect -f '{{json .RepoDigests}}' "$ref" | grep -Fq -- "$ref"
-  # Do not overwrite an existing tag that points to a different image.
+  repo_digests=$(docker image inspect -f '{{json .RepoDigests}}' "$source_ref")
+  node --input-type=module - "$repo_digests" "$source_ref" <<'NODE'
+const [raw,reference]=process.argv.slice(2);
+const refs=JSON.parse(raw);
+if(!Array.isArray(refs)||!refs.some(ref=>ref===reference||ref==="docker.io/"+reference)) process.exit(1);
+NODE
+  # Only after verified digest+platform, preload the original ECR image tag.
+  # Refuse a conflicting existing tag; CLI still uses its pinned reference.
   failure_stage="image-$key-tag"
   if docker image inspect "$tag" >/dev/null 2>&1; then
     [[ $(docker image inspect -f '{{.Id}}' "$tag") == "$id" ]]
-  else docker tag "$ref" "$tag"; fi
+  else docker tag "$source_ref" "$tag"; fi
+  [[ $(docker image inspect -f '{{.Id}}' "$tag") == "$id" ]]
   failure_stage="image-$key-evidence"
   node --input-type=module - "$raw/images.json" "$key" "$tag" "$digest" "$id" <<'NODE'
 import {existsSync,readFileSync,writeFileSync} from 'node:fs';
@@ -239,7 +251,8 @@ NODE
 image_ref() {
   node --input-type=module - "$root/scripts/ci/toolchain.json" "$1" <<'NODE'
 import {readFileSync} from 'node:fs';const p=JSON.parse(readFileSync(process.argv[2])).database.images[process.argv[3]];
-console.log(p.tag.slice(0,p.tag.lastIndexOf(':'))+'@'+p.digest);
+if(!p?.tag?.startsWith('public.ecr.aws/supabase/')) process.exit(1);
+console.log(p.tag.slice('public.ecr.aws/'.length,p.tag.lastIndexOf(':'))+'@'+p.digest);
 NODE
 }
 pg_ref=$(image_ref postgres)
