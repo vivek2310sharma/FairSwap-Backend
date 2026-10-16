@@ -107,7 +107,7 @@ NODE
   if [[ $execution == 0 && $cleanup_ok == 1 && $collection == 0 ]]; then exit 0; fi
   # Report only an enumerated stage, never raw tool output, paths or exception text.
   case ${failure_stage:-unclassified} in
-    preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete) ;;
+    preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete|image-postgres-*|image-pgProve-*|image-authBootstrap-*|image-storageBootstrap-*|image-realtimeBootstrap-*) ;;
     *) failure_stage=unclassified ;;
   esac
   if [[ $execution == 0 ]]; then
@@ -156,16 +156,24 @@ cli_local migration up --help >"$raw/migration-help.txt"
 cli_local test db --help >"$raw/test-help.txt"
 failure_stage=images
 while IFS=$'\t' read -r key tag digest; do
+  # Fixed approved role names only; diagnostic labels must never contain image refs.
+  case "$key" in postgres|pgProve|authBootstrap|storageBootstrap|realtimeBootstrap) ;; *) exit 1 ;; esac
+  failure_stage="image-$key-validate"
   [[ $tag =~ ^public.ecr.aws/supabase/[a-z_-]+:[A-Za-z0-9._-]+$ && $digest =~ ^sha256:[a-f0-9]{64}$ ]]
   ref="${tag%:*}@$digest"
+  failure_stage="image-$key-pull"
   docker pull --platform linux/amd64 "$ref"
+  failure_stage="image-$key-inspect"
   id=$(docker image inspect -f '{{.Id}}' "$ref")
   [[ $(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$ref") == linux/amd64 ]]
+  failure_stage="image-$key-digest"
   docker image inspect -f '{{json .RepoDigests}}' "$ref" | grep -Fq -- "$ref"
   # Do not overwrite an existing tag that points to a different image.
+  failure_stage="image-$key-tag"
   if docker image inspect "$tag" >/dev/null 2>&1; then
     [[ $(docker image inspect -f '{{.Id}}' "$tag") == "$id" ]]
   else docker tag "$ref" "$tag"; fi
+  failure_stage="image-$key-evidence"
   node --input-type=module - "$raw/images.json" "$key" "$tag" "$digest" "$id" <<'NODE'
 import {existsSync,readFileSync,writeFileSync} from 'node:fs';
 const [file,key,tag,digest,imageId]=process.argv.slice(2); const o=existsSync(file)?JSON.parse(readFileSync(file)):{};
