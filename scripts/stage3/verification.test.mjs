@@ -413,7 +413,7 @@ test('retry: zero delays on first successful operation; no retry cache or tag fa
 
 test('retry: network/security/SQL code outside reviewed startup remains byte-for-byte unchanged',()=>{
  const prefix=runner.slice(runner.indexOf('failure_stage=network-setup\n'),runner.indexOf('# BEGIN task-private startup adapter'));
- const suffix=runner.slice(runner.indexOf('# Defense in depth: remove default routes'));
+ const suffix=runner.slice(runner.indexOf('# Defense in depth: remove default routes')).replace("# Migration 24 creates pg_cron; require its objects after replay, before security snapshots/tests.\nfailure_category=security-cron\ncheck_cron_safety true >\"$raw/cron-objects-after.stdout\" 2>\"$raw/cron-objects-after.stderr\"\n[[ $(cat -- \"$raw/cron-objects-after.stdout\") == t ]]\nfailure_category=none\n",'');
  assert.equal(createHash('sha256').update(prefix).digest('hex'),'e729b5256627690c83dbd4bfded228feb003b601a57258f106716e066db78a24');
  assert.equal(createHash('sha256').update(suffix).digest('hex'),'9de9aadab1868bcdcce3dda1f96e74f07063a6b7e86270bd624a29215f071cec');
 });
@@ -434,7 +434,7 @@ const program=[
 ': >"$raw/calls"; : >"$raw/sleeps"; : >"$raw/next"',
 'cli_local() { printf "CALL:%s\\n" "$failure_stage" >>"$raw/calls"; printf "fixture-not-a-real-secret\\n"; printf "synthetic-private-message\\n" >&2; [[ $fail != db-start-cli ]] || return 1; if [[ $fail != missing-adapter-proof ]]; then printf \'{"serverCronOff":true}\\n\' >"$raw/startup-override.json"; fi; }',
 'docker() {',
-' [[ $1 == exec && $2 == "$db" && $3 == psql ]] || return 1',
+' [[ $1 == exec ]] || return 1; if [[ $2 == -i ]]; then shift; fi; [[ $2 == "$db" && $3 == psql ]] || return 1',
 ' printf "CALL:%s\\n" "$failure_stage" >>"$raw/calls"',
 ' if [[ $fail == "$failure_stage" ]]; then',
 '   if [[ $output_on_failure == 1 ]]; then',
@@ -613,11 +613,35 @@ assert.ok(runner.includes('>\"$task/bin/docker\"'));assert.ok(runner.includes('[
 assert.ok(runner.indexOf('cat -- "$raw/startup-override.json"')<runner.indexOf('failure_stage=db-start-version-num-query'));
 assert.ok(!runner.includes('ALTER SYSTEM SET cron.launch_active_jobs'));assert.ok(!runner.includes('SELECT pg_reload_conf()'));
 assert.ok(runner.includes("source = 'command line' AND NOT pending_restart"));
-assert.ok(runner.slice(runner.indexOf('failure_stage=db-start-cron-confirm')).includes('-U supabase_admin -d postgres'));
-for(const token of ["rolsuper FROM pg_roles WHERE rolname = current_user","current_setting('cron.database_name') = 'postgres'","current_setting('cron.host') = 'localhost'","shared_preload_libraries","extname = 'pg_cron'","NOT EXISTS (SELECT 1 FROM cron.job)","NOT EXISTS (SELECT 1 FROM cron.job_run_details)"])assert.ok(runner.includes(token));
+assert.ok(runner.slice(runner.indexOf('check_cron_safety()'),runner.indexOf('failure_stage=db-start-cli')).includes('-U supabase_admin -d postgres'));
+ assert.ok(runner.slice(runner.indexOf('failure_stage=db-start-cron-confirm')).includes('check_cron_safety false'));
+for(const token of ["rolsuper FROM pg_roles WHERE rolname = current_user","current_setting('cron.database_name') = 'postgres'","current_setting('cron.host') = 'localhost'","shared_preload_libraries","extname = 'pg_cron'","to_regclass(object_name)","ARRAY['cron.job', 'cron.job_run_details']","IF $require_objects OR extension_installed"])assert.ok(runner.includes(token));
 assert.ok(runner.indexOf('[[ $cron_safe == t ]]')<runner.indexOf('failure_stage=migrations'));
 });
 for(const stage of ['db-start-cron-alter','db-start-cron-reload'])test('adapter: historical diagnostic retained safely '+stage,()=>{
 const d={stage,category:'db-start-command-failed'};assert.deepEqual(sanitizeDiagnostic(d),d);assert.deepEqual(collectDiagnostic(d).diagnostic,d);
 });
 })();
+
+test('cron lifecycle: resolve optional startup catalogs before dynamic access',()=>{
+ const sql=runner.slice(runner.indexOf('check_cron_safety() {'),runner.indexOf('failure_stage=db-start-cli'));
+ assert.ok(sql.includes('relation_id := to_regclass(object_name)'));
+ assert.ok(sql.indexOf('IF relation_id IS NULL THEN')<sql.indexOf('EXECUTE format('));
+ assert.ok(sql.includes('IF $require_objects OR extension_installed THEN'));
+ assert.ok(sql.includes("ELSIF NOT $require_objects OR object_name = 'cron.job_run_details' THEN"));
+ assert.doesNotMatch(sql,/FROM cron\.(job|job_run_details)\b/);
+ assert.ok(sql.includes('IS DISTINCT FROM true'));assert.ok(sql.includes('nonempty IS DISTINCT FROM false'));
+ assert.ok(sql.includes('BEGIN READ ONLY;'));assert.ok(sql.includes('ON_ERROR_STOP=1'));
+});
+test('cron lifecycle: require objects after replay before existing security snapshots',()=>{
+ const replay=runner.indexOf('cli_local migration up --local'),check=runner.indexOf('check_cron_safety true');
+ const snapshot=runner.indexOf('<"$root/scripts/stage3/assert-local-security.sql"'),suites=runner.indexOf('failure_stage=pgtap');
+ assert.ok(replay<check&&check<snapshot&&snapshot<suites);
+ assert.ok(runner.includes('IF $require_objects AND NOT extension_installed THEN'));
+ assert.ok(runner.includes('check_cron_safety false >'));
+});
+test('cron lifecycle: retain server-wide pre-migration safety requirements',()=>{
+ for(const token of ["source = 'command line' AND NOT pending_restart","current_setting('cron.launch_active_jobs') = 'off'","current_setting('cron.database_name') = 'postgres'","current_setting('cron.host') = 'localhost'","shared_preload_libraries","rolsuper FROM pg_roles WHERE rolname = current_user"])assert.ok(runner.includes(token));
+ assert.ok(runner.indexOf('check_cron_safety false >')<runner.indexOf('failure_stage=migrations'));
+ assert.ok(runner.includes('failure_category=security-cron\ncheck_cron_safety true'));
+});

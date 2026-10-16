@@ -489,6 +489,52 @@ printf '#!/usr/bin/env bash\nexec node %q %q %q %q "$@"\n' \
 chmod 700 "$task/bin/docker"
 # END task-private startup adapter
 # BEGIN granular startup diagnostics
+check_cron_safety() {
+  local require_objects=$1
+  [[ $require_objects == true || $require_objects == false ]] || return 1
+  docker exec -i "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U supabase_admin -d postgres <<SQL
+BEGIN READ ONLY;
+DO \$cron_safety\$
+DECLARE
+  extension_installed boolean;
+  object_name text;
+  relation_id oid;
+  nonempty boolean;
+BEGIN
+  IF (
+    (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)
+    AND (SELECT count(*) = 1 AND bool_and(setting = 'off' AND source = 'command line' AND NOT pending_restart)
+      FROM pg_settings WHERE name = 'cron.launch_active_jobs')
+    AND current_setting('cron.launch_active_jobs') = 'off'
+    AND current_setting('cron.database_name') = 'postgres'
+    AND current_setting('cron.host') = 'localhost'
+    AND 'pg_cron' = ANY(regexp_split_to_array(current_setting('shared_preload_libraries'), '\s*,\s*'))
+  ) IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Cron runtime safety requirements not satisfied';
+  END IF;
+  SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') INTO extension_installed;
+  IF $require_objects AND NOT extension_installed THEN
+    RAISE EXCEPTION 'Required Cron extension missing';
+  END IF;
+  FOREACH object_name IN ARRAY ARRAY['cron.job', 'cron.job_run_details'] LOOP
+    relation_id := to_regclass(object_name);
+    IF relation_id IS NULL THEN
+      IF $require_objects OR extension_installed THEN
+        RAISE EXCEPTION 'Required Cron object missing';
+      END IF;
+    ELSIF NOT $require_objects OR object_name = 'cron.job_run_details' THEN
+      EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s)', relation_id::regclass) INTO nonempty;
+      IF nonempty IS DISTINCT FROM false THEN
+        RAISE EXCEPTION 'Unexpected Cron jobs or execution history';
+      END IF;
+    END IF;
+  END LOOP;
+END;
+\$cron_safety\$;
+SELECT true;
+COMMIT;
+SQL
+}
 failure_stage=db-start-cli
 failure_category=db-start-command-failed
 PATH="$task/bin:$PATH" cli_local db start >"$raw/start.log" 2>&1
@@ -515,18 +561,7 @@ failure_category=db-start-version-mismatch
 # Require server-wide Cron off from first startup; no session/role/database substitute.
 failure_stage=db-start-cron-confirm
 failure_category=db-start-command-failed
-docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U supabase_admin -d postgres \
-  -c "SELECT
-    (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)
-    AND     (SELECT count(*) = 1 AND bool_and(setting = 'off' AND source = 'command line' AND NOT pending_restart)
-      FROM pg_settings WHERE name = 'cron.launch_active_jobs')
-    AND current_setting('cron.launch_active_jobs') = 'off'
-    AND current_setting('cron.database_name') = 'postgres'
-    AND current_setting('cron.host') = 'localhost'
-    AND 'pg_cron' = ANY(regexp_split_to_array(current_setting('shared_preload_libraries'), '\s*,\s*'))
-    AND EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron')
-    AND NOT EXISTS (SELECT 1 FROM cron.job)
-    AND NOT EXISTS (SELECT 1 FROM cron.job_run_details)" >"$raw/cron-confirm.stdout" 2>"$raw/cron-confirm.stderr"
+check_cron_safety false >"$raw/cron-confirm.stdout" 2>"$raw/cron-confirm.stderr"
 cron_safe=$(cat -- "$raw/cron-confirm.stdout")
 failure_category=db-start-cron-not-disabled
 [[ $cron_safe == t ]]
@@ -610,6 +645,11 @@ import {pathToFileURL} from 'node:url';const {verifyBaseline}=await import(pathT
 NODE
 cli_local migration up --local >"$raw/migrations.log" 2>&1
 failure_stage=security-before-sql
+# Migration 24 creates pg_cron; require its objects after replay, before security snapshots/tests.
+failure_category=security-cron
+check_cron_safety true >"$raw/cron-objects-after.stdout" 2>"$raw/cron-objects-after.stderr"
+[[ $(cat -- "$raw/cron-objects-after.stdout") == t ]]
+failure_category=none
 docker exec -i "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
   <"$root/scripts/stage3/assert-local-security.sql" >"$raw/security-before.json"
 failure_stage=security-before-verify
