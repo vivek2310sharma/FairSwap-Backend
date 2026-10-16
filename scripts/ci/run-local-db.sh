@@ -116,6 +116,13 @@ NODE
     fi
   fi
   printf 'FAIL: database CI stage=%s; raw output withheld\n' "$failure_stage" >&3
+  case ${failure_category:-none} in
+    none|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|unclassified) ;;
+    *) failure_category=unclassified ;;
+  esac
+  if [[ ${failure_category:-none} != none ]]; then
+    printf 'FAIL: database CI category=%s; raw output withheld\n' "$failure_category" >&3
+  fi
   echo 'FAIL: database CI or cleanup incomplete; see sanitized failure artifact' >&3
   exit 1
 }
@@ -162,7 +169,25 @@ while IFS=$'\t' read -r key tag digest; do
   [[ $tag =~ ^public.ecr.aws/supabase/[a-z_-]+:[A-Za-z0-9._-]+$ && $digest =~ ^sha256:[a-f0-9]{64}$ ]]
   ref="${tag%:*}@$digest"
   failure_stage="image-$key-pull"
-  docker pull --platform linux/amd64 "$ref"
+  # Keep registry diagnostics in task-private storage. Export fixed categories only.
+  pull_log="$raw/image-pull-$key.log"
+  if ! docker pull --platform linux/amd64 "$ref" >"$pull_log" 2>&1; then
+    failure_category=unclassified
+    if grep -Eiq 'toomanyrequests|too many requests|rate limit|(^|[^0-9])429([^0-9]|$)' "$pull_log"; then
+      failure_category=rate-limited
+    elif grep -Eiq 'manifest unknown|manifest.*not found|blob unknown|(^|[^0-9])404([^0-9]|$)' "$pull_log"; then
+      failure_category=manifest-not-found
+    elif grep -Eiq 'denied|unauthorized|authentication|authorization|forbidden|(^|[^0-9])(401|403)([^0-9]|$)' "$pull_log"; then
+      failure_category=registry-denied
+    elif grep -Eiq 'unsupported.*manifest|unsupported media type|no matching manifest' "$pull_log"; then
+      failure_category=unsupported-manifest
+    elif grep -Eiq 'no space left on device|insufficient (disk|storage)' "$pull_log"; then
+      failure_category=storage-error
+    elif grep -Eiq 'timeout|connection reset|connection refused|network unreachable|no route to host|TLS handshake|context deadline|EOF|proxyconnect' "$pull_log"; then
+      failure_category=transport-error
+    fi
+    exit 1
+  fi
   failure_stage="image-$key-inspect"
   id=$(docker image inspect -f '{{.Id}}' "$ref")
   [[ $(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$ref") == linux/amd64 ]]
