@@ -58,6 +58,105 @@ const same = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical
 function requireAllTrue(object, keys) {
   requireCondition(object && same(Object.keys(object), keys) && keys.every(key => object[key] === true));
 }
+// Finite diagnostic vocabularies: never publish raw command output or caller text.
+export const imageDiagnosticStages = Object.freeze([
+  "image-postgres-buildx-check",
+  "image-postgres-index-fetch",
+  "image-postgres-index-digest",
+  "image-postgres-amd64-descriptor",
+  "image-postgres-child-fetch",
+  "image-postgres-child-digest",
+  "image-postgres-child-pull",
+  "image-postgres-child-id-inspect",
+  "image-pin-list",
+  "image-role-validate",
+  "image-postgres-child-id-verify",
+  "image-tools-evidence",
+  "image-postgres-reference-select",
+  "image-pgProve-reference-select",
+  ...["postgres","pgProve","authBootstrap","storageBootstrap","realtimeBootstrap"].flatMap(role =>
+    ["validate","reference-validate","pull","id-inspect","platform-inspect","platform-verify","repo-digests-inspect","repo-digests-verify","tag-probe","tag-existing-id-inspect","tag-existing-id-verify","tag-create","tag-final-id-inspect","tag-final-id-verify","evidence"].map(operation => `image-${role}-${operation}`)),
+]);
+export const diagnosticStages = Object.freeze([
+  ...["unclassified","preflight","manifest-before","cli-download","cli-check","images","network-setup","port-probe","db-start","isolation-before","migrations","security-before","pgtap","security-after","isolation-after","manifest-after","complete","port-probe-run","port-probe-inspect","port-probe-binding","port-probe-cleanup","firewall-hooks","firewall-setup","firewall-verify","route-isolation","security-before-sql","security-before-verify","cleanup","artifact-validation"], ...imageDiagnosticStages,
+]);
+export const diagnosticCategories = Object.freeze([
+  "none",
+  "unclassified",
+  "required-tool-check-failed",
+  "manifest-retrieval-failed",
+  "digest-check-failed",
+  "descriptor-check-failed",
+  "image-pull-failed",
+  "image-inspect-failed",
+  "platform-check-failed",
+  "repo-digest-check-failed",
+  "child-image-id-check-failed",
+  "pin-check-failed",
+  "tag-check-failed",
+  "tag-create-failed",
+  "evidence-write-failed",
+  "cleanup-failed",
+  "evidence-validation-failed",
+  "manifest-not-found",
+  "registry-denied",
+  "rate-limited",
+  "transport-error",
+  "storage-error",
+  "unsupported-manifest",
+  "probe-run-error",
+  "probe-port-conflict",
+  "probe-network-rule-error",
+  "probe-entrypoint-error",
+  "probe-image-missing",
+  "probe-port-missing",
+  "probe-wildcard-binding",
+  "probe-other-binding",
+  "security-parse",
+  "security-version",
+  "security-ledger",
+  "security-vault",
+  "security-setting",
+  "security-queues",
+  "security-buckets",
+  "security-rls",
+  "security-column-grants",
+  "security-rls-shape",
+  "security-extensions",
+  "security-rpcs",
+  "security-cron",
+  "security-runtime",
+  "security-trigger",
+  "security-unclassified",
+  "security-rls-email_outbox-present",
+  "security-rls-email_outbox-relrowsecurity",
+  "security-rls-email_outbox-relforcerowsecurity",
+  "security-rls-email_outbox-policies",
+  "security-rls-email_outbox-anon_any_dml",
+  "security-rls-email_outbox-authenticated_any_dml",
+  "security-rls-listing_media-present",
+  "security-rls-listing_media-relrowsecurity",
+  "security-rls-listing_media-relforcerowsecurity",
+  "security-rls-listing_media-policies",
+  "security-rls-listing_media-anon_any_dml",
+  "security-rls-listing_media-authenticated_any_dml",
+  "security-rls-listings-present",
+  "security-rls-listings-relrowsecurity",
+  "security-rls-listings-relforcerowsecurity",
+  "security-rls-listings-policies",
+  "security-rls-listings-anon_any_dml",
+  "security-rls-listings-authenticated_any_dml"
+]);
+export function sanitizeDiagnostic(value) {
+  const unknown = {stage:"unclassified",category:"unclassified"};
+  if (!value || typeof value !== "object" || Array.isArray(value)
+      || Object.keys(value).length !== 2
+      || !Object.hasOwn(value,"stage") || !Object.hasOwn(value,"category")
+      || typeof value.stage !== "string" || typeof value.category !== "string"
+      || !diagnosticStages.includes(value.stage) || !diagnosticCategories.includes(value.category)) return unknown;
+  return {stage:value.stage,category:value.category};
+}
+
 export function expectedMigrationVersions() {
   return readFileSync(path.join(repositoryRoot, "docs/extraction/MIGRATION_MANIFEST.sha256"), "utf8")
     .trimEnd().split("\n").map(line => path.posix.basename(line.slice(66)).slice(0, 14)).sort();
@@ -95,6 +194,7 @@ export function verifySecurity(snapshot) {
 }
 export function verifyDbResults(report) {
   requireCondition(report?.schemaVersion === 1 && report.success === true && report.executionExit === 0);
+  requireCondition(same(report.diagnostic,{stage:"complete",category:"none"}));
   requireCondition(report.compatibility?.passed === true && report.compatibility.assertionsObserved === 74
     && report.compatibility.failed?.length === 0 && report.compatibility.observations?.length === 4);
   requireCondition(report.manifestSha256 === manifestSha256 && report.manifestVerifiedBeforeAndAfter === true);
@@ -144,8 +244,28 @@ export function verifyEvidence(directory) {
   requireCondition(same(readJson(path.join(directory, "suite-results.json")), report.suites));
   return true;
 }
+function writeEvidence(directory,report,suites) {
+  mkdirSync(directory, { recursive: true });
+  requireCondition(readdirSync(directory).every(file => ["result.json", "suite-results.json", "SHA256SUMS"].includes(file)));
+  requireCondition(readdirSync(directory).every(file => lstatSync(path.join(directory, file)).isFile()
+    && !lstatSync(path.join(directory, file)).isSymbolicLink()));
+  writeFileSync(path.join(directory, "result.json"), `${JSON.stringify(report, null, 2)}\n`);
+  writeFileSync(path.join(directory, "suite-results.json"), `${JSON.stringify(suites, null, 2)}\n`);
+  writeFileSync(path.join(directory, "SHA256SUMS"), ["result.json", "suite-results.json"]
+    .map(file => `${sha256(readFileSync(path.join(directory, file)))}  ${file}\n`).join(""));
+}
+export function invalidateCleanupEvidence(directory,diagnostic) {
+  writeEvidence(directory,{
+    schemaVersion:1,success:false,reason:"Task cleanup failed; raw output withheld",
+    diagnostic:sanitizeDiagnostic(diagnostic),cleanup:"FAILED",
+  },[]);
+  return false;
+}
 export function collectEvidence(rawDirectory, directory) {
   let report = { schemaVersion: 1, success: false, reason: "Database CI incomplete or failed; raw output withheld" };
+  let diagnostic=sanitizeDiagnostic(null);
+  try {diagnostic=sanitizeDiagnostic(readJson(path.join(rawDirectory,"diagnostic.json")));} catch { /* Fixed unknown only. */ }
+  report.diagnostic=diagnostic;
   let compatibility={executed:false,passed:false};
   try { const log=readFileSync(path.join(rawDirectory,"moderation_compatibility.test.sql.log"),"utf8"); compatibility.executed=true; compatibility=inspectTap(log,Number(readFileSync(path.join(rawDirectory,"moderation_compatibility.test.sql.exit"),"utf8").trim())); } catch { /* Fixed failure only; never export exception text. */ }
   report.compatibility=compatibility;
@@ -168,7 +288,7 @@ export function collectEvidence(rawDirectory, directory) {
       return parseSuiteLog(file, readFileSync(path.join(rawDirectory, `${file}.log`), "utf8"), Number(exit));
     });
     const candidate = {
-      schemaVersion: 1, success: true, compatibility, executionExit: execution.exitCode,
+      schemaVersion: 1, success: true, diagnostic, compatibility, executionExit: execution.exitCode,
       manifestSha256: manifest.sha256, manifestVerifiedBeforeAndAfter: manifest.before === true && manifest.after === true,
       tools: readJson(path.join(rawDirectory, "tools.json")), images: readJson(path.join(rawDirectory, "images.json")),
       isolationBefore: readJson(path.join(rawDirectory, "isolation-before.json")),
@@ -197,26 +317,24 @@ export function collectEvidence(rawDirectory, directory) {
   } catch {
     // No assertion messages, URLs, absolute paths, credentials or raw error text escape.
     suites = [];
+    if (diagnostic.stage==="complete") report.diagnostic={stage:"artifact-validation",category:"evidence-validation-failed"};
     try {
       const cleanup = readJson(path.join(rawDirectory, "cleanup.json"));
       requireAllTrue(cleanup, cleanupKeys);
       report.cleanup = Object.fromEntries(cleanupKeys.map(key => [key, true]));
     } catch { report.cleanup = "UNVERIFIED"; }
   }
-  mkdirSync(directory, { recursive: true });
-  requireCondition(readdirSync(directory).every(file => ["result.json", "suite-results.json", "SHA256SUMS"].includes(file)));
-  requireCondition(readdirSync(directory).every(file => lstatSync(path.join(directory, file)).isFile()
-    && !lstatSync(path.join(directory, file)).isSymbolicLink()));
-  writeFileSync(path.join(directory, "result.json"), `${JSON.stringify(report, null, 2)}\n`);
-  writeFileSync(path.join(directory, "suite-results.json"), `${JSON.stringify(suites, null, 2)}\n`);
-  writeFileSync(path.join(directory, "SHA256SUMS"), ["result.json", "suite-results.json"]
-    .map(file => `${sha256(readFileSync(path.join(directory, file)))}  ${file}\n`).join(""));
+  writeEvidence(directory,report,suites);
   if (passed) verifyEvidence(directory);
   return passed;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const [mode, first, second, ...extra] = process.argv.slice(2);
+    if (mode==="--cleanup-failed" && first && second && extra.length===1) {
+      invalidateCleanupEvidence(first,{stage:second,category:extra[0]});
+      throw new Error("Cleanup failed");
+    }
     requireCondition(extra.length === 0);
     if (mode === "--collect" && first && second) requireCondition(collectEvidence(first, second));
     else if (mode === "--verify" && first && !second) verifyEvidence(first);

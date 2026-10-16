@@ -4,9 +4,12 @@ import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdtempSync,readdirSync,mkdirSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {manifestSha256} from '../ci/verify-baseline.mjs';
 import {verifyEvent,verifyChanges,base} from './verify-source.mjs';
 import {inspectTap,verifyTap,assertions} from './parse-compatibility.mjs';
-import {verifySecurity,expectedRls,expectedColumnDml,expectedMigrationVersions,requiredSuites,collectEvidence} from './verify-db-results.mjs';
+import {verifySecurity,expectedRls,expectedColumnDml,expectedMigrationVersions,requiredSuites,collectEvidence,verifyDbResults,isolationKeys,cleanupKeys,imageDiagnosticStages,diagnosticStages,diagnosticCategories,sanitizeDiagnostic,invalidateCleanupEvidence} from './verify-db-results.mjs';
 const read=p=>readFileSync(new URL('../../'+p,import.meta.url),'utf8');
 const workflow=read('.github/workflows/stage3-pg17-compat.yml');
 const runner=read('scripts/stage3/run-local-db.sh');
@@ -130,4 +133,153 @@ test('failed-run evidence preserves only validated compatibility observations',(
   assert.equal(report.compatibility.observations.length,4);
   assert.ok(!JSON.stringify(report).includes('synthetic parser fixture'));
  } finally {rmSync(dir,{recursive:true,force:true})}
+});
+
+// Step 1E synthetic diagnostic fixtures only: no Docker, registry or database calls.
+const unknownDiagnostic={stage:'unclassified',category:'unclassified'};
+function collectDiagnostic(diagnostic,{malformed=false,cleanup=true}={}){
+ const dir=mkdtempSync(path.join(tmpdir(),'stage3-diagnostic-'));
+ try{
+  const raw=path.join(dir,'raw'),out=path.join(dir,'out');mkdirSync(raw);
+  writeFileSync(path.join(raw,'diagnostic.json'),malformed?'not-json':JSON.stringify(diagnostic));
+  writeFileSync(path.join(raw,'runner.log'),'synthetic-private-message /private/operator/.env token=fixture-not-a-real-secret');
+  writeFileSync(path.join(raw,'execution.json'),'{"exitCode":1}');
+  if(cleanup)writeFileSync(path.join(raw,'cleanup.json'),JSON.stringify(Object.fromEntries(cleanupKeys.map(k=>[k,true]))));
+  assert.equal(collectEvidence(raw,out),false);
+  const text=readFileSync(path.join(out,'result.json'),'utf8'),r=JSON.parse(text);
+  assert.equal(r.success,false);
+  for(const secret of [dir,'synthetic-private-message','fixture-not-a-real-secret'])assert.ok(!text.includes(secret));
+  return r;
+ }finally{rmSync(dir,{recursive:true,force:true})}
+}
+for(const stage of imageDiagnosticStages)test('retain safe image stage: '+stage,()=>{
+ const d={stage,category:'image-pull-failed'};
+ assert.deepEqual(sanitizeDiagnostic(d),d);
+ assert.deepEqual(collectDiagnostic(d).diagnostic,d);
+ const candidate=successfulContract();candidate.diagnostic=d;assert.throws(()=>verifyDbResults(candidate));
+});
+for(const [name,value] of [
+ ['missing',undefined],['null',null],['array',[]],['string','synthetic-private-message'],
+ ['missing category',{stage:'image-postgres-index-fetch'}],
+ ['stage type',{stage:1,category:'none'}],
+ ['category type',{stage:'image-postgres-index-fetch',category:{token:'fixture-not-a-real-secret'}}],
+ ['unknown prefix',{stage:'image-postgres-synthetic-private-message',category:'none'}],
+ ['newline stage',{stage:'image-postgres-index-fetch\nsynthetic-private-message',category:'none'}],
+ ['unknown category',{stage:'image-postgres-index-fetch',category:'synthetic-private-message'}],
+ ['extra raw text',{stage:'image-postgres-index-fetch',category:'registry-denied',raw:'fixture-not-a-real-secret'}],
+ ['former wildcard category',{stage:'security-before',category:'security-rls-listings-synthetic-private-message'}],
+ ['extra env',{stage:'image-postgres-index-fetch',category:'registry-denied',env:{TOKEN:'fixture-not-a-real-secret'}}],
+])test('reject diagnostic '+name,()=>{
+ assert.deepEqual(sanitizeDiagnostic(value),unknownDiagnostic);
+ assert.deepEqual(collectDiagnostic(value===undefined?{}:value).diagnostic,unknownDiagnostic);
+});
+test('reject malformed diagnostic JSON without raw text',()=>assert.deepEqual(collectDiagnostic(null,{malformed:true}).diagnostic,unknownDiagnostic));
+test('every category is an exact finite enum',()=>{
+ assert.equal(new Set(diagnosticCategories).size,diagnosticCategories.length);
+ for(const category of diagnosticCategories)assert.deepEqual(sanitizeDiagnostic({stage:'image-postgres-index-fetch',category}),{stage:'image-postgres-index-fetch',category});
+ for(const x of [...diagnosticStages,...diagnosticCategories])assert.match(x,/^[A-Za-z0-9_-]+$/);
+});
+test('Bash and collector enums agree exactly; all 89 image stages are used',()=>{
+ const stages=runner.match(/case \$\{failure_stage:-unclassified\} in\n\s+([^\n]+) \) ;;/);
+ const categories=runner.match(/case \$\{failure_category:-none\} in\n\s+([^\n]+) \) ;;/);
+ assert.ok(stages&&categories);
+ assert.deepEqual(stages[1].split('|').sort(),[...diagnosticStages].sort());
+ assert.deepEqual(categories[1].split('|').sort(),[...diagnosticCategories].sort());
+ const used=new Set();
+ for(const m of runner.matchAll(/^\s*image_phase (?:"([^"]+)"|(\S+)) (\S+)$/gm)){
+  const stage=m[1]??m[2];assert.ok(diagnosticCategories.includes(m[3]));
+  for(const s of stage.includes('$key')?['postgres','pgProve','authBootstrap','storageBootstrap','realtimeBootstrap'].map(role=>stage.replace('$key',role)):[stage]){
+   assert.ok(imageDiagnosticStages.includes(s),s);used.add(s);
+  }
+ }
+ assert.deepEqual([...used].sort(),[...imageDiagnosticStages].sort());
+ assert.ok(runner.includes('done <"$raw/image-pins.tsv"'));
+ assert.ok(runner.includes('--cleanup-failed "$evidence" "$failure_stage" "$failure_category"'));
+});
+test('formerly grouped initial commands have distinct preceding stages',()=>{
+ const checks=[
+ ['image-postgres-buildx-check','docker buildx version'],
+ ['image-postgres-index-fetch','if ! docker buildx imagetools inspect --raw "$pg_repository@$pg_index"'],
+ ['image-postgres-index-digest','"'+ '$'+'{pg_index#sha256:}" "$raw/pg17-index.json" | sha256sum -c -'],
+ ['image-postgres-amd64-descriptor','node --input-type=module - "$raw/pg17-index.json" "$pg_child"'],
+ ['image-postgres-child-fetch','if ! docker buildx imagetools inspect --raw "$pg_repository@$pg_child"'],
+ ['image-postgres-child-digest','"'+ '$'+'{pg_child#sha256:}" "$raw/pg17-child.json" | sha256sum -c -'],
+ ['image-postgres-child-pull','if ! docker pull --platform linux/amd64 "$pg_repository@$pg_child"'],
+ ['image-postgres-child-id-inspect',"pg_child_id=$(docker image inspect -f '{{.Id}}'"],
+ ];let previous=-1;
+ for(const [stage,cmd] of checks){const marker=runner.indexOf('image_phase '+stage+' '),operation=runner.indexOf(cmd,marker);assert.ok(marker>previous&&operation>marker);previous=operation}
+});
+function successfulContract(){
+ return {schemaVersion:1,success:true,executionExit:0,diagnostic:{stage:'complete',category:'none'},
+ compatibility:verifyTap(goodTap(),0),manifestSha256,manifestVerifiedBeforeAndAfter:true,
+ tools:{nodeVersion:pins.node,cliVersion:pins.database.cliVersion,os:'linux',arch:'amd64',dockerVersion:'29.0.0'},
+ images:Object.fromEntries(Object.entries(pins.database.images).map(([k,p])=>[k,{...p,platform:'linux/amd64',imageId:'sha256:'+'a'.repeat(64)}])),
+ isolationBefore:Object.fromEntries(isolationKeys.map(k=>[k,true])),isolationAfter:Object.fromEntries(isolationKeys.map(k=>[k,true])),
+ cleanup:Object.fromEntries(cleanupKeys.map(k=>[k,true])),
+ suites:Object.entries(requiredSuites).map(([file,assertions])=>({file,assertions,failedAssertions:0,exitCode:0,result:'PASS'})),
+ securityBefore:security(),securityAfter:security()};
+}
+test('complete synthetic success still passes original contract',()=>assert.equal(verifyDbResults(successfulContract()),true));
+for(const [name,alter] of [
+ ['image failure',r=>r.diagnostic={stage:'image-postgres-index-digest',category:'digest-check-failed'}],
+ ['image stage with none',r=>r.diagnostic={stage:'image-postgres-index-fetch',category:'none'}],
+ ['unknown stage',r=>r.diagnostic=unknownDiagnostic],['missing diagnostic',r=>delete r.diagnostic],
+ ['extra raw diagnostic',r=>r.diagnostic.raw='fixture-not-a-real-secret'],
+ ['nonzero execution',r=>r.executionExit=1],['false success',r=>r.success=false],
+ ['wrong manifest',r=>r.manifestSha256='0'.repeat(64)],['missing byte proof',r=>r.manifestVerifiedBeforeAndAfter=false],
+ ['changed pin',r=>r.images.postgres.digest='sha256:'+'0'.repeat(64)],
+ ['wrong Node',r=>r.tools.nodeVersion='24.0.0'],['wrong CLI',r=>r.tools.cliVersion='2.0.0'],
+ ['insufficient Docker',r=>r.tools.dockerVersion='27.0.0'],
+ ['missing v6 isolation',r=>r.isolationBefore.ipv6Denied=false],['post firewall failure',r=>r.isolationAfter.firewallIsolated=false],
+ ['cleanup failed',r=>r.cleanup.firewallRemoved=false],['cleanup missing',r=>delete r.cleanup.portClosed],
+ ['missing suite',r=>r.suites.pop()],['wrong SQL count',r=>r.suites[0].assertions=73],
+ ['suite nonzero exit',r=>r.suites[0].exitCode=1],['compatibility failed',r=>r.compatibility.passed=false],
+ ['wrong PG patch',r=>r.securityBefore.version_num=170007],['nonempty Vault',r=>r.securityAfter.vault_count=1],
+ ['moderation enabled',r=>r.securityAfter.moderation_automation_enabled='true'],
+ ['changed ledger',r=>r.securityAfter.migration_versions.pop()],
+])test('success remains strict: '+name,()=>{const r=successfulContract();alter(r);assert.throws(()=>verifyDbResults(r))});
+test('missing cleanup evidence cannot pass',()=>{
+ const r=collectDiagnostic({stage:'image-postgres-index-fetch',category:'registry-denied'},{cleanup:false});
+ assert.equal(r.success,false);assert.equal(r.cleanup,'UNVERIFIED');
+});
+test('late cleanup failure invalidates success and preserves safe stage',()=>{
+ const dir=mkdtempSync(path.join(tmpdir(),'stage3-cleanup-'));
+ try{
+  writeFileSync(path.join(dir,'result.json'),JSON.stringify(successfulContract()));
+  const d={stage:'image-postgres-child-pull',category:'transport-error'};
+  assert.equal(invalidateCleanupEvidence(dir,d),false);
+  const r=JSON.parse(readFileSync(path.join(dir,'result.json'),'utf8'));
+  assert.equal(r.success,false);assert.equal(r.cleanup,'FAILED');assert.deepEqual(r.diagnostic,d);
+  assert.deepEqual(JSON.parse(readFileSync(path.join(dir,'suite-results.json'),'utf8')),[]);
+  assert.throws(()=>verifyDbResults(r));
+ }finally{rmSync(dir,{recursive:true,force:true})}
+});
+test('cleanup invalidation CLI remains a nonzero sanitized failure',()=>{
+ const dir=mkdtempSync(path.join(tmpdir(),'stage3-cleanup-cli-'));
+ try{
+  let failure;try{execFileSync(process.execPath,[fileURLToPath(new URL('./verify-db-results.mjs',import.meta.url)),'--cleanup-failed',dir,'image-postgres-child-pull','image-pull-failed'],{encoding:'utf8',stdio:'pipe'})}catch(e){failure=e}
+  assert.ok(failure);assert.equal(failure.status,1);
+  assert.match(failure.stderr,/^FAIL: database CI evidence missing, unsafe, incomplete or outside the approved contract\s*$/);
+  assert.equal(JSON.parse(readFileSync(path.join(dir,'result.json'),'utf8')).cleanup,'FAILED');
+ }finally{rmSync(dir,{recursive:true,force:true})}
+});
+
+test('runner initializes safe diagnostic defaults before any failing preflight command',()=>{
+ assert.ok(runner.includes('failure_stage=preflight\nfailure_category=none\n'));
+ assert.ok(runner.includes('failure_stage=$'+'{failure_stage:-unclassified}'));
+ assert.ok(runner.includes('failure_category=$'+'{failure_category:-none}'));
+ assert.ok(runner.indexOf('failure_category=none')<runner.indexOf('trap cleanup EXIT'));
+});
+test('image diagnostic CLI cannot produce success or print raw diagnostics',()=>{
+ const dir=mkdtempSync(path.join(tmpdir(),'stage3-image-cli-'));
+ try{
+  const raw=path.join(dir,'raw'),out=path.join(dir,'out');mkdirSync(raw);
+  writeFileSync(path.join(raw,'diagnostic.json'),JSON.stringify({stage:'image-postgres-index-fetch',category:'registry-denied'}));
+  writeFileSync(path.join(raw,'execution.json'),'{"exitCode":1}');
+  writeFileSync(path.join(raw,'runner.log'),'fixture-not-a-real-secret /private/operator/.env');
+  let error;try{execFileSync(process.execPath,[fileURLToPath(new URL('./verify-db-results.mjs',import.meta.url)),'--collect',raw,out],{encoding:'utf8',stdio:'pipe'})}catch(e){error=e}
+  assert.ok(error);assert.equal(error.status,1);
+  assert.ok(!error.stderr.includes(dir)&&!error.stderr.includes('fixture-not-a-real-secret'));
+  assert.equal(JSON.parse(readFileSync(path.join(out,'result.json'),'utf8')).success,false);
+ }finally{rmSync(dir,{recursive:true,force:true})}
 });

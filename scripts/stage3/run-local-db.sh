@@ -42,6 +42,7 @@ exec 3>&1
 exec >>"$raw/runner.log" 2>&1
 # Fixed, non-sensitive phase marker for fail-closed GitHub diagnostics.
 failure_stage=preflight
+failure_category=none
 
 inventory() {
   docker ps -aq --no-trunc | sort >"$raw/containers-$1.txt" || return 1
@@ -54,6 +55,18 @@ json_true() {
 import {writeFileSync} from 'node:fs';
 writeFileSync(process.argv[2], JSON.stringify(Object.fromEntries(process.argv.slice(3).map(k => [k,true]))));
 NODE
+}
+sanitize_failure() {
+  failure_stage=${failure_stage:-unclassified}
+  failure_category=${failure_category:-none}
+  case ${failure_stage:-unclassified} in
+    unclassified|preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete|port-probe-run|port-probe-inspect|port-probe-binding|port-probe-cleanup|firewall-hooks|firewall-setup|firewall-verify|route-isolation|security-before-sql|security-before-verify|cleanup|artifact-validation|image-postgres-buildx-check|image-postgres-index-fetch|image-postgres-index-digest|image-postgres-amd64-descriptor|image-postgres-child-fetch|image-postgres-child-digest|image-postgres-child-pull|image-postgres-child-id-inspect|image-pin-list|image-role-validate|image-postgres-child-id-verify|image-tools-evidence|image-postgres-reference-select|image-pgProve-reference-select|image-postgres-validate|image-postgres-reference-validate|image-postgres-pull|image-postgres-id-inspect|image-postgres-platform-inspect|image-postgres-platform-verify|image-postgres-repo-digests-inspect|image-postgres-repo-digests-verify|image-postgres-tag-probe|image-postgres-tag-existing-id-inspect|image-postgres-tag-existing-id-verify|image-postgres-tag-create|image-postgres-tag-final-id-inspect|image-postgres-tag-final-id-verify|image-postgres-evidence|image-pgProve-validate|image-pgProve-reference-validate|image-pgProve-pull|image-pgProve-id-inspect|image-pgProve-platform-inspect|image-pgProve-platform-verify|image-pgProve-repo-digests-inspect|image-pgProve-repo-digests-verify|image-pgProve-tag-probe|image-pgProve-tag-existing-id-inspect|image-pgProve-tag-existing-id-verify|image-pgProve-tag-create|image-pgProve-tag-final-id-inspect|image-pgProve-tag-final-id-verify|image-pgProve-evidence|image-authBootstrap-validate|image-authBootstrap-reference-validate|image-authBootstrap-pull|image-authBootstrap-id-inspect|image-authBootstrap-platform-inspect|image-authBootstrap-platform-verify|image-authBootstrap-repo-digests-inspect|image-authBootstrap-repo-digests-verify|image-authBootstrap-tag-probe|image-authBootstrap-tag-existing-id-inspect|image-authBootstrap-tag-existing-id-verify|image-authBootstrap-tag-create|image-authBootstrap-tag-final-id-inspect|image-authBootstrap-tag-final-id-verify|image-authBootstrap-evidence|image-storageBootstrap-validate|image-storageBootstrap-reference-validate|image-storageBootstrap-pull|image-storageBootstrap-id-inspect|image-storageBootstrap-platform-inspect|image-storageBootstrap-platform-verify|image-storageBootstrap-repo-digests-inspect|image-storageBootstrap-repo-digests-verify|image-storageBootstrap-tag-probe|image-storageBootstrap-tag-existing-id-inspect|image-storageBootstrap-tag-existing-id-verify|image-storageBootstrap-tag-create|image-storageBootstrap-tag-final-id-inspect|image-storageBootstrap-tag-final-id-verify|image-storageBootstrap-evidence|image-realtimeBootstrap-validate|image-realtimeBootstrap-reference-validate|image-realtimeBootstrap-pull|image-realtimeBootstrap-id-inspect|image-realtimeBootstrap-platform-inspect|image-realtimeBootstrap-platform-verify|image-realtimeBootstrap-repo-digests-inspect|image-realtimeBootstrap-repo-digests-verify|image-realtimeBootstrap-tag-probe|image-realtimeBootstrap-tag-existing-id-inspect|image-realtimeBootstrap-tag-existing-id-verify|image-realtimeBootstrap-tag-create|image-realtimeBootstrap-tag-final-id-inspect|image-realtimeBootstrap-tag-final-id-verify|image-realtimeBootstrap-evidence ) ;;
+    *) failure_stage=unclassified; failure_category=unclassified ;;
+  esac
+  case ${failure_category:-none} in
+    none|unclassified|required-tool-check-failed|manifest-retrieval-failed|digest-check-failed|descriptor-check-failed|image-pull-failed|image-inspect-failed|platform-check-failed|repo-digest-check-failed|child-image-id-check-failed|pin-check-failed|tag-check-failed|tag-create-failed|evidence-write-failed|cleanup-failed|evidence-validation-failed|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding|security-parse|security-version|security-ledger|security-vault|security-setting|security-queues|security-buckets|security-rls|security-column-grants|security-rls-shape|security-extensions|security-rpcs|security-cron|security-runtime|security-trigger|security-unclassified|security-rls-email_outbox-present|security-rls-email_outbox-relrowsecurity|security-rls-email_outbox-relforcerowsecurity|security-rls-email_outbox-policies|security-rls-email_outbox-anon_any_dml|security-rls-email_outbox-authenticated_any_dml|security-rls-listing_media-present|security-rls-listing_media-relrowsecurity|security-rls-listing_media-relforcerowsecurity|security-rls-listing_media-policies|security-rls-listing_media-anon_any_dml|security-rls-listing_media-authenticated_any_dml|security-rls-listings-present|security-rls-listings-relrowsecurity|security-rls-listings-relforcerowsecurity|security-rls-listings-policies|security-rls-listings-anon_any_dml|security-rls-listings-authenticated_any_dml ) ;;
+    *) failure_category=unclassified ;;
+  esac
 }
 cleanup() {
   local execution=$? cleanup_ok=1 collection=1
@@ -116,6 +129,13 @@ NODE
     json_true "$raw/cleanup.json" containersRemoved volumesRemoved networkRemoved portClosed baselineResourcesPreserved firewallRemoved
   fi
   printf '{"exitCode":%d}\n' "$execution" >"$raw/execution.json"
+  if [[ $execution == 0 ]]; then
+    if [[ $cleanup_ok == 1 ]]; then failure_stage=complete; failure_category=none
+    else failure_stage=cleanup; failure_category=cleanup-failed
+    fi
+  fi
+  sanitize_failure
+  printf '{"stage":"%s","category":"%s"}\n' "$failure_stage" "$failure_category" >"$raw/diagnostic.json"
   node "$root/scripts/stage3/verify-db-results.mjs" --collect "$raw" "$evidence" >&3 2>&3
   collection=$?
   # Verified task-only temporary path, including local credentials/private raw logs.
@@ -125,24 +145,18 @@ NODE
   else cleanup_ok=0; fi
   if [[ $cleanup_ok != 1 ]]; then
     # Invalidate an earlier success artifact if private task-directory removal failed.
-    node "$root/scripts/stage3/verify-db-results.mjs" --collect "$task/cleanup-failed" "$evidence" >&3 2>&3
+    if [[ $execution == 0 ]]; then failure_stage=cleanup; failure_category=cleanup-failed; fi
+    sanitize_failure
+    node "$root/scripts/stage3/verify-db-results.mjs" --cleanup-failed "$evidence" "$failure_stage" "$failure_category" >&3 2>&3
   fi
   if [[ $execution == 0 && $cleanup_ok == 1 && $collection == 0 ]]; then exit 0; fi
-  # Report only an enumerated stage, never raw tool output, paths or exception text.
-  case ${failure_stage:-unclassified} in
-    preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete|port-probe-run|port-probe-inspect|port-probe-binding|port-probe-cleanup|firewall-hooks|firewall-setup|firewall-verify|route-isolation|security-before-sql|security-before-verify|image-postgres-*|image-pgProve-*|image-authBootstrap-*|image-storageBootstrap-*|image-realtimeBootstrap-*) ;;
-    *) failure_stage=unclassified ;;
-  esac
   if [[ $execution == 0 ]]; then
-    if [[ $cleanup_ok != 1 ]]; then failure_stage=cleanup
-    else failure_stage=artifact-validation
+    if [[ $cleanup_ok != 1 ]]; then failure_stage=cleanup; failure_category=cleanup-failed
+    else failure_stage=artifact-validation; failure_category=evidence-validation-failed
     fi
   fi
+  sanitize_failure
   printf 'FAIL: database CI stage=%s; raw output withheld\n' "$failure_stage" >&3
-  case ${failure_category:-none} in
-    none|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|unclassified|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding|security-parse|security-version|security-ledger|security-vault|security-setting|security-queues|security-buckets|security-rls|security-column-grants|security-rls-shape|security-rls-email_outbox-*|security-rls-listing_media-*|security-rls-listings-*|security-extensions|security-rpcs|security-cron|security-runtime|security-trigger|security-unclassified) ;;
-    *) failure_category=unclassified ;;
-  esac
   if [[ ${failure_category:-none} != none ]]; then
     printf 'FAIL: database CI category=%s; raw output withheld\n' "$failure_category" >&3
   fi
@@ -185,85 +199,115 @@ cli_local db start --help >"$raw/start-help.txt"
 cli_local migration up --help >"$raw/migration-help.txt"
 cli_local test db --help >"$raw/test-help.txt"
 failure_stage=images
-# Verify exact PG17 index bytes and amd64 child before isolation.
-docker buildx version >"$raw/buildx-version.txt"
+# Stage/category arguments are fixed literals or validated role/operation pairs.
+image_phase() { failure_stage=$1; failure_category=$2; }
+classify_registry_failure() {
+  # Read only task-private stderr; publish a fixed category, never matched text.
+  if grep -Eiq 'toomanyrequests|too many requests|rate limit|(^|[^0-9])429([^0-9]|$)' "$1"; then
+    failure_category=rate-limited
+  elif grep -Eiq 'manifest unknown|manifest.*not found|blob unknown|(^|[^0-9])404([^0-9]|$)' "$1"; then
+    failure_category=manifest-not-found
+  elif grep -Eiq 'denied|unauthorized|authentication|authorization|forbidden|(^|[^0-9])(401|403)([^0-9]|$)' "$1"; then
+    failure_category=registry-denied
+  elif grep -Eiq 'unsupported.*manifest|unsupported media type|no matching manifest' "$1"; then
+    failure_category=unsupported-manifest
+  elif grep -Eiq 'no space left on device|insufficient (disk|storage)' "$1"; then
+    failure_category=storage-error
+  elif grep -Eiq 'timeout|connection reset|connection refused|network unreachable|no route to host|TLS handshake|context deadline|EOF|proxyconnect' "$1"; then
+    failure_category=transport-error
+  fi
+}
+image_phase image-postgres-buildx-check required-tool-check-failed
+docker buildx version >"$raw/buildx-version.txt" 2>"$raw/buildx-check.log"
 pg_index='sha256:6942962433a569e87f228b4d4ab7e11db5deca64e43babb3a038443ad6c4f1bb'
 pg_child='sha256:16c0944c77885446d4f2ebbb2191b357feeb3b1295bde2fb1978c113129dbeb4'
 pg_repository='public.ecr.aws/supabase/postgres'
-docker buildx imagetools inspect --raw "$pg_repository@$pg_index" >"$raw/pg17-index.json"
+image_phase image-postgres-index-fetch manifest-retrieval-failed
+if ! docker buildx imagetools inspect --raw "$pg_repository@$pg_index" >"$raw/pg17-index.json" 2>"$raw/pg17-index-fetch.log"; then
+  classify_registry_failure "$raw/pg17-index-fetch.log"; exit 1
+fi
+image_phase image-postgres-index-digest digest-check-failed
 printf '%s  %s\n' "${pg_index#sha256:}" "$raw/pg17-index.json" | sha256sum -c -
+image_phase image-postgres-amd64-descriptor descriptor-check-failed
 node --input-type=module - "$raw/pg17-index.json" "$pg_child" <<'NODE'
 import {readFileSync} from 'node:fs';
 const [file,child]=process.argv.slice(2);const index=JSON.parse(readFileSync(file));
 const matches=index.manifests?.filter(x=>x.platform?.os==='linux'&&x.platform?.architecture==='amd64');
 if(matches?.length!==1||matches[0].digest!==child) process.exit(1);
 NODE
-docker buildx imagetools inspect --raw "$pg_repository@$pg_child" >"$raw/pg17-child.json"
+image_phase image-postgres-child-fetch manifest-retrieval-failed
+if ! docker buildx imagetools inspect --raw "$pg_repository@$pg_child" >"$raw/pg17-child.json" 2>"$raw/pg17-child-fetch.log"; then
+  classify_registry_failure "$raw/pg17-child-fetch.log"; exit 1
+fi
+image_phase image-postgres-child-digest digest-check-failed
 printf '%s  %s\n' "${pg_child#sha256:}" "$raw/pg17-child.json" | sha256sum -c -
-docker pull --platform linux/amd64 "$pg_repository@$pg_child" >"$raw/pg17-child-pull.log" 2>&1
+image_phase image-postgres-child-pull image-pull-failed
+if ! docker pull --platform linux/amd64 "$pg_repository@$pg_child" >"$raw/pg17-child-pull.log" 2>&1; then
+  classify_registry_failure "$raw/pg17-child-pull.log"; exit 1
+fi
+image_phase image-postgres-child-id-inspect image-inspect-failed
 pg_child_id=$(docker image inspect -f '{{.Id}}' "$pg_repository@$pg_child")
+# Check the producer directly: process-substitution failure must not look like an empty successful loop.
+image_phase image-pin-list pin-check-failed
+node --input-type=module - "$root/scripts/stage3/toolchain.json" >"$raw/image-pins.tsv" <<'NODE'
+import {readFileSync} from 'node:fs'; const p=JSON.parse(readFileSync(process.argv[2])).database;
+for(const [key,{tag,digest}] of Object.entries(p.images)) console.log([key,tag,digest].join('\t'));
+NODE
 while IFS=$'\t' read -r key tag digest; do
-  # Fixed approved role names only; diagnostic labels must never contain image refs.
+  image_phase image-role-validate pin-check-failed
   case "$key" in postgres|pgProve|authBootstrap|storageBootstrap|realtimeBootstrap) ;; *) exit 1 ;; esac
-  failure_stage="image-$key-validate"
+  image_phase "image-$key-validate" pin-check-failed
   [[ $tag =~ ^public.ecr.aws/supabase/[a-z_-]+:[A-Za-z0-9._-]+$ && $digest =~ ^sha256:[a-f0-9]{64}$ ]]
-  # Preserve the immutable ECR tag/digest pin. Pull the same digest from the
-  # official Supabase Docker Hub repository before enabling network isolation.
-  # PG17 uses its directly verified ECR index/child, without assuming a mirror digest.
-  # Never fall back to mutable tag-only pulls.
   source_ref="${tag#public.ecr.aws/}"
   source_ref="${source_ref%:*}@$digest"
   if [[ $key == postgres ]]; then source_ref="$pg_repository@$pg_index"; fi
+  image_phase "image-$key-reference-validate" pin-check-failed
   [[ $source_ref =~ ^(public.ecr.aws/)?supabase/[a-z_-]+@sha256:[a-f0-9]{64}$ ]]
-  failure_stage="image-$key-pull"
-  # Keep registry diagnostics in task-private storage. Export fixed categories only.
+  image_phase "image-$key-pull" image-pull-failed
   pull_log="$raw/image-pull-$key.log"
   if ! docker pull --platform linux/amd64 "$source_ref" >"$pull_log" 2>&1; then
-    failure_category=unclassified
-    if grep -Eiq 'toomanyrequests|too many requests|rate limit|(^|[^0-9])429([^0-9]|$)' "$pull_log"; then
-      failure_category=rate-limited
-    elif grep -Eiq 'manifest unknown|manifest.*not found|blob unknown|(^|[^0-9])404([^0-9]|$)' "$pull_log"; then
-      failure_category=manifest-not-found
-    elif grep -Eiq 'denied|unauthorized|authentication|authorization|forbidden|(^|[^0-9])(401|403)([^0-9]|$)' "$pull_log"; then
-      failure_category=registry-denied
-    elif grep -Eiq 'unsupported.*manifest|unsupported media type|no matching manifest' "$pull_log"; then
-      failure_category=unsupported-manifest
-    elif grep -Eiq 'no space left on device|insufficient (disk|storage)' "$pull_log"; then
-      failure_category=storage-error
-    elif grep -Eiq 'timeout|connection reset|connection refused|network unreachable|no route to host|TLS handshake|context deadline|EOF|proxyconnect' "$pull_log"; then
-      failure_category=transport-error
-    fi
-    exit 1
+    classify_registry_failure "$pull_log"; exit 1
   fi
-  failure_stage="image-$key-inspect"
+  image_phase "image-$key-id-inspect" image-inspect-failed
   id=$(docker image inspect -f '{{.Id}}' "$source_ref")
-  [[ $(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$source_ref") == linux/amd64 ]]
-  failure_stage="image-$key-digest"
+  image_phase "image-$key-platform-inspect" image-inspect-failed
+  platform=$(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$source_ref")
+  image_phase "image-$key-platform-verify" platform-check-failed
+  [[ $platform == linux/amd64 ]]
+  image_phase "image-$key-repo-digests-inspect" image-inspect-failed
   repo_digests=$(docker image inspect -f '{{json .RepoDigests}}' "$source_ref")
+  image_phase "image-$key-repo-digests-verify" repo-digest-check-failed
   node --input-type=module - "$repo_digests" "$source_ref" <<'NODE'
 const [raw,reference]=process.argv.slice(2);
 const refs=JSON.parse(raw);
 if(!Array.isArray(refs)||!refs.some(ref=>ref===reference||ref==="docker.io/"+reference)) process.exit(1);
 NODE
-  if [[ $key == postgres ]]; then [[ $id == "$pg_child_id" ]]; fi
-  # Only after verified digest+platform, preload the original ECR image tag.
-  # Refuse a conflicting existing tag; CLI still uses its pinned reference.
-  failure_stage="image-$key-tag"
+  if [[ $key == postgres ]]; then
+    image_phase image-postgres-child-id-verify child-image-id-check-failed
+    [[ $id == "$pg_child_id" ]]
+  fi
+  image_phase "image-$key-tag-probe" image-inspect-failed
   if docker image inspect "$tag" >/dev/null 2>&1; then
-    [[ $(docker image inspect -f '{{.Id}}' "$tag") == "$id" ]]
-  else docker tag "$source_ref" "$tag"; fi
-  [[ $(docker image inspect -f '{{.Id}}' "$tag") == "$id" ]]
-  failure_stage="image-$key-evidence"
+    image_phase "image-$key-tag-existing-id-inspect" image-inspect-failed
+    tag_id=$(docker image inspect -f '{{.Id}}' "$tag")
+    image_phase "image-$key-tag-existing-id-verify" tag-check-failed
+    [[ $tag_id == "$id" ]]
+  else
+    image_phase "image-$key-tag-create" tag-create-failed
+    docker tag "$source_ref" "$tag"
+  fi
+  image_phase "image-$key-tag-final-id-inspect" image-inspect-failed
+  tag_id=$(docker image inspect -f '{{.Id}}' "$tag")
+  image_phase "image-$key-tag-final-id-verify" tag-check-failed
+  [[ $tag_id == "$id" ]]
+  image_phase "image-$key-evidence" evidence-write-failed
   node --input-type=module - "$raw/images.json" "$key" "$tag" "$digest" "$id" <<'NODE'
 import {existsSync,readFileSync,writeFileSync} from 'node:fs';
 const [file,key,tag,digest,imageId]=process.argv.slice(2); const o=existsSync(file)?JSON.parse(readFileSync(file)):{};
 o[key]={tag,digest,imageId,platform:'linux/amd64'};writeFileSync(file,JSON.stringify(o));
 NODE
-done < <(node --input-type=module - "$root/scripts/stage3/toolchain.json" <<'NODE'
-import {readFileSync} from 'node:fs'; const p=JSON.parse(readFileSync(process.argv[2])).database;
-for(const [key,{tag,digest}] of Object.entries(p.images)) console.log([key,tag,digest].join('\t'));
-NODE
-)
+done <"$raw/image-pins.tsv"
+image_phase image-tools-evidence evidence-write-failed
 node --input-type=module - "$raw/tools.json" "$docker_version" <<'NODE'
 import {writeFileSync} from 'node:fs';
 writeFileSync(process.argv[2],JSON.stringify({nodeVersion:process.versions.node,cliVersion:'2.117.0',dockerVersion:process.argv[3],os:'linux',arch:'amd64'}));
@@ -275,8 +319,12 @@ if(!p?.tag?.startsWith('public.ecr.aws/supabase/')) process.exit(1);
 console.log((process.argv[3]==='postgres'?'public.ecr.aws/':'')+p.tag.slice('public.ecr.aws/'.length,p.tag.lastIndexOf(':'))+'@'+p.digest);
 NODE
 }
+image_phase image-postgres-reference-select pin-check-failed
 pg_ref=$(image_ref postgres)
+image_phase image-pgProve-reference-select pin-check-failed
 prove_ref=$(image_ref pgProve)
+failure_stage=port-probe
+failure_category=none
 mapfile -t ports < <(node --input-type=module <<'NODE'
 import net from 'node:net';
 const servers=[];

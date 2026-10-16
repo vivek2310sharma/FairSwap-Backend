@@ -605,3 +605,214 @@ or operation, worker/Edge invocation, GitHub write/settings change, commit,
 push, PR or deployment occurred in Step 1B. Only permitted source/static checks
 ran. No runtime resources needed cleanup; regression temporary directories were
 removed by their test cleanup. Stop for CTO review and later CI authorization.
+
+
+## Step 1E: image-provisioning diagnosis and local diagnostic preparation
+
+Date: 16 October 2026.
+Classification: **DIAGNOSTICS_PREPARED_AWAITING_CI_AUTHORIZATION**.
+Local source/static work only. No publication or new CI execution occurred.
+All previous report bytes, including the earlier blocked/prepared findings,
+are retained as historical evidence rather than rewritten.
+
+### Fixed revisions and observed run evidence
+
+Draft PR #3 remains open/draft with head
+573b63deffb0dc0cb7caf3738d9a53af5dbf355b and base
+cd9d697dd620375c681f2cff42340011d6242201. The local Stage 3 branch remains at
+that head. Read-only API inspection confirmed original PG17 run 38946859438
+completed FAILURE, attempt 1, and Backend CI run 38946859389 completed SUCCESS,
+attempt 1. No run was retried or restarted.
+
+The precise retained PG17 marker remains:
+FAIL: database CI stage=images; raw output withheld
+
+No finer failure category was emitted. The job's private buildx-version,
+manifest, pull/inspect and runner logs were removed by successful task cleanup;
+they are not recoverable from the uploaded three-file sanitized artifact.
+The previously collected artifact has compatibility.executed=false, no suite
+results, all ten suites NOT_VERIFIED and every cleanup flag true. No actual
+PG17 server version or SQLSTATE was observed; zero of 344 SQL assertions were
+executed/verified. The moderation conflict remains UNREPRODUCED.
+
+The existing public job log was read in memory only. A fixed-marker summary
+was saved outside the repository; raw logs and arbitrary matched text were not
+retained. Inspection does not identify which private command actually failed.
+The historical root cause must therefore remain unresolved rather than guessed.
+
+### Task A: every operation in the original coarse images window
+
+The exact reviewed source at the failed head performs the following before
+assigning its first role-specific image-$key-validate stage. Constant variable
+assignments only select the existing immutable pins; they do not contact Docker.
+
+| Original operation | Newly prepared fixed stage | Default safe failure category |
+| --- | --- | --- |
+| docker buildx version | image-postgres-buildx-check | required-tool-check-failed |
+| Fetch pinned index using buildx imagetools inspect --raw | image-postgres-index-fetch | manifest-retrieval-failed |
+| sha256sum -c of exact raw index file | image-postgres-index-digest | digest-check-failed |
+| Node JSON parse and exact single linux/amd64 child-descriptor comparison | image-postgres-amd64-descriptor | descriptor-check-failed |
+| Fetch pinned child manifest using buildx | image-postgres-child-fetch | manifest-retrieval-failed |
+| sha256sum -c of exact raw child file | image-postgres-child-digest | digest-check-failed |
+| Pull pinned child for linux/amd64 | image-postgres-child-pull | image-pull-failed |
+| Inspect child's local image ID | image-postgres-child-id-inspect | image-inspect-failed |
+
+The original loop's Node pin-list producer also executes before its first
+iteration marker. Its process-substitution exit status was not directly checked.
+Role validation precedes that marker too. If no iteration runs, later tools
+evidence/reference selection can retain the coarse images label as well.
+These control-flow qualifications prevent claiming that the eight main commands
+are the only logically possible causes from stage=images alone.
+
+### Confirmed source defects versus hypotheses
+
+Confirmed observability/failure-handling defects:
+- Multiple separately failing operations shared one coarse stage.
+- The original collector discarded both stage and category from result.json.
+- Prefix wildcards in console stage/category validation allowed arbitrary suffixes
+  instead of an exact finite vocabulary.
+- The pin-list producer ran inside process substitution: its own failure could
+  be hidden by an empty successful loop. The new local source checks this producer
+  as an ordinary command before consuming its task-private TSV output.
+- The previous cleanup invalidation path replaced evidence from a nonexistent
+  raw directory, losing an earlier image stage. The prepared invalidation now
+  retains only a validated stage/category and explicitly reports cleanup FAILED.
+
+None of those proves an incorrect image digest, incompatible image, missing
+Buildx binary, failed registry request or bad platform descriptor in run
+38946859438.
+
+Independent hypothesis review:
+- Buildx availability: the exact runner-image inventory referenced by the setup
+  log advertises Buildx 0.38.0 and Docker 28.0.4. Its installation source places
+  Docker plugins under a system CLI-plugin directory. That weighs against simply
+  assuming the clean task HOME/DOCKER_CONFIG hides a user-only plugin, but actual
+  Buildx command output was private and remains unobserved.
+- Registry retrieval: anonymous transport, registry access or command failure
+  remains possible; no HTTP status/error category was retained for index/child.
+- Raw digest comparison: a mismatch, missing/unreadable file or checksum-command
+  failure remains possible. Buildx v0.38.0 source writes raw manifest bytes
+  without adding a newline; automatic newline insertion is not a demonstrated
+  explanation. No trimming, reserialization, digest replacement or waiver was added.
+- Descriptor validation: malformed JSON, missing/duplicate amd64 descriptor or
+  child mismatch would fail the strict check; none was observed in this run.
+- Child retrieval/hash and initial pull/inspect: each can fail independently.
+  Their original private output is absent, so none is identified as the cause.
+
+Primary source references used for this limited source review:
+[Exact runner inventory](https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md),
+[runner Docker installation](https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/scripts/build/install-docker.sh),
+[Buildx v0.38.0 raw printer](https://github.com/docker/buildx/blob/v0.38.0/util/imagetools/printers.go).
+These are source/image-inventory evidence, not a replacement for the missing
+runtime command output or proof of a successful image-provisioning check.
+
+### Task B: prepared local changes and sanitized contract
+
+Exactly four authorized paths are changed locally:
+- scripts/stage3/run-local-db.sh
+- scripts/stage3/verify-db-results.mjs
+- scripts/stage3/verification.test.mjs
+- docs/extraction/STAGE3_PG17_COMPATIBILITY.md (this append only)
+
+No workflow, pin file, registry selection, CLI/PostgreSQL version, digest,
+network rule, migration, SQL test or moderation implementation was edited.
+The new SQL suite remains exactly 74 authored assertions; the combined contract
+remains 344 assertions, with the historical email-outbox diagnostic excluded.
+
+The runner assigns separate stages to the eight initial operations, pin-list
+production, role validation, tools-evidence writing and reference selection.
+The five approved image roles each have explicit markers for pin/reference
+validation, pull, ID/platform inspection and validation, repository-digest
+inspection and validation, cached-tag inspection/validation or creation, final
+tag inspection/validation and evidence writing. PostgreSQL's child/index ID
+comparison has its own marker. There are 89 finite image-stage values in total.
+Diagnostics use named operation markers; they do not assert which dependency
+condition caused an operation to fail.
+
+Registry/pull stderr remains task-private. Only fixed matching categories
+manifest-not-found, registry-denied, rate-limited, transport-error, storage-error
+or unsupported-manifest may replace an operation's default category. No matched
+message, URL, image metadata, environment value or exception text is exported.
+
+Bash and JavaScript share matching finite catalogs, verified by regression.
+The collector requires exactly the stage/category keys with string values in
+the approved sets (65 categories including retained non-image categories).
+Unknown stages, malformed JSON, extra fields or arbitrary values become only:
+{"stage":"unclassified","category":"unclassified"}
+
+A hypothetical failed digest check would produce this safe diagnostic, not an
+observed result from the first run:
+{"diagnostic":{"stage":"image-postgres-index-digest","category":"digest-check-failed"},"success":false}
+
+The EXIT handler writes that tiny diagnostic.json in private raw storage before
+collection. It is projected into the existing result.json; no new uploaded
+artifact path is introduced. The same allowlisted three files/checksums remain.
+Raw registry/Docker outputs and temporary state retain automatic task cleanup.
+
+Success now additionally requires exactly:
+{"stage":"complete","category":"none"}
+All original success gates remain strict: exit 0, pins/versions, 58 migration
+bytes and ledger entries, isolation before/after, exact security checks,
+74+270 SQL assertions and complete cleanup. A recognized image stage cannot
+produce green evidence even if every other synthetic success field is present.
+Unknown/missing diagnostics also cannot produce success.
+
+Late cleanup failure uses a dedicated nonzero invalidation mode, retaining only
+the safe original image diagnostic where applicable, clearing suite success and
+setting cleanup="FAILED". If the raw failure was successful execution followed
+by cleanup failure, the diagnostic is cleanup/cleanup-failed. Artifact validation
+failures do not inherit a misleading complete success marker.
+
+### Task C: actual local checks
+
+- node --test scripts/stage3/verification.test.mjs: final exit 0,
+  **174 passed, zero failed/skipped/cancelled/TODO**.
+  Includes all 89 recognized image stages through the collector and rejection
+  against otherwise complete synthetic success evidence; malformed/unknown
+  fields, arbitrary raw/env text, missing cleanup, fatal late cleanup and
+  nonzero CLI failure paths; plus all original regressions.
+- node --check on both edited .mjs files and 17 extracted runner Node heredocs:
+  exit 0.
+- Existing WSL bash -n on the edited runner: exit 0; the runner was NOT executed.
+- Existing baseline verifier against the retained exact-byte Linux checkout:
+  exit 0; approved manifest digest
+  eb2dfee779a15634927cfbf25fcd6ffc59df591a585d1ec8f5f3d40e5caaf1dd
+  and all 58 canonical migration hashes PASS.
+- Current-head raw Git manifest/migration blobs, protected-source byte snapshots,
+  report-prefix preservation, exact changed-path set and Git diff integrity
+  were checked. Original branch/four document hashes and empty indexes preserved.
+
+All new test data are synthetic validator inputs, not fake runtime evidence.
+No application unit suite or database test was executed locally in Step 1E.
+
+### Remaining risks and required next authorization
+
+The failed operation from the first attempt remains unknowable from retained
+evidence; these local diagnostics make a later explicitly authorized run
+observable. They have not executed on GitHub, and do not constitute a provisioning
+fix. Tool/registry failures, digest/descriptor mismatch and bootstrap readiness
+remain runtime questions. No immutable pin was guessed, weakened or replaced.
+
+The Step 1B source-review inventory is historical and remains untouched; the
+four local diagnostic changes naturally differ from the previously reviewed
+source. A later review/publication needs a separately approved scope and must
+not silently substitute a new inventory for that historical artifact.
+
+CTO must review this local diff before authorizing a commit/push or another CI
+run. A push to PR #3's branch would itself retrigger Actions and is NOT authorized
+by Step 1E. No automatic correction, rerun or retry follows this report.
+
+### Preservation and stop
+
+Both original worktrees/branches remain in place. Original branch remains
+chore/backend-extraction-baseline at 972685ed13cbc7829539ceb3d6dcfcc36bd38fc4;
+AGENTS.md, README.md, POINT1_BASELINE.md and DEPLOYMENT_OWNERSHIP.md retain their
+recorded exact hashes and remain unstaged. The Stage 3 branch HEAD remains
+573b63deffb0dc0cb7caf3738d9a53af5dbf355b, with only the four allowed local changes;
+both indexes are empty. Prior report bytes are preserved.
+
+Step 1E performed zero GitHub writes, PR/Issue updates, pushes, commits, CI reruns,
+manual dispatches, Docker/PostgreSQL starts, privileged installs, hosted Supabase
+connections/operations or configuration changes. No task runtime resources were
+created. Static regression temporary directories were removed by test cleanup.
+**STOP for CTO review: DIAGNOSTICS_PREPARED_AWAITING_CI_AUTHORIZATION.**
