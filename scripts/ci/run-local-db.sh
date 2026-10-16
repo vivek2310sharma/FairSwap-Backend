@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+# Native disposable Linux only. Never run from the canonical Supabase project.
+set -euo pipefail
+umask 077
+[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'FAIL: native Linux amd64 required' >&2; exit 1; }
+[[ $# == 1 ]] || { echo 'Usage: bash run-local-db.sh <new evidence directory>' >&2; exit 1; }
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
+evidence=$(realpath -m -- "$1")
+[[ $evidence != "$root" && $evidence != "$root/"* ]] || exit 1
+
+# No hosted credentials, remote Docker contexts, dotenv files or operator settings.
+if [[ ${FAIRSWAP_DB_CLEAN_ENV:-} != 1 ]]; then
+  task=$(mktemp -d "${RUNNER_TEMP:-/tmp}/fairswap-db-ci.XXXXXXXX")
+  mkdir -p "$task/home" "$task/tmp" "$task/docker" "$task/bin" "$task/raw" "$task/project"
+  owner=$(cat /proc/sys/kernel/random/uuid)
+  printf '%s\n' "$owner" >"$task/owner"
+  exec env -i PATH="$PATH" HOME="$task/home" TMPDIR="$task/tmp" CI=true \
+    DOCKER_CONFIG="$task/docker" DOCKER_HOST=unix:///var/run/docker.sock \
+    SUPABASE_SKIP_UPDATE_CHECK=true SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws \
+    FAIRSWAP_DB_CLEAN_ENV=1 FAIRSWAP_DB_TASK="$task" FAIRSWAP_DB_OWNER="$owner" \
+    bash "$root/scripts/ci/run-local-db.sh" "$evidence"
+fi
+task=$(realpath -- "${FAIRSWAP_DB_TASK:?}")
+[[ $(basename -- "$task") == fairswap-db-ci.* && $task != "$root/"* ]] || exit 1
+[[ ${FAIRSWAP_DB_OWNER:?} == "$(cat -- "$task/owner")" ]] || exit 1
+raw="$task/raw"
+project="$task/project"
+cli="$task/bin/supabase"
+project_id="fairswap-ci-$(node -p 'crypto.randomBytes(10).toString("hex")')"
+network="${project_id}-net"
+db="supabase_db_${project_id}"
+probe="${project_id}-binding-probe"
+snapshotted=0
+db_port=0
+exec 3>&1
+exec >>"$raw/runner.log" 2>&1
+
+inventory() {
+  docker ps -aq --no-trunc | sort >"$raw/containers-$1.txt" || return 1
+  docker volume ls -q | sort >"$raw/volumes-$1.txt" || return 1
+  docker network ls -q --no-trunc | sort >"$raw/networks-$1.txt" || return 1
+}
+cli_local() { (cd -- "$project" && "$cli" "$@" --workdir "$project" --network-id "$network"); }
+json_true() {
+  node --input-type=module - "$1" "${@:2}" <<'NODE'
+import {writeFileSync} from 'node:fs';
+writeFileSync(process.argv[2], JSON.stringify(Object.fromEntries(process.argv.slice(3).map(k => [k,true]))));
+NODE
+}
+cleanup() {
+  local execution=$? cleanup_ok=1 collection=1
+  trap - EXIT INT TERM
+  set +e
+  # Only UUID-scoped ownership labels; never prune, stop all, or touch other projects.
+  if [[ $snapshotted == 1 ]]; then
+    if [[ -x $cli ]]; then cli_local stop --project-id "$project_id" --no-backup >"$raw/stop.log" 2>&1; fi
+    docker ps -aq --filter "label=com.supabase.cli.project=$project_id" >"$raw/owned-containers.txt" || cleanup_ok=0
+    while IFS= read -r id; do
+      [[ -n $id ]] || continue
+      if grep -Fxq -- "$id" "$raw/containers-before.txt"; then cleanup_ok=0; continue; fi
+      docker rm -f "$id" || cleanup_ok=0
+    done <"$raw/owned-containers.txt"
+    docker volume ls -q --filter "label=com.supabase.cli.project=$project_id" >"$raw/owned-volumes.txt" || cleanup_ok=0
+    while IFS= read -r volume; do
+      [[ -n $volume ]] || continue
+      if grep -Fxq -- "$volume" "$raw/volumes-before.txt"; then cleanup_ok=0; continue; fi
+      docker volume rm "$volume" || cleanup_ok=0
+    done <"$raw/owned-volumes.txt"
+    if docker network inspect "$network" >/dev/null 2>&1; then
+      [[ $(docker network inspect -f '{{index .Labels "com.supabase.cli.project"}}' "$network") == "$project_id" ]] \
+        && docker network rm "$network" || cleanup_ok=0
+    fi
+    docker ps -aq --filter "label=com.supabase.cli.project=$project_id" >"$raw/remaining-containers.txt" || cleanup_ok=0
+    docker volume ls -q --filter "label=com.supabase.cli.project=$project_id" >"$raw/remaining-volumes.txt" || cleanup_ok=0
+    [[ ! -s $raw/remaining-containers.txt && ! -s $raw/remaining-volumes.txt ]] || cleanup_ok=0
+    docker network inspect "$network" >/dev/null 2>&1 && cleanup_ok=0
+    inventory after || cleanup_ok=0
+    for kind in containers volumes networks; do cmp -s "$raw/$kind-before.txt" "$raw/$kind-after.txt" || cleanup_ok=0; done
+    if [[ $db_port != 0 ]]; then
+      node --input-type=module - "$db_port" <<'NODE'
+import net from 'node:net';
+const socket=net.connect({host:'127.0.0.1',port:Number(process.argv[2])});
+socket.setTimeout(2000,()=>{socket.destroy();process.exit(1)});
+socket.on('connect',()=>{socket.destroy();process.exit(1)});
+socket.on('error',error=>process.exit(error.code==='ECONNREFUSED'?0:1));
+NODE
+      [[ $? == 0 ]] || cleanup_ok=0
+    fi
+  else cleanup_ok=0; fi
+  if [[ $cleanup_ok == 1 ]]; then
+    json_true "$raw/cleanup.json" containersRemoved volumesRemoved networkRemoved portClosed baselineResourcesPreserved
+  fi
+  printf '{"exitCode":%d}\n' "$execution" >"$raw/execution.json"
+  node "$root/scripts/ci/verify-db-results.mjs" --collect "$raw" "$evidence" >&3 2>&3
+  collection=$?
+  # Verified task-only temporary path, including local credentials/private raw logs.
+  if [[ $(realpath -- "$task") == "$task" && $(basename -- "$task") == fairswap-db-ci.* && $task != "$root/"* \
+    && $FAIRSWAP_DB_OWNER == "$(cat -- "$task/owner")" ]]; then
+    rm -rf -- "$task" || cleanup_ok=0
+  else cleanup_ok=0; fi
+  if [[ $cleanup_ok != 1 ]]; then
+    # Invalidate an earlier success artifact if private task-directory removal failed.
+    node "$root/scripts/ci/verify-db-results.mjs" --collect "$task/cleanup-failed" "$evidence" >&3 2>&3
+  fi
+  if [[ $execution == 0 && $cleanup_ok == 1 && $collection == 0 ]]; then exit 0; fi
+  echo 'FAIL: database CI or cleanup incomplete; see sanitized failure artifact' >&3
+  exit 1
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+for tool in node docker curl tar sha256sum timeout sudo nsenter ip cmp; do command -v "$tool" >/dev/null; done
+[[ $(node -p 'process.versions.node') == 24.15.0 ]]
+sudo -n true
+[[ $(docker version --format '{{.Server.Os}}/{{.Server.Arch}}') == linux/amd64 ]]
+docker_version=$(docker version --format '{{.Server.Version}}')
+[[ $docker_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && ${docker_version%%.*} -ge 28 ]]
+[[ ! -d $evidence ]] || [[ -z $(ls -A -- "$evidence") ]]
+inventory before
+snapshotted=1
+[[ -z $(docker ps -aq --filter "label=com.supabase.cli.project=$project_id") ]]
+[[ -z $(docker volume ls -q --filter "label=com.supabase.cli.project=$project_id") ]]
+! docker network inspect "$network" >/dev/null 2>&1
+node "$root/scripts/ci/verify-baseline.mjs"
+
+# Complete all downloads before creating the isolated network or database.
+mapfile -t cli_pins < <(node --input-type=module - "$root/scripts/ci/toolchain.json" <<'NODE'
+import {readFileSync} from 'node:fs'; const p=JSON.parse(readFileSync(process.argv[2])).database;
+console.log(p.cliArchive);console.log(p.cliArchiveSha256);
+NODE
+)
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location "${cli_pins[0]}" -o "$task/cli.tar.gz"
+printf '%s  %s\n' "${cli_pins[1]}" "$task/cli.tar.gz" | sha256sum -c -
+tar -xzf "$task/cli.tar.gz" -C "$task/bin" supabase
+chmod 700 "$cli"
+[[ $(cli_local --version) == 2.117.0 ]]
+cli_local db start --help >"$raw/start-help.txt"
+cli_local migration up --help >"$raw/migration-help.txt"
+cli_local test db --help >"$raw/test-help.txt"
+while IFS=$'\t' read -r key tag digest; do
+  [[ $tag =~ ^public.ecr.aws/supabase/[a-z_-]+:[A-Za-z0-9._-]+$ && $digest =~ ^sha256:[a-f0-9]{64}$ ]]
+  ref="${tag%:*}@$digest"
+  docker pull --platform linux/amd64 "$ref"
+  id=$(docker image inspect -f '{{.Id}}' "$ref")
+  [[ $(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$ref") == linux/amd64 ]]
+  docker image inspect -f '{{json .RepoDigests}}' "$ref" | grep -Fq -- "$ref"
+  # Do not overwrite an existing tag that points to a different image.
+  if docker image inspect "$tag" >/dev/null 2>&1; then
+    [[ $(docker image inspect -f '{{.Id}}' "$tag") == "$id" ]]
+  else docker tag "$ref" "$tag"; fi
+  node --input-type=module - "$raw/images.json" "$key" "$tag" "$digest" "$id" <<'NODE'
+import {existsSync,readFileSync,writeFileSync} from 'node:fs';
+const [file,key,tag,digest,imageId]=process.argv.slice(2); const o=existsSync(file)?JSON.parse(readFileSync(file)):{};
+o[key]={tag,digest,imageId,platform:'linux/amd64'};writeFileSync(file,JSON.stringify(o));
+NODE
+done < <(node --input-type=module - "$root/scripts/ci/toolchain.json" <<'NODE'
+import {readFileSync} from 'node:fs'; const p=JSON.parse(readFileSync(process.argv[2])).database;
+for(const [key,{tag,digest}] of Object.entries(p.images)) console.log([key,tag,digest].join('\t'));
+NODE
+)
+node --input-type=module - "$raw/tools.json" "$docker_version" <<'NODE'
+import {writeFileSync} from 'node:fs';
+writeFileSync(process.argv[2],JSON.stringify({nodeVersion:process.versions.node,cliVersion:'2.117.0',dockerVersion:process.argv[3],os:'linux',arch:'amd64'}));
+NODE
+image_ref() {
+  node --input-type=module - "$root/scripts/ci/toolchain.json" "$1" <<'NODE'
+import {readFileSync} from 'node:fs';const p=JSON.parse(readFileSync(process.argv[2])).database.images[process.argv[3]];
+console.log(p.tag.slice(0,p.tag.lastIndexOf(':'))+'@'+p.digest);
+NODE
+}
+pg_ref=$(image_ref postgres)
+prove_ref=$(image_ref pgProve)
+mapfile -t ports < <(node --input-type=module <<'NODE'
+import net from 'node:net';
+const servers=[];
+for(let i=0;i<5;i++){const server=net.createServer();await new Promise((resolve,reject)=>server.once('error',reject).listen(0,'127.0.0.1',resolve));servers.push(server);console.log(server.address().port)}
+for(const server of servers)server.close();
+NODE
+)
+[[ ${#ports[@]} == 5 ]]
+db_port=${ports[0]}
+mkdir -p "$project/supabase"
+cat >"$project/supabase/config.toml" <<EOF
+project_id = "$project_id"
+[db]
+port = $db_port
+shadow_port = ${ports[1]}
+major_version = 15
+[api]
+enabled = false
+port = ${ports[2]}
+[studio]
+enabled = false
+[auth]
+enabled = true
+[storage]
+enabled = true
+[realtime]
+enabled = true
+[analytics]
+enabled = false
+[edge_runtime]
+enabled = false
+[local_smtp]
+enabled = false
+port = ${ports[3]}
+[db.vault]
+EOF
+v6="fd$(node -p 'crypto.randomBytes(1).toString("hex")'):$(node -p 'crypto.randomBytes(2).toString("hex")'):$(node -p 'crypto.randomBytes(2).toString("hex")')::/64"
+docker network create --driver bridge --internal --ipv6 --subnet "$v6" \
+  --opt com.docker.network.bridge.host_binding_ipv4=127.0.0.1 \
+  --label "com.supabase.cli.project=$project_id" "$network"
+# Verify implicit publishing behavior before starting even the empty base database.
+docker run -d --pull never --name "$probe" --label "com.supabase.cli.project=$project_id" \
+  --network "$network" -p "${ports[4]}:5432" --entrypoint sleep "$pg_ref" infinity
+docker inspect "$probe" >"$raw/binding-probe.json"
+node --input-type=module - "$raw/binding-probe.json" <<'NODE'
+import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
+const p=JSON.parse(readFileSync(process.argv[2]))[0].NetworkSettings.Ports['5432/tcp'];
+assert.ok(Array.isArray(p)&&p.length>0&&p.every(x=>x.HostIp==='127.0.0.1'||x.HostIp==='::1'));
+NODE
+docker rm -f "$probe"
+cli_local db start >"$raw/start.log" 2>&1
+
+check_isolation() {
+  local output=$1 pid sandbox
+  docker network inspect "$network" >"$raw/network.json"
+  docker inspect "$db" >"$raw/database.json"
+  node --input-type=module - "$raw/network.json" "$raw/database.json" "$network" "$db_port" "$raw/images.json" <<'NODE'
+import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
+const [nf,df,name,port,im]=process.argv.slice(2);const n=JSON.parse(readFileSync(nf))[0],d=JSON.parse(readFileSync(df))[0];
+assert.equal(n.Internal,true);assert.equal(n.EnableIPv6,true);assert.equal(n.Driver,'bridge');
+assert.equal(n.Options['com.docker.network.bridge.host_binding_ipv4'],'127.0.0.1');
+assert.deepEqual(Object.keys(d.NetworkSettings.Networks),[name]);
+const p=d.NetworkSettings.Ports['5432/tcp'];assert.ok(Array.isArray(p)&&p.length>0);
+assert.ok(p.every(x=>(x.HostIp==='127.0.0.1'||x.HostIp==='::1')&&x.HostPort===port));
+assert.equal(d.Image,JSON.parse(readFileSync(im)).postgres.imageId);
+NODE
+  pid=$(docker inspect -f '{{.State.Pid}}' "$db")
+  sandbox=$(docker inspect -f '{{.NetworkSettings.SandboxKey}}' "$db")
+  [[ $pid =~ ^[1-9][0-9]*$ && $sandbox == /var/run/docker/netns/* ]]
+  # This fails on remote engines / Docker Desktop rather than probing the wrong host namespace.
+  [[ $(sudo -n stat -Lc %i "/proc/$pid/ns/net") == $(sudo -n stat -Lc %i "$sandbox") ]]
+  sudo -n nsenter --target "$pid" --net -- true
+  [[ -z $(sudo -n nsenter --target "$pid" --net -- ip -4 route show default) ]]
+  [[ -z $(sudo -n nsenter --target "$pid" --net -- ip -6 route show default) ]]
+  timeout 2 bash -c 'exit 0'
+  local status=0
+  timeout 1 bash -c 'sleep 3' || status=$?
+  [[ $status == 124 ]]
+  sudo -n nsenter --target "$pid" --net -- timeout 3 bash -c 'exec 9<>/dev/tcp/127.0.0.1/5432'
+  for address in 1.1.1.1 8.8.8.8 2606:4700:4700::1111 2001:4860:4860::8888; do
+    status=0
+    sudo -n nsenter --target "$pid" --net -- timeout 3 bash -c 'exec 9<>/dev/tcp/$1/443' -- "$address" || status=$?
+    [[ $status == 1 || $status == 124 ]]
+  done
+  node --input-type=module - "$db_port" <<'NODE'
+import net from 'node:net';const socket=net.connect({host:'127.0.0.1',port:Number(process.argv[2])});
+socket.setTimeout(3000,()=>{socket.destroy();process.exit(1)});
+socket.on('connect',()=>{socket.destroy();process.exit(0)});socket.on('error',()=>process.exit(1));
+NODE
+  cli_local db query --local 'SELECT 1 AS local_connectivity' >"$raw/host-query.log" 2>&1
+  [[ $(docker run --rm --pull never --network "$network" --label "com.supabase.cli.project=$project_id" \
+    -e PGPASSWORD=postgres -e PGCONNECT_TIMEOUT=5 --entrypoint psql "$prove_ref" -X -Atq -h "$db" -U postgres -d postgres -c 'SELECT 1') == 1 ]]
+  json_true "$output" internalNetwork loopbackOnly nativeNamespace hostSql runnerSql ipv4Denied ipv6Denied probesExecuted noExtraNetworks
+}
+check_isolation "$raw/isolation-before.json"
+
+# Only now introduce FairSwap's byte-preserved migration history and nine required tests.
+mkdir -p "$project/supabase/migrations" "$project/supabase/tests" "$project/docs/extraction"
+cp -- "$root/docs/extraction/MIGRATION_MANIFEST.sha256" "$project/docs/extraction/"
+cp -- "$root"/supabase/migrations/*.sql "$project/supabase/migrations/"
+node --input-type=module - "$root/scripts/ci/verify-baseline.mjs" "$project" <<'NODE'
+import {pathToFileURL} from 'node:url';const {verifyBaseline}=await import(pathToFileURL(process.argv[2]));verifyBaseline(process.argv[3]);
+NODE
+cli_local migration up --local >"$raw/migrations.log" 2>&1
+docker exec -i "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  <"$root/scripts/ci/assert-local-security.sql" >"$raw/security-before.json"
+node --input-type=module - "$root/scripts/ci/verify-db-results.mjs" "$raw/security-before.json" <<'NODE'
+import {pathToFileURL} from 'node:url';import {readFileSync} from 'node:fs';
+const {verifySecurity}=await import(pathToFileURL(process.argv[2]));verifySecurity(JSON.parse(readFileSync(process.argv[3])));
+NODE
+while IFS= read -r file; do
+  cp -- "$root/supabase/tests/$file" "$project/supabase/tests/$file"
+  cmp -- "$root/supabase/tests/$file" "$project/supabase/tests/$file"
+  status=0
+  cli_local test db --local "supabase/tests/$file" >"$raw/$file.log" 2>&1 || status=$?
+  printf '%s\n' "$status" >"$raw/$file.exit"
+  [[ $status == 0 ]]
+done < <(node --input-type=module - "$root/scripts/ci/verify-db-results.mjs" <<'NODE'
+import {pathToFileURL} from 'node:url';const {requiredSuites}=await import(pathToFileURL(process.argv[2]));console.log(Object.keys(requiredSuites).join('\n'));
+NODE
+)
+docker exec -i "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  <"$root/scripts/ci/assert-local-security.sql" >"$raw/security-after.json"
+check_isolation "$raw/isolation-after.json"
+node "$root/scripts/ci/verify-baseline.mjs"
+node --input-type=module - "$raw/manifest.json" "$root/scripts/ci/verify-baseline.mjs" "$project" <<'NODE'
+import {pathToFileURL} from 'node:url';import {writeFileSync} from 'node:fs';
+const {manifestSha256,verifyBaseline}=await import(pathToFileURL(process.argv[3]));verifyBaseline(process.argv[4]);
+writeFileSync(process.argv[2],JSON.stringify({sha256:manifestSha256,before:true,after:true}));
+NODE
+# EXIT trap removes task resources, validates all results and emits only sanitized evidence.

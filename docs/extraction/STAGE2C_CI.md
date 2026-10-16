@@ -1,16 +1,18 @@
-# Stage 2C-P1: partial static and unit CI implementation
+# Stage 2C: independent backend CI implementation; database execution UNVERIFIED
 
-This is a partial Stage 2C implementation prepared locally for CTO review. It is
-not accepted full backend CI, database verification, production readiness or a
-deployment handoff. The implementation baseline is
-`495d6188b678587ab283e51a4aae1951e60c0197` on
-`chore/backend-extraction-baseline`. The remote does not contain this working
-branch; no push or hosted workflow execution is authorized by P1.
+P1 and P1.1 are accepted and locally committed as
+`7c040512bc4687868a51e76bde328ccf2640e150` on
+`chore/backend-extraction-baseline`. P2 adds the database job and final gate as
+uncommitted work for review. Database/Linux runtime execution is **UNVERIFIED**.
+This implementation is not accepted full backend CI, production readiness or a
+deployment handoff. No push, hosted workflow or hosted Supabase execution has
+occurred. The historical P1 implementation baseline was
+`495d6188b678587ab283e51a4aae1951e60c0197`.
 
 ## Implemented foundation
 
-`.github/workflows/backend-ci.yml` defines only `unit-integrity`, on Ubuntu 24.04,
-with a 15-minute job timeout and explicit step timeouts. Proposed event wiring is
+The accepted `unit-integrity` job remains unchanged, on Ubuntu 24.04,
+with a 15-minute job timeout and explicit step timeouts. Event wiring remains
 pull requests, pushes to main/the extraction branch and manual dispatch. This
 local preparation does not activate those events or authorize a push.
 
@@ -156,22 +158,134 @@ an in-process fetch/socket guard, not an operating-system network sandbox.
 Runtime CLI arguments and future edits to the guard/workflow still require review.
 Database/Linux egress isolation remains outside this partial implementation.
 
-## Future database job: not implemented or authorized
+## P2 database job and final gate
 
-A future separately approved `database-pg15` job must establish a fresh temporary
-Supabase-compatible PostgreSQL 15 database, prove Linux host-port protection and
-container egress isolation before loading migrations, reconstruct all 58 canonical
-migrations and validate exact ledger membership. It must execute the nine
-required pgTAP files explicitly, enforce their 270 assertions, perform read-only
-RLS/private-bucket/Vault/worker-permission/disabled-moderation checks and verify
-cleanup. No final required aggregation gate is implemented in P1.
+`database-pg15` depends on `unit-integrity`, runs on Ubuntu 24.04 and has a
+30-minute job timeout. Its execution step has a 25-minute timeout around a
+20-minute process timeout with TERM and a 30-second forced-stop allowance.
+Checkout/Node/artifact actions use the same verified commit pins and read-only
+permissions. No package dependency installation is needed for database validators.
+The `backend-ci-success` job uses `always()` and requires both jobs' explicit
+`success` results, rejecting failed, cancelled or skipped prerequisites. It is
+the intended required check; no GitHub branch-protection settings were changed.
 
-Recorded database baselines are CLI 2.117.0, PostgreSQL 15.8, pg_net 0.14.0,
-pg_cron 1.6 and supabase_vault 0.3.1. The recorded pg_prove 3.36 digest is
-`sha256:eda7c5e68719e9c8287e78c017118407b48df904a51c935f5ab6098b8c0bc6bc`.
-Exact database-image/Docker pins and usable Linux isolation remain unresolved;
-P1 installs or starts none of these tools. No hosted credentials, production or
-hosted Test target, worker activation or deployment may be introduced implicitly.
+`scripts/ci/run-local-db.sh` implements the retained Stage 2B sequence: fresh
+temporary project outside checkout, base-schema `db start` before copying any
+FairSwap migrations, `migration up --local` and nine explicit `test db --local`
+paths. It uses a clean environment, isolated home/Docker config, native local
+Unix Docker socket and no linked project, hosted credentials, provider settings
+or worker endpoints. Base initialization uses transient Auth/Storage/Realtime
+schema migration jobs; it does not start their service stack or Edge Functions.
+
+Before creating the network, it downloads and checksum-verifies the CLI archive,
+pulls all five pinned images by digest and checks Linux/amd64 image IDs and local
+tag consistency. It refuses to overwrite an existing conflicting image tag.
+It then creates one uniquely labelled **internal** IPv4/IPv6 bridge with a
+loopback default binding. A disposable sleep-only container verifies implicit
+publishing behavior before even starting the base database. No unrestricted
+network fallback, global daemon change, relay or firewall relaxation exists.
+
+Before copying FairSwap SQL, the executor requires all of the following:
+
+- Actual database bindings contain only loopback host addresses at the chosen
+  task port, and the database has exactly the intended internal network/image.
+- Host-visible Docker namespace identity matches the database PID's namespace;
+  remote engines and Docker Desktop namespace mismatches fail closed.
+- Both IPv4 and IPv6 default routes are absent inside that namespace.
+- Probe tools work, a localhost socket succeeds inside the database namespace,
+  and TCP attempts to two external IPv4 and two external IPv6 addresses fail.
+- A host loopback TCP connection, local CLI SQL query and SQL query from the
+  pinned pg_prove image on the task network all succeed.
+
+Those checks repeat after tests. If publishing, safe connectivity and egress
+denial cannot coexist, execution stops with no fallback. All dependencies are
+downloaded before isolation; no FairSwap migration is introduced before proof.
+The runner verifies manifest and copied migration hashes before/after execution.
+The nine-suite allowlist and assertion counts remain exactly the Stage 2B
+6/10/28/11/31/28/59/22/75 contract, totalling 270. It never copies or runs the
+excluded email-outbox diagnostic.
+
+`assert-local-security.sql` is a read-only transaction that returns catalog
+evidence without selecting secret values or invoking dispatch functions.
+`verify-db-results.mjs` compares it before/after tests against retained R6
+expectations: exact 58 migration versions, PostgreSQL 15.8/150008, RLS and policy
+counts, table permissions, both private buckets, all 27 recorded sensitive RPC
+permission/definer tuples, three extensions, empty Vault, disabled moderation,
+zero HTTP queue/response counts and both canonical cron registrations/config.
+The two broad trigger-grant exceptions are preserved and remain review items.
+No blanket service-only rule is imposed on authenticated staff/seller RPCs.
+
+Runner exit status, file identity, exact assertion counts and pg_prove success
+markers are mandatory. Bad plans, missing/duplicate suites, nonzero exits, SQL
+errors and absent isolation/cleanup evidence prevent success. Validator tests use
+retained R5 summaries and clearly synthetic state fixtures; they do not constitute
+a new database execution.
+
+## P2 pins, evidence and cleanup
+
+The official CLI v2.117.0 release API records Linux amd64 archive SHA-256
+`69c05f85b9e47ee706d30f1a6ca8a526b4e337bfd12c7ef1ef522d24e7280d24`.
+Pinned source `apps/cli-go/pkg/config/constants.go` selects PostgreSQL image tag
+`15.8.1.085`; `templates/Dockerfile` supplies the bootstrap/test image tags.
+On 16 October 2026, anonymous ECR manifest/index bytes were hashed directly:
+
+| Image | Verified manifest/index SHA-256 |
+| --- | --- |
+| postgres:15.8.1.085 | af083ef64d0408c8f098ee6f5c364a59b26f36fbc0f3a334a62c5c1d57362e9b |
+| pg_prove:3.36 | eda7c5e68719e9c8287e78c017118407b48df904a51c935f5ab6098b8c0bc6bc |
+| gotrue:v2.196.0 | c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232 |
+| storage-api:v1.72.1 | 105a2584129c9600aebed6f5ac49ca4371c92b996ecd1af7179750333e9e2120 |
+| realtime:v2.130.0 | 002193c9ff840a4946918641901bb6aa9e2036dc9ff7590e2b11e91d1e06bf86 |
+
+Full registry references and provenance are in `scripts/ci/toolchain.json`.
+The pg_prove pin matches the retained Stage 2B digest. Index verification is not
+an image execution claim: runtime must still verify image IDs, platform, CLI
+version and the actual PostgreSQL server version. Docker must be native Linux,
+amd64 and version 28 or later; an exact Docker patch version is **unresolved**
+and recorded as null rather than invented. Runtime records the actual version.
+
+Private raw logs/configuration remain in a mode-0700 task directory. EXIT/INT/TERM
+handling performs task-project stop without backups, then removes only resources
+with the unique task ownership label. Container/volume/network inventories must
+match preflight and the task port must be closed. No global prune or repair of
+unrelated resources is allowed. The private task directory is ownership-checked
+and removed; removal failure invalidates the evidence. Hard-kill/cancellation
+cleanup behavior still needs native-runner verification; process traps cannot
+guarantee execution after SIGKILL. GitHub's disposable VM is the outer boundary.
+Downloaded image caches/tags are retained as tool dependencies, not database
+acceptance evidence; they are excluded from container/volume/network inventories.
+
+Only three files are uploaded: `result.json`, `suite-results.json` and
+`SHA256SUMS` (covering the two JSON files). Successful artifacts contain normalized,
+validated observations and fixed known catalog expectations, not raw TAP/error
+text, secret values, local paths, Docker environment dumps or database backups.
+Failure artifacts are generic and never assert success. Strict schema/count and
+checksum validation runs before upload; artifact retention is 14 days.
+
+## P2 local verification and unresolved runtime acceptance
+
+An Ubuntu WSL distribution exists, but inventory found no native `dockerd`, Node
+or firewall tools; its Docker command points to Docker Desktop. It is not an
+approved native Linux database-verification environment. No Docker/CLI runtime,
+base startup, migrations, pgTAP or security SQL was executed for P2.
+
+| Local check | Actual result |
+| --- | --- |
+| `node --test scripts/ci/db-verification.test.mjs scripts/ci/verification.test.mjs` | PASS; 117 validator tests (59 database + 58 existing), zero failures/skips |
+| `node scripts/ci/verify-baseline.mjs` | PASS; approved manifest digest and all 58 canonical migration hashes |
+| `corepack pnpm typecheck` | PASS |
+| `bash -n scripts/ci/run-local-db.sh` | PASS in Git Bash and native Ubuntu WSL Bash; syntax only |
+| `node --check scripts/ci/verify-db-results.mjs` | PASS |
+| Guarded `corepack pnpm test:unit --reporter=default --reporter=json --outputFile=artifacts/stage2c-p2-unit-results.json` and strict JSON verification | PASS; unchanged five files, 93 tests, zero failures/skips |
+
+The Windows unit run used approved parent-directory filesystem access for esbuild
+and retained the unchanged network-blocking harness. No dependencies or package
+files changed. Linux image startup, bootstrap jobs, SQL syntax/catalog results,
+network coexistence/egress probes, test-runner connectivity, runtime cleanup,
+workflow execution and artifact upload are all **UNVERIFIED**, not PASS. The
+original internal-network startup problem may recur; the implementation must
+stop at that boundary rather than substitute another environment. A native
+Linux rehearsal is required for runtime acceptance. No hosted run was attempted.
 
 ## Stage 2B exceptions retained
 
@@ -190,7 +304,7 @@ its local evidence and exceptions; static/unit CI does not revalidate that state
   end-to-end authorization, provider/worker delivery and deployment network
   controls remain separate acceptance prerequisites.
 - Default Docker bridge IDs changed in some earlier runs; the cause remains
-  unverified. P1 performs no Docker-state inspection or repair.
+  unverified. P2 performs no live Docker-state inspection or repair locally.
 
 ## Existing work and approval boundary
 
@@ -199,5 +313,6 @@ pre-existing modified bytes, unstaged. Their older Stage 2B startup/authorizatio
 text conflicts with later accepted evidence; reconciliation needs separate scope.
 This file does not alter their deployment-ownership restrictions. P1 does not
 change canonical migrations, SQL tests, copied unit tests, test setup, lockfile,
-deployment configuration or application behavior. Stop for CTO review before
-database CI, a final gate, any commit/push/PR or hosted execution.
+deployment configuration or application behavior. P2 implementation was separately
+authorized and remains uncommitted for review. No implementation acceptance,
+commit/push/PR, hosted execution or deployment is implied by static checks.

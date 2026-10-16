@@ -1,6 +1,29 @@
 {
   "schemaVersion": 1,
-  "scope": "Stage 2C-P1 static and unit CI only",
+  "scope": "Stage 2C-P1/P1.1 and P2 independent local CI; runtime acceptance pending",
+  "database": {
+    "cliVersion": "2.117.0",
+    "cliArchive": "https://github.com/supabase/cli/releases/download/v2.117.0/supabase_linux_amd64.tar.gz",
+    "cliArchiveSha256": "69c05f85b9e47ee706d30f1a6ca8a526b4e337bfd12c7ef1ef522d24e7280d24",
+    "postgresVersion": "15.8",
+    "serverVersionNum": 150008,
+    "dockerMinimumMajor": 28,
+    "dockerExactVersion": null,
+    "platform": "linux/amd64",
+    "images": {
+      "postgres": { "tag": "public.ecr.aws/supabase/postgres:15.8.1.085", "digest": "sha256:af083ef64d0408c8f098ee6f5c364a59b26f36fbc0f3a334a62c5c1d57362e9b" },
+      "pgProve": { "tag": "public.ecr.aws/supabase/pg_prove:3.36", "digest": "sha256:eda7c5e68719e9c8287e78c017118407b48df904a51c935f5ab6098b8c0bc6bc" },
+      "authBootstrap": { "tag": "public.ecr.aws/supabase/gotrue:v2.196.0", "digest": "sha256:c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232" },
+      "storageBootstrap": { "tag": "public.ecr.aws/supabase/storage-api:v1.72.1", "digest": "sha256:105a2584129c9600aebed6f5ac49ca4371c92b996ecd1af7179750333e9e2120" },
+      "realtimeBootstrap": { "tag": "public.ecr.aws/supabase/realtime:v2.130.0", "digest": "sha256:002193c9ff840a4946918641901bb6aa9e2036dc9ff7590e2b11e91d1e06bf86" }
+    },
+    "pinEvidence": [
+      "2026-10-16: official GitHub v2.117.0 release API asset digest for the Linux amd64 tarball.",
+      "PG15 tag and bootstrap tags read from apps/cli-go/pkg/config/constants.go and templates/Dockerfile at v2.117.0.",
+      "2026-10-16: SHA-256 of exact anonymous public.ecr.aws registry manifest/index response bytes; pg_prove matches Stage 2B retained digest. These are index pins, not proof of local image execution."
+    ],
+    "runtimeValidation": "UNVERIFIED: no approved native Linux Docker environment available; exact Docker patch version remains unresolved and actual versions/images must be checked at execution."
+  },
   "node": "24.15.0",
   "pnpm": "10.12.1",
   "unitIsolation": {
@@ -39,6 +62,6 @@
     "Ubuntu 24.04 installation with --frozen-lockfile --ignore-scripts --engine-strict and Linux optional binaries has not run.",
     "GitHub-hosted execution, Corepack availability/bootstrap, action execution and artifact upload have not run.",
     "Node and pnpm distribution checksums are not independently recorded here; no digest is asserted.",
-    "Database images, Docker versions, PostgreSQL, Supabase CLI and Linux network isolation are outside P1."
+    "P2 database runtime, actual server version, native Docker and IPv4/IPv6 isolation proof have not executed locally; Docker patch version is not pinned."
   ]
 }
