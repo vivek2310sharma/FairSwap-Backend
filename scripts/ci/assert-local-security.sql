@@ -50,8 +50,10 @@ SELECT jsonb_build_object(
     'rls', (SELECT jsonb_agg(jsonb_build_object(
       'relname', c.relname, 'relrowsecurity', c.relrowsecurity, 'relforcerowsecurity', c.relforcerowsecurity,
       'policies', (SELECT count(*) FROM pg_policy WHERE polrelid = c.oid),
-      'anon_any_dml', has_table_privilege('anon',c.oid,'INSERT,UPDATE,DELETE'),
-      'authenticated_any_dml', has_table_privilege('authenticated',c.oid,'INSERT,UPDATE,DELETE')) ORDER BY c.relname)
+      'anon_any_dml', (has_table_privilege('anon',c.oid,'DELETE')
+        OR has_any_column_privilege('anon',c.oid,'INSERT,UPDATE')),
+      'authenticated_any_dml', (has_table_privilege('authenticated',c.oid,'DELETE')
+        OR has_any_column_privilege('authenticated',c.oid,'INSERT,UPDATE'))) ORDER BY c.relname)
       FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND c.relname IN ('listings','listing_media','email_outbox')),
     'extensions', (SELECT jsonb_object_agg(extname,extversion) FROM pg_extension

@@ -188,5 +188,12 @@ test("workflow and executor preserve the local-only fail-closed boundaries", () 
   assert.doesNotMatch(script, /--linked|--db-url|--project-ref|docker (?:system|container|volume|network) prune|--network host/);
   const sql = readFileSync(path.join(root, "scripts/ci/assert-local-security.sql"), "utf8");
   assert.match(sql, /BEGIN READ ONLY/);
+  // Explicit column-level INSERT/UPDATE grants are intentional for seller uploads.
+  // The older table-only privilege check incorrectly returned false for these roles.
+  for (const role of ["anon", "authenticated"]) {
+    assert.ok(sql.includes(`has_any_column_privilege('${role}',c.oid,'INSERT,UPDATE')`));
+    assert.ok(sql.includes(`has_table_privilege('${role}',c.oid,'DELETE')`));
+    assert.ok(!sql.includes(`has_table_privilege('${role}',c.oid,'INSERT,UPDATE,DELETE')`));
+  }
   assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\s+(?:TABLE|FUNCTION|INTO|FROM)\b/i);
 });
