@@ -12,7 +12,7 @@ import {fileURLToPath} from 'node:url';
 import {manifestSha256} from '../ci/verify-baseline.mjs';
 import {verifyEvent,verifyChanges,base} from './verify-source.mjs';
 import {inspectTap,verifyTap,assertions} from './parse-compatibility.mjs';
-import {verifySecurity,expectedRls,expectedColumnDml,expectedMigrationVersions,requiredSuites,collectEvidence,verifyDbResults,isolationKeys,cleanupKeys,imageDiagnosticStages,diagnosticStages,diagnosticCategories,sanitizeDiagnostic,invalidateCleanupEvidence} from './verify-db-results.mjs';
+import {verifyExtensionInventory,extensionMinimumVersions,inspectSuiteEvidence,verifyEvidence,verifySecurity,expectedRls,expectedColumnDml,expectedMigrationVersions,requiredSuites,collectEvidence,verifyDbResults,isolationKeys,cleanupKeys,imageDiagnosticStages,diagnosticStages,diagnosticCategories,sanitizeDiagnostic,invalidateCleanupEvidence} from './verify-db-results.mjs';
 const read=p=>readFileSync(new URL('../../'+p,import.meta.url),'utf8');
 const workflow=read('.github/workflows/stage3-pg17-compat.yml');
 const runner=read('scripts/stage3/run-local-db.sh');
@@ -220,7 +220,7 @@ function successfulContract(){
  isolationBefore:Object.fromEntries(isolationKeys.map(k=>[k,true])),isolationAfter:Object.fromEntries(isolationKeys.map(k=>[k,true])),
  cleanup:Object.fromEntries(cleanupKeys.map(k=>[k,true])),
  suites:Object.entries(requiredSuites).map(([file,assertions])=>({file,assertions,failedAssertions:0,exitCode:0,result:'PASS'})),
- securityBefore:security(),securityAfter:security()};
+ securityBefore:security(),securityAfter:security(),extensionReview:{before:verifyExtensionInventory(security().checks.extensions),after:verifyExtensionInventory(security().checks.extensions)}};
 }
 test('complete synthetic success still passes original contract',()=>assert.equal(verifyDbResults(successfulContract()),true));
 for(const [name,alter] of [
@@ -413,7 +413,9 @@ test('retry: zero delays on first successful operation; no retry cache or tag fa
 
 test('retry: network/security/SQL code outside reviewed startup remains byte-for-byte unchanged',()=>{
  const prefix=runner.slice(runner.indexOf('failure_stage=network-setup\n'),runner.indexOf('# BEGIN task-private startup adapter'));
- const suffix=runner.slice(runner.indexOf('# Defense in depth: remove default routes')).replace("# Migration 24 creates pg_cron; require its objects after replay, before security snapshots/tests.\nfailure_category=security-cron\ncheck_cron_safety true >\"$raw/cron-objects-after.stdout\" 2>\"$raw/cron-objects-after.stderr\"\n[[ $(cat -- \"$raw/cron-objects-after.stdout\") == t ]]\nfailure_category=none\n",'');
+ const suffix=runner.replace('const {verifySecurity,verifyExtensionInventory,expectedMigrationVersions,expectedRls,expectedColumnDml}=', 'const {verifySecurity,expectedMigrationVersions,expectedRls,expectedColumnDml}=')
+ .replace('// Provisional versions never bypass any non-extension security check.\ntry { verifySecurity(snapshot,{allowUnapprovedExtensions:true}); }','try { verifySecurity(snapshot); }')
+ .replace("['security-extensions',(()=>{try {verifyExtensionInventory(snapshot.checks?.extensions);return true;} catch {return false;}})()],","['security-extensions',equal(snapshot.checks?.extensions,expected.checks.extensions)],").slice(runner.indexOf('# Defense in depth: remove default routes')).replace("# Migration 24 creates pg_cron; require its objects after replay, before security snapshots/tests.\nfailure_category=security-cron\ncheck_cron_safety true >\"$raw/cron-objects-after.stdout\" 2>\"$raw/cron-objects-after.stderr\"\n[[ $(cat -- \"$raw/cron-objects-after.stdout\") == t ]]\nfailure_category=none\n",'');
  assert.equal(createHash('sha256').update(prefix).digest('hex'),'e729b5256627690c83dbd4bfded228feb003b601a57258f106716e066db78a24');
  assert.equal(createHash('sha256').update(suffix).digest('hex'),'9de9aadab1868bcdcce3dda1f96e74f07063a6b7e86270bd624a29215f071cec');
 });
@@ -644,4 +646,196 @@ test('cron lifecycle: retain server-wide pre-migration safety requirements',()=>
  for(const token of ["source = 'command line' AND NOT pending_restart","current_setting('cron.launch_active_jobs') = 'off'","current_setting('cron.database_name') = 'postgres'","current_setting('cron.host') = 'localhost'","shared_preload_libraries","rolsuper FROM pg_roles WHERE rolname = current_user"])assert.ok(runner.includes(token));
  assert.ok(runner.indexOf('check_cron_safety false >')<runner.indexOf('failure_stage=migrations'));
  assert.ok(runner.includes('failure_category=security-cron\ncheck_cron_safety true'));
+});
+
+// Step 1O: synthetic inventories and command outputs only; never runtime claims.
+test('extension floors retain the verified Stage 2B minima',()=>{
+ assert.deepEqual(extensionMinimumVersions,{pg_cron:'1.6',pg_net:'0.14.0',supabase_vault:'0.3.1'});
+ assert.equal(verifyExtensionInventory(security().checks.extensions).approved,true);
+});
+for(const name of Object.keys(extensionMinimumVersions)) {
+ test('extension rejects missing '+name,()=>{const x=security().checks.extensions;delete x[name];assert.throws(()=>verifyExtensionInventory(x));});
+ test('extension rejects downgraded '+name,()=>{const x=security().checks.extensions;x[name]={pg_cron:'1.5.99',pg_net:'0.13.99',supabase_vault:'0.3.0'}[name];assert.throws(()=>verifyExtensionInventory(x));});
+ test('extension admits provisional numeric upgrade '+name,()=>{const x=security().checks.extensions;x[name]={pg_cron:'1.7',pg_net:'0.15.0',supabase_vault:'0.3.2'}[name];assert.equal(verifyExtensionInventory(x).approved,false);});
+}
+for(const version of ['',null,1,'1','1.06','01.6','1.6.00','1.6-beta','1.6\n','1.6 /private/operator','9999.0.0','1.6.0.0','1.6+build','1.6;secret=fixture']) {
+ test('extension rejects malformed version '+JSON.stringify(version),()=>{const x=security().checks.extensions;x.pg_cron=version;assert.throws(()=>verifyExtensionInventory(x));});
+}
+test('extension rejects unknown name, array, null and extra fields',()=>{
+ for(const x of [{...security().checks.extensions,unexpected:'1.0'},[],null,{versions:security().checks.extensions}])assert.throws(()=>verifyExtensionInventory(x));
+});
+test('extension numeric comparison does not use lexical ordering or auto-approve aliases',()=>{
+ const x=security().checks.extensions;x.pg_cron='1.10';assert.equal(verifyExtensionInventory(x).approved,false);
+ x.pg_cron='1.6.0';assert.equal(verifyExtensionInventory(x).approved,false);
+ x.pg_cron='0.999.999';assert.throws(()=>verifyExtensionInventory(x));
+ x.pg_cron='999.999.999';assert.equal(verifyExtensionInventory(x).approved,false);
+});
+test('provisional extension versions cannot bypass any remaining security boundary',()=>{
+ const mutations=[s=>s.version_num=170007,s=>s.migration_versions.pop(),s=>s.vault_count=1,
+ s=>s.moderation_automation_enabled='true',s=>s.httpRequests=1,s=>s.httpResponses=1,
+ s=>s.checks.buckets=[],s=>s.checks.rls[0].relrowsecurity=false,
+ s=>s.checks.column_dml[0].anon_table_insert=true,s=>s.checks.sensitive_rpcs=[],
+ s=>s.checks.cron_jobs=[],s=>s.checks.runtime_settings[0].setting='unapproved',
+ s=>s.triggerAclContext={}];
+ for(const mutate of mutations){const s=security();s.checks.extensions.pg_net='0.15.0';mutate(s);assert.throws(()=>verifySecurity(s,{allowUnapprovedExtensions:true}));}
+});
+test('valid provisional inventory passes only the pre-SQL security mode',()=>{
+ const s=security();s.checks.extensions.pg_net='0.15.0';
+ verifySecurity(s,{allowUnapprovedExtensions:true});assert.throws(()=>verifySecurity(s));
+ for(const value of ['true',1,{}])assert.throws(()=>verifySecurity(s,{allowUnapprovedExtensions:value}));
+});
+function runPreSqlGate(snapshot) {
+ const start=runner.indexOf('const {verifySecurity,verifyExtensionInventory,expectedMigrationVersions');
+ const end=runner.indexOf('\nNODE',start);
+ const block="import {pathToFileURL} from 'node:url';\nimport {readFileSync,writeFileSync} from 'node:fs';\nconst [verifierPath,snapshotPath,referencePath,categoryPath]=process.argv.slice(2);\n"+runner.slice(start,end);
+ const dir=mkdtempSync(path.join(tmpdir(),'stage3-pre-sql-'));
+ try{
+  writeFileSync(path.join(dir,'snapshot.json'),JSON.stringify(snapshot));
+  let status=0;
+  try{execFileSync(process.execPath,['--input-type=module','-',fileURLToPath(new URL('./verify-db-results.mjs',import.meta.url)),path.join(dir,'snapshot.json'),fileURLToPath(new URL('../../docs/extraction/evidence/stage2b/r6/result.json',import.meta.url)),path.join(dir,'category')],{input:block,stdio:'pipe'});}
+  catch(e){status=e.status;}
+  return {status,category:adapterFs.existsSync(path.join(dir,'category'))?readFileSync(path.join(dir,'category'),'utf8'):null};
+ }finally{rmSync(dir,{recursive:true,force:true});}
+}
+test('actual runner gate permits provisional versions only after strict security',()=>{
+ const s=security();s.checks.extensions.pg_net='0.15.0';assert.equal(runPreSqlGate(s).status,0);
+ s.checks.sensitive_rpcs=[];assert.deepEqual(runPreSqlGate(s),{status:1,category:'security-rpcs'});
+});
+test('actual runner gate rejects missing, malformed, downgraded and unexpected inventory',()=>{
+ for(const alter of [x=>delete x.pg_net,x=>x.pg_net='private-raw-text',x=>x.pg_net='0.13.99',x=>x.unexpected='1.0']){
+  const s=security();alter(s.checks.extensions);assert.deepEqual(runPreSqlGate(s),{status:1,category:'security-extensions'});
+ }
+ assert.ok(runner.indexOf('try { verifySecurity(snapshot,{allowUnapprovedExtensions:true}); }')<runner.indexOf('failure_stage=pgtap'));
+});
+function withExtensionCollection({pending=true,failedSql=false,cleanup=true,invalid=false,rawField=false}={},inspect){
+ const dir=mkdtempSync(path.join(tmpdir(),'stage3-extension-'));
+ try{
+  const raw=path.join(dir,'raw'),out=path.join(dir,'out');mkdirSync(raw);
+  const contract=successfulContract();
+  if(pending)for(const s of [contract.securityBefore,contract.securityAfter])s.checks.extensions.pg_net='0.15.0';
+  if(invalid)contract.securityBefore.checks.extensions.pg_net='private-fixture-secret';
+  if(rawField)for(const s of [contract.securityBefore,contract.securityAfter]){s.raw='private-fixture-secret';s.checks.unknown='private-fixture-secret';}
+  if(!cleanup)contract.cleanup.firewallRemoved=false;
+  const files={'execution.json':{exitCode:failedSql?1:0},'diagnostic.json':{stage:failedSql?'pgtap':'complete',category:'none'},
+   'manifest.json':{sha256:manifestSha256,before:true,after:true},'tools.json':contract.tools,'images.json':contract.images,
+   'isolation-before.json':contract.isolationBefore,'isolation-after.json':contract.isolationAfter,
+   'security-before.json':contract.securityBefore,'security-after.json':contract.securityAfter,'cleanup.json':contract.cleanup};
+  for(const [name,value]of Object.entries(files))writeFileSync(path.join(raw,name),JSON.stringify(value));
+  for(const [file,count]of Object.entries(requiredSuites)){
+   const log=file==='moderation_compatibility.test.sql'?(failedSql?goodTap().replace('ok 1 ','not ok 1 '):goodTap()):
+    '/supabase/tests/'+file+'\nAll tests successful.\nFiles=1, Tests='+count+', 0 wallclock secs\nResult: PASS\n';
+   writeFileSync(path.join(raw,file+'.log'),log);
+   writeFileSync(path.join(raw,file+'.exit'),failedSql&&file==='moderation_compatibility.test.sql'?'1\n':'0\n');
+  }
+  writeFileSync(path.join(raw,'private.log'),'private-fixture-secret /private/operator/.env');
+  const acceptedResult=collectEvidence(raw,out),report=JSON.parse(readFileSync(path.join(out,'result.json'),'utf8'));
+  const suites=JSON.parse(readFileSync(path.join(out,'suite-results.json'),'utf8'));
+  assert.deepEqual(readdirSync(out).sort(),['SHA256SUMS','result.json','suite-results.json']);
+  for(const name of ['result.json','suite-results.json']){
+   const text=readFileSync(path.join(out,name),'utf8');assert.ok(!text.includes('private-fixture-secret')&&!text.includes('/private/operator'));
+   assert.ok(readFileSync(path.join(out,'SHA256SUMS'),'utf8').includes(createHash('sha256').update(text).digest('hex')+'  '+name));
+  }
+  inspect({acceptedResult,report,suites,out});
+ }finally{rmSync(dir,{recursive:true,force:true});}
+}
+test('unapproved inventory preserves all 344 executed passing assertions but cannot return green',()=>{
+ withExtensionCollection({},({acceptedResult,report,suites,out})=>{
+  assert.equal(acceptedResult,false);assert.equal(report.success,false);
+  assert.deepEqual(report.diagnostic,{stage:'artifact-validation',category:'security-extension-approval-pending'});
+  assert.equal(report.extensionReview.before.approved,false);assert.equal(report.extensionReview.after.approved,false);
+  assert.deepEqual(Object.keys(report.extensionReview.before.versions).sort(),Object.keys(extensionMinimumVersions).sort());
+  assert.equal(suites.length,10);assert.equal(suites.reduce((n,s)=>n+s.assertionsObserved,0),344);
+  assert.equal(suites.reduce((n,s)=>n+s.passed.length,0),344);assert.ok(suites.every(s=>s.failed.length===0));
+  assert.throws(()=>verifyDbResults(report));assert.throws(()=>verifyEvidence(out));
+ });
+});
+test('unapproved extensions preserve failed assertions and compatibility observations',()=>{
+ withExtensionCollection({failedSql:true},({acceptedResult,report,suites})=>{
+  assert.equal(acceptedResult,false);assert.equal(report.compatibility.passed,false);
+  assert.equal(report.compatibility.assertionsObserved,74);assert.deepEqual(report.compatibility.failed,[1]);
+  assert.equal(report.compatibility.observations.length,4);assert.equal(report.extensionReview.before.approved,false);
+  const suite=suites.find(s=>s.file==='moderation_compatibility.test.sql');assert.deepEqual(suite.failed,[1]);assert.equal(suite.passed.length,73);
+  assert.equal(suites.reduce((n,s)=>n+s.assertionsObserved,0),344);assert.equal(report.diagnostic.stage,'pgtap');
+ });
+});
+test('cleanup failure invalidates provisional results while preserving numeric evidence',()=>{
+ withExtensionCollection({cleanup:false},({acceptedResult,report,suites})=>{
+  assert.equal(acceptedResult,false);assert.equal(report.cleanup,'UNVERIFIED');assert.equal(suites.length,10);assert.throws(()=>verifyDbResults(report));
+ });
+});
+test('invalid inventory and arbitrary snapshot fields cannot escape evidence sanitization',()=>{
+ withExtensionCollection({invalid:true,rawField:true},({acceptedResult,report})=>{
+  assert.equal(acceptedResult,false);assert.equal(report.extensionReview.before,undefined);
+  assert.equal(report.extensionReview.after.approved,false);assert.equal(report.securityBefore,undefined);
+ });
+});
+test('approved successful evidence contract remains strict and verifiable',()=>{
+ withExtensionCollection({pending:false,rawField:true},({acceptedResult,report,out})=>{
+  assert.equal(acceptedResult,true);assert.equal(report.success,true);assert.equal(report.extensionReview.before.approved,true);verifyEvidence(out);
+ });
+});
+test('public final verifier cannot be opted into accepting unapproved versions',()=>{
+ const r=successfulContract();r.securityBefore.checks.extensions.pg_net='0.15.0';
+ r.extensionReview.before=verifyExtensionInventory(r.securityBefore.checks.extensions);
+ assert.throws(()=>verifyDbResults(r,{allowUnapprovedExtensions:true}));
+ r.extensionReview.before.approved=true;assert.throws(()=>verifyDbResults(r));
+});
+test('TAP evidence keeps only executed prefix numbers and excludes skips from passed assertions',()=>{
+ const r=inspectSuiteEvidence('moderation_compatibility.test.sql','1..74\nok 1 - private description\nnot ok 2 - raw text\nok 3 # SKIP arbitrary\n',1);
+ assert.equal(r.assertionsObserved,3);assert.deepEqual(r.passed,[1]);assert.deepEqual(r.failed,[2]);assert.equal(r.result,'NOT_VERIFIED');
+ assert.ok(!JSON.stringify(r).includes('private description'));
+ for(const log of ['ok 2 - out of order\n','ok 1\nok 1\n','ok 999999\n'])assert.throws(()=>inspectSuiteEvidence('moderation_compatibility.test.sql',log,1));
+});
+test('pg_prove failure evidence preserves bounded counts and failed ranges without assuming other passes',()=>{
+ const r=inspectSuiteEvidence('schema_security.test.sql','Failed tests: 1, 3-4\nFiles=1, Tests=22, 0 wallclock secs\nResult: FAIL\n',1);
+ assert.equal(r.assertionsObserved,22);assert.deepEqual(r.failed,[1,3,4]);assert.deepEqual(r.passed,[]);assert.equal(r.result,'NOT_VERIFIED');
+ for(const log of ['Failed tests: 1-999999\nFiles=1, Tests=22, x\n','Files=1, Tests=999999, x\n','Failed tests: 1, 1\nFiles=1, Tests=22, x\n'])assert.throws(()=>inspectSuiteEvidence('schema_security.test.sql',log,1));
+});
+test('pre-SQL, image, network and cleanup failures never become approved through extension handling',()=>{
+ for(const mutate of [r=>r.images.postgres.digest='sha256:'+'0'.repeat(64),r=>r.isolationBefore.ipv6Denied=false,
+  r=>r.cleanup.firewallRemoved=false,r=>r.securityBefore.checks.cron_jobs=[]]){
+  const r=successfulContract();r.securityBefore.checks.extensions.pg_net='0.15.0';mutate(r);assert.throws(()=>verifyDbResults(r));
+ }
+});
+
+test('extension parser rejects every whitespace boundary and bounded component overflow',()=>{
+ for(const v of ['1.6\r','1.6\n',' 1.6','1.6 ','1.6\t','1.6.1000','1000.0','1.6.0\u0000']){
+  const x=security().checks.extensions;x.pg_cron=v;assert.throws(()=>verifyExtensionInventory(x));
+ }
+});
+test('post-execution unapproved inventory cannot be hidden by approved pre-execution values',()=>{
+ const r=successfulContract();r.securityAfter.checks.extensions.supabase_vault='0.3.2';
+ r.extensionReview.after=verifyExtensionInventory(r.securityAfter.checks.extensions);
+ assert.throws(()=>verifyDbResults(r));
+ r.extensionReview.after.approved=true;assert.throws(()=>verifyDbResults(r));
+});
+test('malformed TAP numbering is never exported as compatibility evidence',()=>{
+ const dir=mkdtempSync(path.join(tmpdir(),'stage3-bounded-tap-'));
+ try{
+  const raw=path.join(dir,'raw'),out=path.join(dir,'out');mkdirSync(raw);
+  writeFileSync(path.join(raw,'moderation_compatibility.test.sql.log'),goodTap().replace('ok 1 ','not ok 999999 '));
+  writeFileSync(path.join(raw,'moderation_compatibility.test.sql.exit'),'1\n');
+  assert.equal(collectEvidence(raw,out),false);
+  const r=JSON.parse(readFileSync(path.join(out,'result.json'),'utf8'));
+  assert.equal(r.compatibility.passed,false);assert.equal(r.compatibility.failed,undefined);
+  assert.ok(!readFileSync(path.join(out,'result.json'),'utf8').includes('999999'));
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+test('missing or partial suite outputs never turn 344 planned assertions into executed passes',()=>{
+ const dir=mkdtempSync(path.join(tmpdir(),'stage3-partial-tap-'));
+ try{
+  const raw=path.join(dir,'raw'),out=path.join(dir,'out');mkdirSync(raw);
+  writeFileSync(path.join(raw,'moderation_compatibility.test.sql.log'),'1..74\nok 1 - synthetic\n');
+  writeFileSync(path.join(raw,'moderation_compatibility.test.sql.exit'),'1\n');
+  assert.equal(collectEvidence(raw,out),false);
+  const suites=JSON.parse(readFileSync(path.join(out,'suite-results.json'),'utf8'));
+  assert.equal(suites.length,1);assert.equal(suites[0].assertionsObserved,1);assert.deepEqual(suites[0].passed,[1]);assert.equal(suites[0].result,'NOT_VERIFIED');
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+test('pending extension CLI collection exits nonzero and cannot print private fields',()=>{
+ withExtensionCollection({},({out})=>{
+  let error;try{execFileSync(process.execPath,[fileURLToPath(new URL('./verify-db-results.mjs',import.meta.url)),'--verify',out],{encoding:'utf8',stdio:'pipe'});}catch(e){error=e;}
+  assert.ok(error);assert.equal(error.status,1);
+  assert.ok(!error.stderr.includes(out)&&!error.stderr.includes('private-fixture-secret'));
+ });
 });

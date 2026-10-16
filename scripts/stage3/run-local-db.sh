@@ -64,7 +64,7 @@ sanitize_failure() {
     *) failure_stage=unclassified; failure_category=unclassified ;;
   esac
   case ${failure_category:-none} in
-    none|unclassified|db-start-command-failed|db-start-version-mismatch|db-start-cron-not-disabled|required-tool-check-failed|manifest-retrieval-failed|digest-check-failed|descriptor-check-failed|image-pull-failed|image-inspect-failed|platform-check-failed|repo-digest-check-failed|child-image-id-check-failed|pin-check-failed|tag-check-failed|tag-create-failed|evidence-write-failed|cleanup-failed|evidence-validation-failed|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding|security-parse|security-version|security-ledger|security-vault|security-setting|security-queues|security-buckets|security-rls|security-column-grants|security-rls-shape|security-extensions|security-rpcs|security-cron|security-runtime|security-trigger|security-unclassified|security-rls-email_outbox-present|security-rls-email_outbox-relrowsecurity|security-rls-email_outbox-relforcerowsecurity|security-rls-email_outbox-policies|security-rls-email_outbox-anon_any_dml|security-rls-email_outbox-authenticated_any_dml|security-rls-listing_media-present|security-rls-listing_media-relrowsecurity|security-rls-listing_media-relforcerowsecurity|security-rls-listing_media-policies|security-rls-listing_media-anon_any_dml|security-rls-listing_media-authenticated_any_dml|security-rls-listings-present|security-rls-listings-relrowsecurity|security-rls-listings-relforcerowsecurity|security-rls-listings-policies|security-rls-listings-anon_any_dml|security-rls-listings-authenticated_any_dml ) ;;
+    none|unclassified|db-start-command-failed|db-start-version-mismatch|db-start-cron-not-disabled|required-tool-check-failed|manifest-retrieval-failed|digest-check-failed|descriptor-check-failed|image-pull-failed|image-inspect-failed|platform-check-failed|repo-digest-check-failed|child-image-id-check-failed|pin-check-failed|tag-check-failed|tag-create-failed|evidence-write-failed|cleanup-failed|evidence-validation-failed|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding|security-parse|security-version|security-ledger|security-vault|security-setting|security-queues|security-buckets|security-rls|security-column-grants|security-rls-shape|security-extensions|security-extension-approval-pending|security-rpcs|security-cron|security-runtime|security-trigger|security-unclassified|security-rls-email_outbox-present|security-rls-email_outbox-relrowsecurity|security-rls-email_outbox-relforcerowsecurity|security-rls-email_outbox-policies|security-rls-email_outbox-anon_any_dml|security-rls-email_outbox-authenticated_any_dml|security-rls-listing_media-present|security-rls-listing_media-relrowsecurity|security-rls-listing_media-relforcerowsecurity|security-rls-listing_media-policies|security-rls-listing_media-anon_any_dml|security-rls-listing_media-authenticated_any_dml|security-rls-listings-present|security-rls-listings-relrowsecurity|security-rls-listings-relforcerowsecurity|security-rls-listings-policies|security-rls-listings-anon_any_dml|security-rls-listings-authenticated_any_dml ) ;;
     *) failure_category=unclassified ;;
   esac
 }
@@ -658,11 +658,12 @@ if ! node --input-type=module - "$root/scripts/stage3/verify-db-results.mjs" "$r
 import {pathToFileURL} from 'node:url';
 import {readFileSync,writeFileSync} from 'node:fs';
 const [verifierPath,snapshotPath,referencePath,categoryPath]=process.argv.slice(2);
-const {verifySecurity,expectedMigrationVersions,expectedRls,expectedColumnDml}=await import(pathToFileURL(verifierPath));
+const {verifySecurity,verifyExtensionInventory,expectedMigrationVersions,expectedRls,expectedColumnDml}=await import(pathToFileURL(verifierPath));
 let snapshot;
 try { snapshot=JSON.parse(readFileSync(snapshotPath,'utf8')); }
 catch { writeFileSync(categoryPath,'security-parse'); process.exit(1); }
-try { verifySecurity(snapshot); }
+// Provisional versions never bypass any non-extension security check.
+try { verifySecurity(snapshot,{allowUnapprovedExtensions:true}); }
 catch {
   const expected=JSON.parse(readFileSync(referencePath,'utf8')).security;
   const canonical=v=>Array.isArray(v)?v.map(canonical).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))):v!==null&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
@@ -677,7 +678,7 @@ catch {
     ['security-buckets',equal(snapshot.checks?.buckets,expected.checks.buckets)],
     ['security-rls',equal(snapshot.checks?.rls,expectedRls)],
     ['security-column-grants',equal(snapshot.checks?.column_dml,expectedColumnDml)],
-    ['security-extensions',equal(snapshot.checks?.extensions,expected.checks.extensions)],
+    ['security-extensions',(()=>{try {verifyExtensionInventory(snapshot.checks?.extensions);return true;} catch {return false;}})()],
     ['security-rpcs',equal(snapshot.checks?.sensitive_rpcs,expected.checks.sensitive_rpcs)],
     ['security-cron',equal(snapshot.checks?.cron_jobs,expected.checks.cron_jobs)],
     ['security-runtime',equal(snapshot.checks?.runtime_settings,expectedSettings)],

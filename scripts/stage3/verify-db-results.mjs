@@ -138,6 +138,7 @@ export const diagnosticCategories = Object.freeze([
   "security-column-grants",
   "security-rls-shape",
   "security-extensions",
+  "security-extension-approval-pending",
   "security-rpcs",
   "security-cron",
   "security-runtime",
@@ -172,6 +173,30 @@ export function sanitizeDiagnostic(value) {
   return {stage:value.stage,category:value.category};
 }
 
+// Conservative floors retain the previously verified Stage 2B capabilities.
+// They are not a security certification or approval of newer PG17 versions.
+export const extensionMinimumVersions = Object.freeze({
+  pg_cron: "1.6", pg_net: "0.14.0", supabase_vault: "0.3.1",
+});
+function extensionVersion(version) {
+  requireCondition(typeof version === "string" && version.length <= 11 && version === version.trim()
+    && /^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})(?:\.(0|[1-9][0-9]{0,2}))?$/.test(version));
+  return version.split(".").map(Number).concat(version.split(".").length === 2 ? [0] : []);
+}
+export function verifyExtensionInventory(inventory) {
+  requireCondition(inventory && typeof inventory === "object" && !Array.isArray(inventory)
+    && [Object.prototype, null].includes(Object.getPrototypeOf(inventory))
+    && same(Object.keys(inventory), Object.keys(extensionMinimumVersions)));
+  const versions = {};
+  for (const [name, floor] of Object.entries(extensionMinimumVersions)) {
+    const actual = extensionVersion(inventory[name]), minimum = extensionVersion(floor);
+    const firstDifference = actual.findIndex((part, index) => part !== minimum[index]);
+    requireCondition(firstDifference === -1 || actual[firstDifference] > minimum[firstDifference]);
+    versions[name] = inventory[name];
+  }
+  return {versions, approved: same(versions, accepted.checks.extensions)};
+}
+
 export function expectedMigrationVersions() {
   return readFileSync(path.join(repositoryRoot, "docs/extraction/MIGRATION_MANIFEST.sha256"), "utf8")
     .trimEnd().split("\n").map(line => path.posix.basename(line.slice(66)).slice(0, 14)).sort();
@@ -190,12 +215,14 @@ export function parseSuiteLog(file, log, exitCode) {
   requireCondition((log.match(/^All tests successful\.\r?$/gm) ?? []).length === 1);
   return { file, assertions: requiredSuites[file], failedAssertions: 0, exitCode: 0, result: "PASS" };
 }
-export function verifySecurity(snapshot) {
+export function verifySecurity(snapshot, {allowUnapprovedExtensions = false} = {}) {
   requireCondition(snapshot?.postgresVersion === "17.6" && snapshot.version_num === 170006);
   requireCondition(same(snapshot.migration_versions, expectedMigrationVersions()) && snapshot.migration_versions.length === 58);
   requireCondition(snapshot.vault_count === 0 && snapshot.moderation_automation_enabled === "false"
     && snapshot.httpRequests === 0 && snapshot.httpResponses === 0);
-  for (const key of ["buckets", "extensions", "sensitive_rpcs", "cron_jobs"]) {
+  const extensions = verifyExtensionInventory(snapshot.checks?.extensions);
+  requireCondition(allowUnapprovedExtensions === true || extensions.approved);
+  for (const key of ["buckets", "sensitive_rpcs", "cron_jobs"]) {
     requireCondition(same(snapshot.checks?.[key], accepted.checks[key]));
   }
   requireCondition(same(snapshot.checks?.rls, expectedRls));
@@ -207,7 +234,7 @@ export function verifySecurity(snapshot) {
   requireCondition(same(snapshot.checks.runtime_settings, settings));
   requireCondition(same(snapshot.triggerAclContext, accepted.triggerAclContext));
 }
-export function verifyDbResults(report) {
+function verifyExecutionContract(report, allowUnapprovedExtensions = false) {
   requireCondition(report?.schemaVersion === 1 && report.success === true && report.executionExit === 0);
   requireCondition(same(report.diagnostic,{stage:"complete",category:"none"}));
   requireCondition(report.compatibility?.passed === true && report.compatibility.assertionsObserved === 74
@@ -235,11 +262,15 @@ export function verifyDbResults(report) {
       && suite.exitCode === 0 && suite.result === "PASS");
   }
   requireCondition(report.suites.reduce((sum, suite) => sum + suite.assertions, 0) === 344);
-  verifySecurity(report.securityBefore);
-  verifySecurity(report.securityAfter);
+  verifySecurity(report.securityBefore, {allowUnapprovedExtensions});
+  verifySecurity(report.securityAfter, {allowUnapprovedExtensions});
+  requireCondition(same(report.extensionReview, {before:verifyExtensionInventory(report.securityBefore.checks.extensions),
+    after:verifyExtensionInventory(report.securityAfter.checks.extensions)}));
   requireCondition(same(report.securityBefore.migration_versions, report.securityAfter.migration_versions));
   return true;
 }
+// The public acceptance verifier has no provisional/bypass option.
+export function verifyDbResults(report) { return verifyExecutionContract(report); }
 function sha256(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
 export function verifyEvidence(directory) {
   verifyBaseline();
@@ -276,23 +307,82 @@ export function invalidateCleanupEvidence(directory,diagnostic) {
   },[]);
   return false;
 }
+// Retain numeric TAP evidence only; never retain descriptions or raw diagnostics.
+export function inspectSuiteEvidence(file, log, exitCode) {
+  requireCondition(Object.hasOwn(requiredSuites, file) && typeof log === "string"
+    && Number.isInteger(exitCode) && exitCode >= 0 && exitCode <= 255);
+  const planned = requiredSuites[file];
+  const rows = [...log.matchAll(/^(not ok|ok) ([0-9]+)(?:[ \t]|$)([^\r\n]*)/gm)];
+  requireCondition(rows.length <= planned && rows.every((row, index) => Number(row[2]) === index + 1));
+  let observed = null, passed = [], failed = [], complete = false;
+  if (rows.length) {
+    observed = rows.length;
+    passed = rows.filter(row => row[1] === "ok" && !/#\s*(?:SKIP|TODO)\b/i.test(row[3])).map(row => Number(row[2]));
+    failed = rows.filter(row => row[1] === "not ok").map(row => Number(row[2]));
+  } else if (file !== "moderation_compatibility.test.sql") {
+    // pg_prove normally prints a summary, rather than every successful TAP row.
+    const counts = [...log.matchAll(/^Files=1, Tests=([0-9]+),[^\r\n]*$/gm)];
+    requireCondition(counts.length <= 1);
+    if (counts.length) {
+      observed = Number(counts[0][1]);
+      requireCondition(observed <= planned);
+      const failures = [...log.matchAll(/^\s*Failed tests:\s*([0-9, -]+)\s*$/gm)];
+      requireCondition(failures.length <= 1);
+      if (failures.length) {
+        for (const part of failures[0][1].split(",")) {
+          const range = part.trim().match(/^([1-9][0-9]*)(?:-([1-9][0-9]*))?$/);
+          requireCondition(range);
+          const first = Number(range[1]), last = Number(range[2] ?? range[1]);
+          requireCondition(first <= last && last <= observed);
+          for (let number = first; number <= last; number++) failed.push(number);
+        }
+        requireCondition(new Set(failed).size === failed.length);
+        failed.sort((a,b) => a-b);
+        // A failure summary alone does not prove every other assertion passed.
+      }
+    }
+  }
+  try {
+    parseSuiteLog(file, log, exitCode);
+    complete = true;
+    observed = planned;
+    passed = Array.from({length: planned}, (_, index) => index + 1);
+    failed = [];
+  } catch { /* Preserve only observed counts/numbers; never infer a successful suite. */ }
+  return {file, exitCode, assertionsObserved: observed, passed, failed, result: complete ? "PASS" : "NOT_VERIFIED"};
+}
+function collectSuiteEvidence(rawDirectory) {
+  return Object.keys(requiredSuites).map(file => {
+    try {
+      const exit = readFileSync(path.join(rawDirectory, file + ".exit"), "utf8");
+      requireCondition(/^(?:0|[1-9][0-9]{0,2})\n?$/.test(exit));
+      return inspectSuiteEvidence(file, readFileSync(path.join(rawDirectory, file + ".log"), "utf8"), Number(exit.trim()));
+    } catch { return {file, result:"NOT_VERIFIED", assertionsObserved:null, passed:[], failed:[]}; }
+  });
+}
+function collectExtensionEvidence(rawDirectory) {
+  const result = {};
+  for (const [phase, file] of [["before","security-before.json"],["after","security-after.json"]]) {
+    try { result[phase] = verifyExtensionInventory(readJson(path.join(rawDirectory, file)).checks?.extensions); }
+    catch { /* Invalid/missing inventory never exports names, versions or raw text. */ }
+  }
+  return result;
+}
+
 export function collectEvidence(rawDirectory, directory) {
   let report = { schemaVersion: 1, success: false, reason: "Database CI incomplete or failed; raw output withheld" };
   let diagnostic=sanitizeDiagnostic(null);
   try {diagnostic=sanitizeDiagnostic(readJson(path.join(rawDirectory,"diagnostic.json")));} catch { /* Fixed unknown only. */ }
   report.diagnostic=diagnostic;
   let compatibility={executed:false,passed:false};
-  try { const log=readFileSync(path.join(rawDirectory,"moderation_compatibility.test.sql.log"),"utf8"); compatibility.executed=true; compatibility=inspectTap(log,Number(readFileSync(path.join(rawDirectory,"moderation_compatibility.test.sql.exit"),"utf8").trim())); } catch { /* Fixed failure only; never export exception text. */ }
+  try { const log=readFileSync(path.join(rawDirectory,"moderation_compatibility.test.sql.log"),"utf8"); const exit=Number(readFileSync(path.join(rawDirectory,"moderation_compatibility.test.sql.exit"),"utf8").trim()); inspectSuiteEvidence("moderation_compatibility.test.sql",log,exit); compatibility=inspectTap(log,exit); } catch { /* Fixed failure only; never export exception text. */ }
   report.compatibility=compatibility;
-  report.suiteStatus=Object.keys(requiredSuites).map(file=>{
-    try {const exit=readFileSync(path.join(rawDirectory,file+".exit"),"utf8").trim();
-      requireCondition(exit === "0");
-      parseSuiteLog(file,readFileSync(path.join(rawDirectory,file+".log"),"utf8"),Number(exit));
-      return {file,result:"PASS"};
-    } catch {return {file,result:"NOT_VERIFIED"};}
-  });
+  const retainedSuites = collectSuiteEvidence(rawDirectory);
+  report.suiteStatus = retainedSuites;
+  report.extensionReview = collectExtensionEvidence(rawDirectory);
   let suites = [];
   let passed = false;
+  let pendingExtensions = false;
   try {
     verifyBaseline();
     const execution = readJson(path.join(rawDirectory, "execution.json"));
@@ -304,6 +394,7 @@ export function collectEvidence(rawDirectory, directory) {
     });
     const candidate = {
       schemaVersion: 1, success: true, diagnostic, compatibility, executionExit: execution.exitCode,
+      extensionReview: collectExtensionEvidence(rawDirectory),
       manifestSha256: manifest.sha256, manifestVerifiedBeforeAndAfter: manifest.before === true && manifest.after === true,
       tools: readJson(path.join(rawDirectory, "tools.json")), images: readJson(path.join(rawDirectory, "images.json")),
       isolationBefore: readJson(path.join(rawDirectory, "isolation-before.json")),
@@ -312,6 +403,8 @@ export function collectEvidence(rawDirectory, directory) {
       securityAfter: readJson(path.join(rawDirectory, "security-after.json")),
       cleanup: readJson(path.join(rawDirectory, "cleanup.json")), suites,
     };
+    verifyExecutionContract(candidate, true);
+    pendingExtensions = !candidate.extensionReview.before.approved || !candidate.extensionReview.after.approved;
     verifyDbResults(candidate);
     // Build an allowlist projection; never copy arbitrary log text or unknown input fields.
     const fixed = (object, keys) => Object.fromEntries(keys.map(key => [key, object[key]]));
@@ -331,8 +424,9 @@ export function collectEvidence(rawDirectory, directory) {
     passed = true;
   } catch {
     // No assertion messages, URLs, absolute paths, credentials or raw error text escape.
-    suites = [];
-    if (diagnostic.stage==="complete") report.diagnostic={stage:"artifact-validation",category:"evidence-validation-failed"};
+    suites = retainedSuites.filter(suite => Object.hasOwn(suite,"exitCode"));
+    if (diagnostic.stage==="complete") report.diagnostic={stage:"artifact-validation",
+      category:pendingExtensions ? "security-extension-approval-pending" : "evidence-validation-failed"};
     try {
       const cleanup = readJson(path.join(rawDirectory, "cleanup.json"));
       requireAllTrue(cleanup, cleanupKeys);
