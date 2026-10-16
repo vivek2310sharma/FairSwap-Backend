@@ -316,3 +316,37 @@ change canonical migrations, SQL tests, copied unit tests, test setup, lockfile,
 deployment configuration or application behavior. P2 implementation was separately
 authorized and remains uncommitted for review. No implementation acceptance,
 commit/push/PR, hosted execution or deployment is implied by static checks.
+
+## P2 GitHub Actions runtime findings and revised isolation approach
+
+After approved publication of the extraction branch, GitHub-hosted Ubuntu 24.04
+repeatedly passed `unit-integrity`, but `database-pg15` stopped **before**
+starting PostgreSQL or applying FairSwap migrations. The first runs were blocked
+by ECR image-pull rate limits; the subsequent PR run reached the pre-start
+port probe and observed no usable port mapping on the `--internal` bridge.
+The final required gate correctly failed and the retained failure evidence
+reported task-owned cleanup. No database migration or pgTAP result from these
+runs may be described as passing.
+
+The current draft-PR revision replaces that internal network with a disposable,
+task-named **ordinary** dual-stack bridge, retaining loopback-only port
+publication. Before any container starts, it installs task-interface-specific
+IPv4 and IPv6 DROP rules in Docker's `DOCKER-USER` forwarding chain and INPUT
+rules blocking new container-to-host connections. It explicitly verifies the
+Docker firewall hooks, all four rules and the named bridge; unsupported firewall
+backends fail closed. After base database startup, it removes default routes
+inside the task's database network namespace, and repeats host firewall,
+loopback, namespace, IPv4/IPv6 outbound probes and SQL-connectivity checks
+before any FairSwap migration and again after tests. Cleanup must delete exactly
+the task-owned firewall rules, remove task resources, and record `firewallRemoved`.
+Sanitized evidence now uses `firewallIsolated` rather than claiming the Docker
+network is `--internal`. Neither ordinary loopback publishing nor a finite set
+of egress probes, by itself, proves universal outbound-network isolation.
+
+The extraction branch is no longer a `push` trigger while an open PR also
+triggers CI; `main` push, `pull_request` and manual dispatch remain. This
+reduces duplicate heavy image pulls. Registry rate limiting is still a
+possible external dependency failure; no unsigned or floating-image fallback
+was added. All revised runtime network and cleanup behavior is **UNVERIFIED**
+until GitHub Actions exercises it successfully. Draft PR #1 remains unmerged;
+no hosted Supabase, provider or deployment operations are authorized.

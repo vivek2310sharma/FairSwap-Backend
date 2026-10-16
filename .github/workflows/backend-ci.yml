@@ -3,7 +3,7 @@ name: Backend independent CI
 on:
   pull_request:
   push:
-    branches: [main, chore/backend-extraction-baseline]
+    branches: [main]
   workflow_dispatch:
 
 permissions:

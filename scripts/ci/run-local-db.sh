@@ -30,6 +30,12 @@ project_id="fairswap-ci-$(node -p 'crypto.randomBytes(10).toString("hex")')"
 network="${project_id}-net"
 db="supabase_db_${project_id}"
 probe="${project_id}-binding-probe"
+# Kernel interface names are limited to 15 bytes; task-specific, never global.
+fw_if="fs$(node -p 'crypto.randomBytes(6).toString("hex")')"
+fw4_fwd=0
+fw6_fwd=0
+fw4_input=0
+fw6_input=0
 snapshotted=0
 db_port=0
 exec 3>&1
@@ -76,6 +82,23 @@ cleanup() {
     docker volume ls -q --filter "label=com.supabase.cli.project=$project_id" >"$raw/remaining-volumes.txt" || cleanup_ok=0
     [[ ! -s $raw/remaining-containers.txt && ! -s $raw/remaining-volumes.txt ]] || cleanup_ok=0
     docker network inspect "$network" >/dev/null 2>&1 && cleanup_ok=0
+    # Reverse only the four exact per-interface rules installed by this task.
+    if [[ $fw6_input == 1 ]]; then
+      sudo -n ip6tables -w -D INPUT -i "$fw_if" -m conntrack --ctstate NEW -j DROP || cleanup_ok=0
+    fi
+    if [[ $fw4_input == 1 ]]; then
+      sudo -n iptables -w -D INPUT -i "$fw_if" -m conntrack --ctstate NEW -j DROP || cleanup_ok=0
+    fi
+    if [[ $fw6_fwd == 1 ]]; then
+      sudo -n ip6tables -w -D DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP || cleanup_ok=0
+    fi
+    if [[ $fw4_fwd == 1 ]]; then
+      sudo -n iptables -w -D DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP || cleanup_ok=0
+    fi
+    if [[ $fw4_input == 1 ]] && sudo -n iptables -w -C INPUT -i "$fw_if" -m conntrack --ctstate NEW -j DROP >/dev/null 2>&1; then cleanup_ok=0; fi
+    if [[ $fw6_input == 1 ]] && sudo -n ip6tables -w -C INPUT -i "$fw_if" -m conntrack --ctstate NEW -j DROP >/dev/null 2>&1; then cleanup_ok=0; fi
+    if [[ $fw4_fwd == 1 ]] && sudo -n iptables -w -C DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP >/dev/null 2>&1; then cleanup_ok=0; fi
+    if [[ $fw6_fwd == 1 ]] && sudo -n ip6tables -w -C DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP >/dev/null 2>&1; then cleanup_ok=0; fi
     inventory after || cleanup_ok=0
     for kind in containers volumes networks; do cmp -s "$raw/$kind-before.txt" "$raw/$kind-after.txt" || cleanup_ok=0; done
     if [[ $db_port != 0 ]]; then
@@ -90,7 +113,7 @@ NODE
     fi
   else cleanup_ok=0; fi
   if [[ $cleanup_ok == 1 ]]; then
-    json_true "$raw/cleanup.json" containersRemoved volumesRemoved networkRemoved portClosed baselineResourcesPreserved
+    json_true "$raw/cleanup.json" containersRemoved volumesRemoved networkRemoved portClosed baselineResourcesPreserved firewallRemoved
   fi
   printf '{"exitCode":%d}\n' "$execution" >"$raw/execution.json"
   node "$root/scripts/ci/verify-db-results.mjs" --collect "$raw" "$evidence" >&3 2>&3
@@ -107,7 +130,7 @@ NODE
   if [[ $execution == 0 && $cleanup_ok == 1 && $collection == 0 ]]; then exit 0; fi
   # Report only an enumerated stage, never raw tool output, paths or exception text.
   case ${failure_stage:-unclassified} in
-    preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete|port-probe-run|port-probe-inspect|port-probe-binding|port-probe-cleanup|image-postgres-*|image-pgProve-*|image-authBootstrap-*|image-storageBootstrap-*|image-realtimeBootstrap-*) ;;
+    preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete|port-probe-run|port-probe-inspect|port-probe-binding|port-probe-cleanup|firewall-hooks|firewall-setup|firewall-verify|route-isolation|image-postgres-*|image-pgProve-*|image-authBootstrap-*|image-storageBootstrap-*|image-realtimeBootstrap-*) ;;
     *) failure_stage=unclassified ;;
   esac
   if [[ $execution == 0 ]]; then
@@ -130,7 +153,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for tool in node docker curl tar sha256sum timeout sudo nsenter ip cmp; do command -v "$tool" >/dev/null; done
+for tool in node docker curl tar sha256sum timeout sudo nsenter ip iptables ip6tables cmp; do command -v "$tool" >/dev/null; done
 [[ $(node -p 'process.versions.node') == 24.15.0 ]]
 sudo -n true
 [[ $(docker version --format '{{.Server.Os}}/{{.Server.Arch}}') == linux/amd64 ]]
@@ -259,9 +282,39 @@ port = ${ports[3]}
 EOF
 v6="fd$(node -p 'crypto.randomBytes(1).toString("hex")'):$(node -p 'crypto.randomBytes(2).toString("hex")'):$(node -p 'crypto.randomBytes(2).toString("hex")')::/64"
 failure_stage=network-setup
-docker network create --driver bridge --internal --ipv6 --subnet "$v6" \
+docker network create --driver bridge --ipv6 --subnet "$v6" \
   --opt com.docker.network.bridge.host_binding_ipv4=127.0.0.1 \
+  --opt com.docker.network.bridge.name="$fw_if" \
   --label "com.supabase.cli.project=$project_id" "$network"
+# A normal bridge can publish loopback ports. Block external forwarding and
+# new connections to host services for this task's interface before any container starts.
+# Refuse nftables-only/unsupported Docker firewall backends rather than silently bypassing.
+failure_stage=firewall-hooks
+sudo -n iptables -w -C FORWARD -j DOCKER-USER
+sudo -n ip6tables -w -C FORWARD -j DOCKER-USER
+! sudo -n iptables -w -C DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP >/dev/null 2>&1
+! sudo -n ip6tables -w -C DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP >/dev/null 2>&1
+failure_stage=firewall-setup
+sudo -n iptables -w -I DOCKER-USER 1 -i "$fw_if" ! -o "$fw_if" -j DROP
+fw4_fwd=1
+sudo -n ip6tables -w -I DOCKER-USER 1 -i "$fw_if" ! -o "$fw_if" -j DROP
+fw6_fwd=1
+sudo -n iptables -w -I INPUT 1 -i "$fw_if" -m conntrack --ctstate NEW -j DROP
+fw4_input=1
+sudo -n ip6tables -w -I INPUT 1 -i "$fw_if" -m conntrack --ctstate NEW -j DROP
+fw6_input=1
+verify_host_firewall() {
+  [[ $fw4_fwd == 1 && $fw6_fwd == 1 && $fw4_input == 1 && $fw6_input == 1 ]]
+  sudo -n iptables -w -C FORWARD -j DOCKER-USER
+  sudo -n ip6tables -w -C FORWARD -j DOCKER-USER
+  sudo -n iptables -w -C DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP
+  sudo -n ip6tables -w -C DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP
+  sudo -n iptables -w -C INPUT -i "$fw_if" -m conntrack --ctstate NEW -j DROP
+  sudo -n ip6tables -w -C INPUT -i "$fw_if" -m conntrack --ctstate NEW -j DROP
+  ip link show "$fw_if" >/dev/null
+}
+failure_stage=firewall-verify
+verify_host_firewall
 # Verify implicit publishing behavior before starting even the empty base database.
 failure_stage=port-probe-run
 if ! docker run -d --pull never --name "$probe" --label "com.supabase.cli.project=$project_id" \
@@ -300,15 +353,31 @@ docker rm -f "$probe"
 failure_stage=db-start
 cli_local db start >"$raw/start.log" 2>&1
 
+# Defense in depth: remove default routes inside this disposable database
+# namespace before introducing FairSwap SQL. Same-bridge SQL still works.
+failure_stage=route-isolation
+db_pid=$(docker inspect -f '{{.State.Pid}}' "$db")
+[[ $db_pid =~ ^[1-9][0-9]*$ ]]
+for family in 4 6; do
+  for attempt in 1 2 3; do
+    routes=$(sudo -n nsenter --target "$db_pid" --net -- ip "-$family" route show default)
+    [[ -n $routes ]] || break
+    sudo -n nsenter --target "$db_pid" --net -- ip "-$family" route del default
+  done
+  [[ -z $(sudo -n nsenter --target "$db_pid" --net -- ip "-$family" route show default) ]]
+done
+
 check_isolation() {
   local output=$1 pid sandbox
   docker network inspect "$network" >"$raw/network.json"
   docker inspect "$db" >"$raw/database.json"
-  node --input-type=module - "$raw/network.json" "$raw/database.json" "$network" "$db_port" "$raw/images.json" <<'NODE'
+  verify_host_firewall
+  node --input-type=module - "$raw/network.json" "$raw/database.json" "$network" "$db_port" "$raw/images.json" "$fw_if" <<'NODE'
 import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
-const [nf,df,name,port,im]=process.argv.slice(2);const n=JSON.parse(readFileSync(nf))[0],d=JSON.parse(readFileSync(df))[0];
-assert.equal(n.Internal,true);assert.equal(n.EnableIPv6,true);assert.equal(n.Driver,'bridge');
+const [nf,df,name,port,im,iface]=process.argv.slice(2);const n=JSON.parse(readFileSync(nf))[0],d=JSON.parse(readFileSync(df))[0];
+assert.equal(n.Internal,false);assert.equal(n.EnableIPv6,true);assert.equal(n.Driver,'bridge');
 assert.equal(n.Options['com.docker.network.bridge.host_binding_ipv4'],'127.0.0.1');
+assert.equal(n.Options['com.docker.network.bridge.name'],iface);
 assert.deepEqual(Object.keys(d.NetworkSettings.Networks),[name]);
 const p=d.NetworkSettings.Ports['5432/tcp'];assert.ok(Array.isArray(p)&&p.length>0);
 assert.ok(p.every(x=>(x.HostIp==='127.0.0.1'||x.HostIp==='::1')&&x.HostPort===port));
@@ -340,7 +409,7 @@ NODE
   cli_local db query --local 'SELECT 1 AS local_connectivity' >"$raw/host-query.log" 2>&1
   [[ $(docker run --rm --pull never --network "$network" --label "com.supabase.cli.project=$project_id" \
     -e PGPASSWORD=postgres -e PGCONNECT_TIMEOUT=5 --entrypoint psql "$prove_ref" -X -Atq -h "$db" -U postgres -d postgres -c 'SELECT 1') == 1 ]]
-  json_true "$output" internalNetwork loopbackOnly nativeNamespace hostSql runnerSql ipv4Denied ipv6Denied probesExecuted noExtraNetworks
+  json_true "$output" firewallIsolated loopbackOnly nativeNamespace hostSql runnerSql ipv4Denied ipv6Denied probesExecuted noExtraNetworks
 }
 failure_stage=isolation-before
 check_isolation "$raw/isolation-before.json"

@@ -20,11 +20,11 @@ export const requiredSuites = Object.freeze({
   "seller_listing_category_context.test.sql": 75,
 });
 export const isolationKeys = Object.freeze([
-  "internalNetwork", "loopbackOnly", "nativeNamespace", "hostSql", "runnerSql",
+  "firewallIsolated", "loopbackOnly", "nativeNamespace", "hostSql", "runnerSql",
   "ipv4Denied", "ipv6Denied", "probesExecuted", "noExtraNetworks",
 ]);
 export const cleanupKeys = Object.freeze([
-  "containersRemoved", "volumesRemoved", "networkRemoved", "portClosed", "baselineResourcesPreserved",
+  "containersRemoved", "volumesRemoved", "networkRemoved", "portClosed", "baselineResourcesPreserved", "firewallRemoved",
 ]);
 function requireCondition(condition) {
   if (!condition) throw new Error("Database CI evidence does not satisfy the approved contract");
