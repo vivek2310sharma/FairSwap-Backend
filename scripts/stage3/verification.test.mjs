@@ -1,4 +1,6 @@
 import {createHash} from 'node:crypto';
+import * as adapterFs from 'node:fs';
+import {rewriteDatabaseCreate,runDocker} from './start-postgres-cron-off.mjs';
 // Static/regression checks only. Synthetic validator inputs are not runtime evidence.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -410,14 +412,14 @@ test('retry: zero delays on first successful operation; no retry cache or tag fa
 })();
 
 test('retry: network/security/SQL code outside reviewed startup remains byte-for-byte unchanged',()=>{
- const prefix=runner.slice(runner.indexOf('failure_stage=network-setup\n'),runner.indexOf('# BEGIN granular startup diagnostics'));
+ const prefix=runner.slice(runner.indexOf('failure_stage=network-setup\n'),runner.indexOf('# BEGIN task-private startup adapter'));
  const suffix=runner.slice(runner.indexOf('# Defense in depth: remove default routes'));
  assert.equal(createHash('sha256').update(prefix).digest('hex'),'e729b5256627690c83dbd4bfded228feb003b601a57258f106716e066db78a24');
  assert.equal(createHash('sha256').update(suffix).digest('hex'),'9de9aadab1868bcdcce3dda1f96e74f07063a6b7e86270bd624a29215f071cec');
 });
 
 (function startupSpecs(){
-const startupStages=['db-start-cli','db-start-version-num-query','db-start-version-num-verify','db-start-version-text-query','db-start-version-text-verify','db-start-cron-alter','db-start-cron-reload','db-start-cron-confirm','db-start-pgtap-extension'];
+const startupStages=['db-start-cli','db-start-version-num-query','db-start-version-num-verify','db-start-version-text-query','db-start-version-text-verify','db-start-cron-confirm','db-start-pgtap-extension'];
 const match=runner.match(/# BEGIN granular startup diagnostics\n([\s\S]*?)# END granular startup diagnostics/);
 assert.ok(match);
 const startupBlock=match[1],q=s=>"'"+String(s).replace(/'/g,"'\\''")+"'";
@@ -426,23 +428,24 @@ const program=[
 'set -euo pipefail','umask 077',
 'raw=$(mktemp -d /tmp/fairswap-startup-mock.XXXXXXXX)',
 'trap \'[[ $raw == /tmp/fairswap-startup-mock.* ]] && rm -rf -- "$raw"\' EXIT',
+'task="$raw"; mkdir -p "$task/bin"',
 'db=synthetic-task-db; fail='+q(fail),
 'cron_mismatch='+Number(cronMismatch)+'; output_on_failure='+Number(queryOutputOnFailure),
 ': >"$raw/calls"; : >"$raw/sleeps"; : >"$raw/next"',
-'cli_local() { printf "CALL:%s\\n" "$failure_stage" >>"$raw/calls"; printf "fixture-not-a-real-secret\\n"; printf "synthetic-private-message\\n" >&2; [[ $fail != db-start-cli ]]; }',
+'cli_local() { printf "CALL:%s\\n" "$failure_stage" >>"$raw/calls"; printf "fixture-not-a-real-secret\\n"; printf "synthetic-private-message\\n" >&2; [[ $fail != db-start-cli ]] || return 1; if [[ $fail != missing-adapter-proof ]]; then printf \'{"serverCronOff":true}\\n\' >"$raw/startup-override.json"; fi; }',
 'docker() {',
 ' [[ $1 == exec && $2 == "$db" && $3 == psql ]] || return 1',
 ' printf "CALL:%s\\n" "$failure_stage" >>"$raw/calls"',
 ' if [[ $fail == "$failure_stage" ]]; then',
 '   if [[ $output_on_failure == 1 ]]; then',
-'     case "$failure_stage" in db-start-version-num-query) printf "170006\\n" ;; db-start-version-text-query) printf "17.6\\n" ;; db-start-cron-confirm) printf "off\\n" ;; *) printf "fixture-not-a-real-secret\\n" ;; esac',
+'     case "$failure_stage" in db-start-version-num-query) printf "170006\\n" ;; db-start-version-text-query) printf "17.6\\n" ;; db-start-cron-confirm) printf "t\\n" ;; *) printf "fixture-not-a-real-secret\\n" ;; esac',
 '   else printf "fixture-not-a-real-secret\\n"; fi',
 '   printf "synthetic-private-message\\n" >&2; return 1',
 ' fi',
 ' case "$failure_stage" in',
 ' db-start-version-num-query) if [[ $fail == db-start-version-num-verify ]]; then printf "170007\\n"; else printf "170006\\n"; fi ;;',
 ' db-start-version-text-query) if [[ $fail == db-start-version-text-verify ]]; then printf "17.7\\n"; else printf "17.6\\n"; fi ;;',
-' db-start-cron-confirm) if [[ $cron_mismatch == 1 ]]; then printf "on\\n"; else printf "off\\n"; fi ;;',
+' db-start-cron-confirm) if [[ $cron_mismatch == 1 ]]; then printf "f\\n"; else printf "t\\n"; fi ;;',
 ' *) printf "fixture-not-a-real-secret\\n"; printf "synthetic-private-message\\n" >&2 ;;',
 ' esac','}',
 'sleep() { printf "%s\\n" "$1" >>"$raw/sleeps"; }',
@@ -472,14 +475,17 @@ const r=mockStartup(stage),category=stage.endsWith('-verify')?'db-start-version-
 assert.notEqual(r.status,0);assert.equal(r.stage,stage);assert.equal(r.category,category);assert.equal(r.next,0);assert.equal(r.leak,0);assert.equal(r.private,1);
 const d={stage,category};assert.deepEqual(sanitizeDiagnostic(d),d);const artifact=collectDiagnostic(d);assert.deepEqual(artifact.diagnostic,d);assert.equal(artifact.success,false);
 const success=successfulContract();success.diagnostic=d;assert.throws(()=>verifyDbResults(success));
-if(stage==='db-start-cron-confirm'){assert.equal(r.calls.filter(s=>s===stage).length,5);assert.equal(r.sleeps,5)}
+if(stage==='db-start-cron-confirm'){assert.equal(r.calls.filter(s=>s===stage).length,1);assert.equal(r.sleeps,0)}
 });
 test('startup: successful diagnostics preserve command order and resume security checks',()=>{
 const r=mockStartup();assert.equal(r.status,0);assert.equal(r.next,1);assert.equal(r.leak,0);assert.equal(r.category,'none');assert.equal(r.sleeps,0);
-assert.deepEqual(r.calls,['db-start-cli','db-start-version-num-query','db-start-version-text-query','db-start-cron-alter','db-start-cron-reload','db-start-cron-confirm','db-start-pgtap-extension']);
+assert.deepEqual(r.calls,['db-start-cli','db-start-version-num-query','db-start-version-text-query','db-start-cron-confirm','db-start-pgtap-extension']);
 });
-test('startup: disabled Cron is mandatory after the unchanged five confirmation attempts',()=>{
-const r=mockStartup('',{cronMismatch:true});assert.notEqual(r.status,0);assert.equal(r.stage,'db-start-cron-confirm');assert.equal(r.category,'db-start-cron-not-disabled');assert.equal(r.next,0);assert.equal(r.sleeps,5);assert.equal(r.leak,0);
+test('startup: missing transformation proof blocks SQL and security continuation',()=>{
+ const r=mockStartup('missing-adapter-proof');assert.notEqual(r.status,0);assert.equal(r.stage,'db-start-cli');assert.equal(r.category,'db-start-command-failed');assert.equal(r.next,0);assert.equal(r.leak,0);assert.deepEqual(r.calls,['db-start-cli']);
+});
+test('startup: server-wide Cron proof is mandatory before migrations',()=>{
+const r=mockStartup('',{cronMismatch:true});assert.notEqual(r.status,0);assert.equal(r.stage,'db-start-cron-confirm');assert.equal(r.category,'db-start-cron-not-disabled');assert.equal(r.next,0);assert.equal(r.sleeps,0);assert.equal(r.leak,0);
 });
 for(const stage of ['db-start-version-num-query','db-start-version-text-query','db-start-cron-confirm'])test('startup: valid-looking stdout cannot hide nonzero query exit '+stage,()=>{
 const r=mockStartup(stage,{queryOutputOnFailure:true});assert.notEqual(r.status,0);assert.equal(r.category,'db-start-command-failed');assert.equal(r.stage,stage);assert.equal(r.next,0);assert.equal(r.leak,0);
@@ -497,10 +503,121 @@ test('startup: cleanup failure cannot turn a startup failure into green evidence
 const dir=mkdtempSync(path.join(tmpdir(),'stage3-startup-cleanup-'));
 try{writeFileSync(path.join(dir,'result.json'),JSON.stringify(successfulContract()));assert.equal(invalidateCleanupEvidence(dir,{stage:'db-start-cron-alter',category:'db-start-command-failed'}),false);const r=JSON.parse(readFileSync(path.join(dir,'result.json'),'utf8'));assert.equal(r.success,false);assert.equal(r.cleanup,'FAILED');assert.throws(()=>verifyDbResults(r))}finally{rmSync(dir,{recursive:true,force:true})}
 });
-test('startup: exactly the nine approved phases precede their operations',()=>{
+test('startup: current startup phases precede their operations',()=>{
 const markers=[...startupBlock.matchAll(/^failure_stage=(\S+)$/gm)].map(m=>m[1]);assert.deepEqual(markers,startupStages);
 for(const s of startupStages)assert.ok(diagnosticStages.includes(s));
-assert.ok(startupBlock.includes('for attempt in 1 2 3 4 5; do'));assert.ok(startupBlock.includes('[[ $cron_safe == 1 ]]'));
+assert.ok(startupBlock.includes("source = 'command line'"));assert.ok(startupBlock.includes('[[ $cron_safe == t ]]'));
 assert.ok(runner.indexOf('# END granular startup diagnostics')<runner.indexOf('failure_stage=route-isolation'));
+});
+})();
+
+(function adapterSpecs(){
+const database='supabase_db_fairswap-ci-'+'1'.repeat(20),project=database.slice('supabase_db_'.length),imageId='sha256:'+'a'.repeat(64);
+const launch='exec docker-entrypoint.sh postgres -D /etc/postgresql \n';
+const script="\ncat <<'EOF' > /etc/postgresql.schema.sql && \\\ncat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n"+launch+"SYNTHETIC_SCHEMA_ROLES_GRANTS_WEBHOOKS\nEOF\n# settings\nEOF\n";
+const command=()=>['create','--name',database,'--env','JWT_SECRET','--label','com.supabase.cli.project='+project,'--label','com.docker.compose.project='+project,'--entrypoint','sh',pins.database.images.postgres.tag,'-c',script];
+function fixture(fn){
+const task=adapterFs.mkdtempSync(path.join(adapterFs.realpathSync(tmpdir()),'fairswap-stage3-ci.')),raw=path.join(task,'raw');
+adapterFs.mkdirSync(raw);adapterFs.writeFileSync(path.join(task,'owner'),'00000000-0000-4000-8000-000000000000\n');
+adapterFs.writeFileSync(path.join(raw,'images.json'),JSON.stringify({postgres:{...pins.database.images.postgres,imageId,platform:'linux/amd64'}}));
+const env={FAIRSWAP_DB_CLEAN_ENV:'1',FAIRSWAP_DB_TASK:task,FAIRSWAP_DB_OWNER:'00000000-0000-4000-8000-000000000000'},marker=path.join(raw,'startup-override.json'),realDocker=path.join(adapterFs.realpathSync(tmpdir()),'synthetic-unused-docker');
+const calls=[],run=(executable,args,options)=>{calls.push({executable,args:[...args],options});return args[0]==='image'?{status:0,stdout:imageId+'\n'}:{status:0}};
+try{return fn({task,raw,env,marker,realDocker,calls,run})}finally{adapterFs.rmSync(task,{recursive:true,force:true})}
+}
+test('adapter: only one launch argument changes; bootstrap and other arguments remain exact',()=>{
+const args=command(),saved=[...args],r=rewriteDatabaseCreate(args,database);assert.equal(r.changed,true);assert.deepEqual(args,saved);assert.deepEqual(r.args.slice(0,-1),saved.slice(0,-1));
+assert.equal(r.args.at(-1),script.replace(launch,launch.replace(' \n',' -c cron.launch_active_jobs=off\n')));
+assert.equal(r.args.at(-1).replace(' -c cron.launch_active_jobs=off\n',' \n'),script);
+});
+for(const [name,mutate]of [
+['missing CLI ownership',a=>a.splice(a.indexOf('--label'),2)],
+['wrong compose ownership',a=>a[a.indexOf('com.docker.compose.project='+project)]='com.docker.compose.project=another-task'],
+['duplicate ownership',a=>a.splice(1,0,'--label','com.supabase.cli.project='+project)],
+['ambiguous name',a=>a.splice(1,0,'--name','another-db')],
+['name alias',a=>a.splice(1,2,'--name='+database)],
+['entrypoint alias',a=>a.splice(a.indexOf('--entrypoint'),2,'--entrypoint=sh')],
+['different entrypoint',a=>a[a.indexOf('--entrypoint')+1]='bash'],
+['different image',a=>a[a.length-3]='public.ecr.aws/supabase/postgres:latest'],
+['wrong digest',a=>a[a.length-3]='public.ecr.aws/supabase/postgres@sha256:'+'0'.repeat(64)],
+['unsupported script',a=>a[a.length-1]='exec postgres\n'],
+['ambiguous launch',a=>a[a.length-1]=script+launch],
+['duplicate transformation',a=>a[a.length-1]=script.replace(launch,launch.replace(' \n',' -c cron.launch_active_jobs=off\n'))],
+['backup path',a=>a[a.length-1]=script+'/etc/backup.sql'],
+['label-file bypass',a=>a.splice(1,0,'--label-file','synthetic-file')],
+['short-label bypass',a=>a.splice(1,0,'-l','com.supabase.cli.project=other')],
+])test('adapter: reject '+name,()=>{const a=command();mutate(a);assert.throws(()=>rewriteDatabaseCreate(a,database))});
+test('adapter: container create alias targeting the owned DB fails closed',()=>assert.throws(()=>rewriteDatabaseCreate(['container',...command()],database)));
+for(const [label,args] of [
+ ['run',['run','--name',database,pins.database.images.postgres.tag]],
+ ['container run',['container','run','--name',database,pins.database.images.postgres.tag]],
+])test('adapter: alternate owned database launch rejected before Docker '+label,()=>fixture(c=>{
+ assert.throws(()=>runDocker(c.realDocker,database,c.marker,args,{run:c.run,env:c.env}));
+ assert.equal(c.calls.length,0);
+}));
+test('adapter: alternate Docker run for unrelated container still passes through',()=>fixture(c=>{
+ const args=['run','--name','unrelated-bootstrap',pins.database.images.postgres.tag];
+ assert.equal(runDocker(c.realDocker,database,c.marker,args,{run:c.run,env:c.env}),0);
+ assert.deepEqual(c.calls[0].args,args);
+}));
+test('adapter: unrelated Docker commands and bootstrap containers remain byte-for-byte unchanged',()=>{
+for(const a of [['inspect',database],['start',database],['cp','-',database+':/'],['create','--name','synthetic-auth-job','synthetic-image','synthetic-command','-h',database]]){
+const r=rewriteDatabaseCreate(a,database);assert.equal(r.changed,false);assert.deepEqual(r.args,a);
+}
+});
+test('adapter: successful mocked image check/create writes exactly-once private proof',()=>fixture(c=>{
+assert.equal(runDocker(c.realDocker,database,c.marker,command(),{run:c.run,env:c.env}),0);
+assert.equal(c.calls.length,2);assert.deepEqual(c.calls[0].args,['image','inspect','-f','{{.Id}}',pins.database.images.postgres.tag]);
+assert.equal(adapterFs.readFileSync(c.marker,'utf8'),'{"serverCronOff":true}\n');
+assert.throws(()=>runDocker(c.realDocker,database,c.marker,command(),{run:c.run,env:c.env}));assert.equal(c.calls.length,2);
+}));
+test('adapter: failed Docker create cannot write successful proof',()=>fixture(c=>{
+const run=(exe,args,options)=>{c.calls.push(args);return args[0]==='image'?{status:0,stdout:imageId+'\n'}:{status:17}};
+assert.equal(runDocker(c.realDocker,database,c.marker,command(),{run,env:c.env}),17);assert.equal(adapterFs.existsSync(c.marker),false);
+}));
+test('adapter: wrong local image ID blocks create and proof',()=>fixture(c=>{
+const run=()=>{c.calls.push('inspect');return {status:0,stdout:'sha256:'+'b'.repeat(64)+'\n'}};
+assert.throws(()=>runDocker(c.realDocker,database,c.marker,command(),{run,env:c.env}));assert.equal(c.calls.length,1);assert.equal(adapterFs.existsSync(c.marker),false);
+}));
+test('adapter: image inspect failure blocks create and proof',()=>fixture(c=>{
+const run=()=>{c.calls.push('inspect');return {status:1,stderr:'fixture-not-a-real-secret'}};
+assert.throws(()=>runDocker(c.realDocker,database,c.marker,command(),{run,env:c.env}));assert.equal(c.calls.length,1);
+}));
+test('adapter: missing owner authorization blocks all Docker calls',()=>fixture(c=>{
+assert.throws(()=>runDocker(c.realDocker,database,c.marker,command(),{run:c.run,env:{...c.env,FAIRSWAP_DB_OWNER:'11111111-1111-4111-8111-111111111111'}}));assert.equal(c.calls.length,0);
+}));
+test('adapter: unrelated commands pass through the exact executable and argv once',()=>fixture(c=>{
+const args=['cp','-',database+':/'];assert.equal(runDocker(c.realDocker,database,c.marker,args,{run:c.run,env:c.env}),0);assert.equal(c.calls.length,1);assert.deepEqual(c.calls[0].args,args);assert.equal(c.calls[0].executable,c.realDocker);assert.equal(adapterFs.existsSync(c.marker),false);
+}));
+test('adapter: termination or missing Docker status cannot create proof',()=>fixture(c=>{
+ for(const response of [{status:null,signal:'SIGTERM'},{status:null,error:new Error('synthetic-private-message')}]){
+  const run=(exe,args)=>args[0]==='image'?{status:0,stdout:imageId+'\n'}:response;
+  assert.equal(runDocker(c.realDocker,database,c.marker,command(),{run,env:c.env}),1);
+  assert.equal(adapterFs.existsSync(c.marker),false);
+ }
+}));
+test('adapter: altered private image pin evidence fails before Docker invocation',()=>fixture(c=>{
+ const evidence=JSON.parse(adapterFs.readFileSync(path.join(c.raw,'images.json')));
+ evidence.postgres.digest='sha256:'+'0'.repeat(64);adapterFs.writeFileSync(path.join(c.raw,'images.json'),JSON.stringify(evidence));
+ assert.throws(()=>runDocker(c.realDocker,database,c.marker,command(),{run:c.run,env:c.env}));assert.equal(c.calls.length,0);
+}));
+test('adapter: CLI failure exports only its fixed error message and never arguments',()=>fixture(c=>{
+ const helper=fileURLToPath(new URL('./start-postgres-cron-off.mjs',import.meta.url));
+ let failure;try{execFileSync(process.execPath,[helper,c.realDocker,database,c.marker,'synthetic-private-message'],{encoding:'utf8',stdio:'pipe',env:{...process.env,...c.env,FAIRSWAP_DB_CLEAN_ENV:'0'}})}catch(e){failure=e}
+ assert.ok(failure);assert.equal(failure.status,1);assert.equal(failure.stdout,'');
+ assert.match(failure.stderr,/^FAIL: task PostgreSQL startup adapter rejected; raw output withheld\s*$/);
+ for(const value of [c.task,c.realDocker,database,'synthetic-private-message'])assert.ok(!failure.stderr.includes(value));
+}));
+test('adapter: runner limits PATH to startup and retains exact proof before SQL',()=>{
+assert.equal((runner.match(/PATH="\$task\/bin:\$PATH" cli_local db start/g)||[]).length,1);
+assert.ok(runner.includes('>\"$task/bin/docker\"'));assert.ok(runner.includes('[[ $real_docker == /* && $real_docker != "$task/bin/"* ]]'));
+assert.ok(runner.indexOf('cat -- "$raw/startup-override.json"')<runner.indexOf('failure_stage=db-start-version-num-query'));
+assert.ok(!runner.includes('ALTER SYSTEM SET cron.launch_active_jobs'));assert.ok(!runner.includes('SELECT pg_reload_conf()'));
+assert.ok(runner.includes("source = 'command line' AND NOT pending_restart"));
+assert.ok(runner.slice(runner.indexOf('failure_stage=db-start-cron-confirm')).includes('-U supabase_admin -d postgres'));
+for(const token of ["rolsuper FROM pg_roles WHERE rolname = current_user","current_setting('cron.database_name') = 'postgres'","current_setting('cron.host') = 'localhost'","shared_preload_libraries","extname = 'pg_cron'","NOT EXISTS (SELECT 1 FROM cron.job)","NOT EXISTS (SELECT 1 FROM cron.job_run_details)"])assert.ok(runner.includes(token));
+assert.ok(runner.indexOf('[[ $cron_safe == t ]]')<runner.indexOf('failure_stage=migrations'));
+});
+for(const stage of ['db-start-cron-alter','db-start-cron-reload'])test('adapter: historical diagnostic retained safely '+stage,()=>{
+const d={stage,category:'db-start-command-failed'};assert.deepEqual(sanitizeDiagnostic(d),d);assert.deepEqual(collectDiagnostic(d).diagnostic,d);
 });
 })();

@@ -479,10 +479,21 @@ then
 fi
 failure_stage=port-probe-cleanup
 docker rm -f "$probe"
+# BEGIN task-private startup adapter
+# Preserve all pinned CLI bootstrap operations, changing only the owned DB launch.
+real_docker=$(command -v docker)
+[[ $real_docker == /* && $real_docker != "$task/bin/"* ]]
+printf '#!/usr/bin/env bash\nexec node %q %q %q %q "$@"\n' \
+  "$root/scripts/stage3/start-postgres-cron-off.mjs" "$real_docker" "$db" \
+  "$raw/startup-override.json" >"$task/bin/docker"
+chmod 700 "$task/bin/docker"
+# END task-private startup adapter
 # BEGIN granular startup diagnostics
 failure_stage=db-start-cli
 failure_category=db-start-command-failed
-cli_local db start >"$raw/start.log" 2>&1
+PATH="$task/bin:$PATH" cli_local db start >"$raw/start.log" 2>&1
+# No unsupported CLI path or missed/duplicate transformation may reach SQL.
+[[ $(cat -- "$raw/startup-override.json" 2>/dev/null) == '{"serverCronOff":true}' ]]
 
 # Capture exact query output privately; distinguish execution failure from a mismatch.
 failure_stage=db-start-version-num-query
@@ -501,28 +512,24 @@ pg_version_text=$(cat -- "$raw/version-text.stdout")
 failure_stage=db-start-version-text-verify
 failure_category=db-start-version-mismatch
 [[ $pg_version_text == 17.6 ]]
-# Task database only: no cron launches even while the transactional fixture switch is true.
-failure_stage=db-start-cron-alter
-failure_category=db-start-command-failed
-docker exec "$db" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
-  -c "ALTER SYSTEM SET cron.launch_active_jobs = off" >"$raw/cron-config.log" 2>&1
-failure_stage=db-start-cron-reload
-failure_category=db-start-command-failed
-docker exec "$db" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
-  -c "SELECT pg_reload_conf()" >>"$raw/cron-config.log" 2>&1
+# Require server-wide Cron off from first startup; no session/role/database substitute.
 failure_stage=db-start-cron-confirm
-cron_safe=0
-for attempt in 1 2 3 4 5; do
-  failure_category=db-start-command-failed
-  if docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
-    -c 'SHOW cron.launch_active_jobs' >"$raw/cron-confirm.stdout" 2>>"$raw/cron-confirm.stderr"; then
-    cron_setting=$(cat -- "$raw/cron-confirm.stdout")
-    failure_category=db-start-cron-not-disabled
-    if [[ $cron_setting == off ]]; then cron_safe=1; break; fi
-  fi
-  sleep 1
-done
-[[ $cron_safe == 1 ]]
+failure_category=db-start-command-failed
+docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U supabase_admin -d postgres \
+  -c "SELECT
+    (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)
+    AND     (SELECT count(*) = 1 AND bool_and(setting = 'off' AND source = 'command line' AND NOT pending_restart)
+      FROM pg_settings WHERE name = 'cron.launch_active_jobs')
+    AND current_setting('cron.launch_active_jobs') = 'off'
+    AND current_setting('cron.database_name') = 'postgres'
+    AND current_setting('cron.host') = 'localhost'
+    AND 'pg_cron' = ANY(regexp_split_to_array(current_setting('shared_preload_libraries'), '\s*,\s*'))
+    AND EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron')
+    AND NOT EXISTS (SELECT 1 FROM cron.job)
+    AND NOT EXISTS (SELECT 1 FROM cron.job_run_details)" >"$raw/cron-confirm.stdout" 2>"$raw/cron-confirm.stderr"
+cron_safe=$(cat -- "$raw/cron-confirm.stdout")
+failure_category=db-start-cron-not-disabled
+[[ $cron_safe == t ]]
 # Test infrastructure only; canonical migration files and ledger stay untouched.
 failure_stage=db-start-pgtap-extension
 failure_category=db-start-command-failed

@@ -1057,3 +1057,265 @@ Docker/PostgreSQL starts, hosted Supabase connections/operations, merges or
 deployments occurred in Step 1I. Both worktrees are preserved. Static-test
 temporary directories are removed by their traps/finally cleanup; no runtime
 database/network resources were created. STOP for CTO review.
+
+## Step 1K — Alternative bootstrap design; implementation blocked
+
+Classification: **BLOCKED_ALTERNATIVE_BOOTSTRAP**.
+
+### Verified source and image findings
+
+Local head remains 9728e0990431d2f696fd3696668c14746f3860b4; remote head and
+baseline cd9d697dd620375c681f2cff42340011d6242201 match. PR #3 remains open/draft.
+The accepted Step 1J observation remains PostgreSQL 17.6/170006 verified followed
+by db-start-cron-alter / db-start-command-failed. No new execution is claimed.
+
+Inspected active CLI v2.117.0 native startup sources, in addition to its retained
+historical Go sources. The native db/start handler delegates to
+legacyStartLocalDatabase; it shells out to Docker and retains the full fresh-volume
+setup pipeline. Its normal PostgreSQL spec has entrypoint sh and cmd [-c, script].
+The generated script writes the CLI schema/webhook/_supabase SQL bundle,
+appends CLI settings, then launches:
+  exec docker-entrypoint.sh postgres -D /etc/postgresql
+The CLI still supplies its root key via secret-file delivery and performs its
+existing schema/roles/privileges/Vault/auth/storage/realtime setup. A bare postgres
+container does not establish those prerequisites.
+The db.settings schema is typed and has no supported cron.launch_active_jobs
+field. The from-backup path skips fresh-volume setup and can disregard health
+timeout; an empty backup would not establish equivalent bootstrap.
+
+Read-only public registry inspection verified the existing immutable index and
+Linux/amd64 child digests without pulling or starting an image:
+- Index: sha256:6942962433a569e87f228b4d4ab7e11db5deca64e43babb3a038443ad6c4f1bb
+- Child: sha256:16c0944c77885446d4f2ebbb2191b357feeb3b1295bde2fb1978c113129dbeb4
+- OCI config: sha256:66089200353d90686fe9b252a47d17d078364bf47c50190852c33dc850a0191f
+- Entrypoint layer (5,281 compressed bytes):
+  sha256:fbaa7199dd0a5a7533f8f94112b31f4c2b8b0c842e320de892469e7fc1ce9b2c
+- Extracted docker-entrypoint.sh:
+  SHA256 1a6ff568c79cb847cffc4172b22a1f501cef05001b0b09751f48323683fb64a2
+
+The exact OCI config declares docker-entrypoint.sh and postgres -D /etc/postgresql.
+The verified script forwards supplied arguments through its privilege drop, into
+the initialization server's pg_ctl options, and finally execs the same arguments.
+A PostgreSQL -c option therefore reaches both initialization and the final server
+at the source level. Runtime acceptance remains UNVERIFIED.
+
+Public version-specific sources:
+- https://github.com/supabase/cli/blob/v2.117.0/apps/cli/src/command-internal/db-bootstrap/postgres.service.ts
+  blob 6dd4b045b1d0223efd165c33a33538737355cb3f
+- https://github.com/supabase/cli/blob/v2.117.0/apps/cli/src/command-internal/db-bootstrap/start-database.ts
+  blob 986a394224afbc40e135e866b00a4575f410277a
+- https://github.com/supabase/cli/blob/v2.117.0/packages/config/src/db.ts
+  blob 28e1fdabe6007a5b35e98b673c77fee9e8f6fea0
+
+### Concrete proposed approach — NOT applied
+
+Retain the pinned CLI's entire fresh-volume path. Prepare a task-private Docker
+command adapter only for the CLI db-start invocation. For the one exact owned
+database create command, preserve every argument and all script bytes except:
+  exec docker-entrypoint.sh postgres -D /etc/postgresql
+becomes:
+  exec docker-entrypoint.sh postgres -D /etc/postgresql -c cron.launch_active_jobs=off
+
+Proposed source helper: scripts/stage3/start-postgres-cron-off.mjs.
+The runner would generate its launcher only in the verified task-private bin
+directory and prepend that directory only during the CLI startup invocation.
+The real Docker executable would be captured before preparing the launcher.
+Require the exact task database name, existing pinned image reference, sh -c
+entrypoint, normal fresh-volume script anchors and one recognized launch line.
+Reject unknown forms, duplicate application, restore paths or missing application
+proof; no silent SDK bypass/fallback may reach FairSwap migrations.
+All other CLI arguments and bootstrap operations remain unchanged. This preserves
+bootstrap construction rather than replacing schema/security initialization.
+It requires focused transformation/command-mocking tests before publication.
+
+Before migrations, require actual 17.6/170006, pg_settings showing server-wide
+Cron off from command-line startup with no pending restart, loaded pg_cron in
+shared_preload_libraries, the required extension, expected cron database/host,
+and empty cron job/run history. Require pgTAP and all original isolation/security
+gates. Do not substitute session, role, database or application settings.
+Retain image checks, retry behavior, IPv4/IPv6 firewall/route checks, loopback
+publication, canonical SQL, worker/RLS/grant guards and task-owned cleanup.
+
+### Blocking condition and requested CTO decision
+
+Automatic approval review rejected the proposed source write twice. Its stated
+reason was that a new helper is outside a four-file allowed subset; it also cited
+unclear authorization for a PATH-based Docker adapter. The resubmission clarified
+that Step 1K authorizes a coherent replacement and has no explicit path list,
+but the rejection remained. No helper was written, launcher installed, Docker
+command executed or runner changed. No indirect workaround was attempted.
+
+The blocked action is local preparation of the named helper and task-only adapter.
+Its material risk is intercepting CLI Docker invocations; approval must explicitly
+cover that scope, and implementation must constrain transformation to the single
+owned database's create argv while retaining all bootstrap/security behavior.
+Alternatively, CTO can select an independently approved disposable Ubuntu 24.04
+PG17 execution environment providing the complete Supabase CLI bootstrap with
+Cron disabled at server startup. No bare-container equivalence is accepted.
+Do not start another diagnostic-only rehearsal.
+
+### Actual local checks and preservation
+
+- Existing Stage 3 regressions: 218 passed, zero failures/skips/cancellations.
+  These validate the unchanged accepted code; no alternative runtime was tested.
+- Four Stage 3 JS module syntax checks, all 17 embedded Node checks, and Bash
+  syntax: PASS. Proposed helper syntax was checked in memory only.
+- Existing baseline verifier on the retained canonical-byte Linux clone: PASS.
+  Approved manifest eb2dfee779a15634927cfbf25fcd6ffc59df591a585d1ec8f5f3d40e5caaf1dd
+  and all 58 migration hashes PASS, with independent current HEAD blob verification.
+- All 136 tracked source byte hashes matched the pre-Step-1K snapshot before this
+  append. Only this report changes afterward; runner, verifier, tests, PG15,
+  workflows, pins, migrations, all 344 planned assertions and security code remain
+  unchanged. Previous report bytes are preserved.
+- Four original dirty developer documents retain their exact recorded hashes;
+  both worktrees/branches are preserved and both indexes remain empty.
+
+Proposed single future acceptance run, requiring separate approval: assert the
+adapter and server-wide Cron setting from first startup, complete unchanged
+Supabase bootstrap and all pre-migration security gates, apply exactly 58 canonical
+migrations, then execute nine baseline suites (270 assertions) plus compatibility
+suite (74 assertions). Report actual executed/passed/failed assertions, sanitizer
+checksums and all cleanup flags; a reproduced compatibility defect remains red.
+No pin, firewall, ACL, RLS, publication guard or SQL correction is part of acceptance.
+
+Step 1K performed zero commits, pushes, PR/Issue updates, GitHub Actions execution,
+Docker/PostgreSQL starts, hosted FairSwapTest/Production operations, deployments,
+trigger activation or ownership changes. Public source/registry reads contained
+no hosted project credentials. STOP for CTO review.
+
+## Step 1K authorization amendment — CLI-preserving startup prepared
+
+Current classification: **ALTERNATIVE_BOOTSTRAP_PREPARED_AWAITING_REVIEW**.
+The explicit CTO amendment authorizes the new helper and task-private PATH adapter.
+Automatic review approved the amended local source writes. The earlier blocked
+entry remains historical evidence; no earlier report bytes have been rewritten.
+
+### Implemented local scope and fidelity
+
+Changed paths are scripts/stage3/start-postgres-cron-off.mjs (new),
+scripts/stage3/run-local-db.sh, scripts/stage3/verification.test.mjs, and this
+append-only report. verify-db-results.mjs and the GitHub workflow remain unchanged.
+
+The exact image/source inspection documented above establishes argument forwarding
+through both the temporary initialization server and the final PostgreSQL server.
+The runner retains CLI 2.117.0 and its complete normal fresh-volume bootstrap:
+schema/webhook/_supabase templates, root-key delivery, roles, privileges, Vault
+initialization and auth/storage/realtime bootstrap operations are not replaced.
+Only its one owned database's Docker create script launch line is transformed:
+  exec docker-entrypoint.sh postgres -D /etc/postgresql
+becomes:
+  exec docker-entrypoint.sh postgres -D /etc/postgresql -c cron.launch_active_jobs=off
+Every other argument and every other script byte is preserved.
+
+The helper is repository source. Its executable Docker launcher is prepared only
+inside the verified disposable task/bin directory, with mode 700. The real Docker
+executable is captured first. PATH is prepended only for the CLI db-start call;
+other runner commands and cleanup keep their original PATH and behavior.
+The launcher is not installed or executed against real Docker during preparation.
+
+For the one target create, require:
+- The exact expected supabase_db_fairswap-ci-<20 hex> name, unambiguous --name
+  and sh entrypoint, and matching com.supabase.cli.project and
+  com.docker.compose.project ownership labels.
+- Existing immutable PostgreSQL image references, original pin evidence, linux/amd64
+  and a local image-inspect ID equal to the already verified image ID.
+- Recognized normal fresh-volume script structure and exactly one original launch
+  line; reject restore variants, aliases, duplicate labels/names, label-file
+  overrides, malformed structures and already transformed/ambiguous launches.
+- Private task identity/owner token and paths. Successful create writes one private
+  proof file exclusively; a duplicate transformation is rejected before another
+  target create. CLI completion without exactly the required proof is fatal.
+  Unsupported CLI implementations cannot silently bypass this gate.
+
+Unrelated bootstrap commands pass through unchanged, including commands referring
+to the database hostname. The one additional local image-ID inspection is a
+verification check, with output captured and never printed. The helper's CLI
+failure message is fixed; it never prints Docker arguments, assertion details,
+environment values or connection strings. Bootstrap streams remain within the
+existing private CLI start log; no raw output is added to sanitized artifacts.
+
+### Mandatory Cron and security gates
+
+The blocked ALTER SYSTEM/reload mechanism is removed. After CLI/proof and the
+unchanged 170006/17.6 checks, a read-only audit requires:
+- cron.launch_active_jobs=off in pg_settings, sourced from command line, with no
+  pending restart, and the effective current_setting also off.
+- pg_cron in shared_preload_libraries, the pg_cron extension, expected database
+  postgres and host localhost, plus empty job and run-history catalogs.
+- Audit through the image's existing supabase_admin role, explicitly requiring
+  superuser visibility so RLS cannot conceal scheduled jobs. No role, database
+  setting, grant or policy is changed.
+
+The existing pgTAP installation remains mandatory. All post-startup route removal,
+IPv4/IPv6 denial, loopback checks, database/test-runner connectivity, migration
+replay, security snapshots, Vault/RLS/grants and moderation assertions remain
+byte-for-byte unchanged. Server-wide off applies from initialization, preventing
+registered jobs from launching; a failed audit prevents FairSwap migrations.
+No session, ALTER ROLE, ALTER DATABASE or application guard substitutes are used.
+
+### Actual local verification
+
+- Final node --test scripts/stage3/verification.test.mjs: **247 passed, zero failed,
+  skipped or cancelled**, net 29 additional tests versus the accepted 218 suite.
+  Startup mocks were updated for the replacement; historical safe stages remain
+  covered. Two intermediate new-fixture escaping errors were corrected before
+  the final full successful run.
+- Adapter tests use injected command stubs and synthetic disposable ownership/image
+  fixtures. The CLI fixed-error test uses invalid task authorization and a
+  nonexistent synthetic executable, stopping before any Docker invocation.
+  No test runs the adapter against real Docker.
+- Coverage includes both labels, image/pin/ID failures, owned-name and script
+  ambiguity, exact preservation of bootstrap bytes/argv, unrelated command
+  pass-through, exactly-once proof, missing proof, failed creates/signals,
+  owner rejection, safe error output, version/Cron failure and fatal cleanup.
+- Five JavaScript modules and all 17 embedded Node programs pass syntax checks;
+  WSL Ubuntu bash -n on the runner passes.
+- Existing baseline verifier against the retained canonical-byte Linux clone:
+  PASS, approved raw manifest
+  eb2dfee779a15634927cfbf25fcd6ffc59df591a585d1ec8f5f3d40e5caaf1dd
+  and all 58 migration byte hashes. Current HEAD raw Git manifest and every
+  canonical migration blob independently pass the same hashes.
+- Inventory checks preserve all protected source, including pins, verifier,
+  canonical SQL, all 344 planned assertions, PG15 and workflows. Full runner bytes
+  before the startup replacement and after it match HEAD exactly, preserving
+  retry, image, network, security and cleanup code. Original four dirty developer
+  documents remain unchanged and unstaged; both indexes remain empty.
+
+### Remaining limitations and proposed single acceptance run
+
+This is source/static preparation, with no runtime bootstrap/compatibility PASS.
+The pinned native CLI's emitted argv, local image identity, privileged read-only
+audit capability and effective startup setting must satisfy the guards on Linux.
+Unexpected implementation/entrypoint shapes fail closed. Shell-level mocking does
+not prove real Docker child-process/signal behavior. Existing PG17 bootstrap,
+extension and security-version expectations remain strict and may reveal genuine
+incompatibilities. No pin or expectation is relaxed.
+
+After separate publication/execution approval, perform one isolated Ubuntu 24.04
+CI rehearsal with existing pinned tools/images: verify exactly-once transformation,
+actual 17.6/170006 and server-wide Cron-off proof, complete unchanged Supabase
+bootstrap and pre-migration isolation/security gates, apply exactly 58 canonical
+migrations, then execute the nine baseline suites (270 assertions) and moderation
+suite (74 assertions). Report actual completed/passed/failed counts and any
+reproduced moderation conflict; red compatibility evidence is not acceptance.
+Require the original three-file sanitized evidence/checksums and all six cleanup
+checks. No hosted credentials, workers or provider endpoints are involved.
+
+Local HEAD remains 9728e0990431d2f696fd3696668c14746f3860b4, baseline remains
+cd9d697dd620375c681f2cff42340011d6242201. Zero commits, pushes, PR/Issue updates,
+CI execution/reruns, real Docker adapter invocations, containers/PostgreSQL starts,
+hosted Supabase operations, deployments or trigger activation occurred.
+STOP for CTO review before publication.
+
+
+### CTO source-review hardening: alternate owned launch forms
+
+The pinned CLI v2.117.0 constructs the expected Docker `create` verb. Independent
+static review found that an unexpected `docker run --name <owned database>` or
+`docker container run --name <owned database>` previously passed through the
+adapter until the later missing-proof gate. The source-level guard now rejects
+ANY non-`create` verb that supplies the exact owned database name BEFORE Docker
+is invoked, including these two forms. Unrelated startup/bootstrap commands
+remain pass-through. Three additional mocked tests require the rejection and
+prove unrelated container pass-through. Real Docker remains untested; only a
+single separately approved CI run can establish runtime startup/Cron safety.
