@@ -77,10 +77,25 @@ export const imageDiagnosticStages = Object.freeze([
   ...["postgres","pgProve","authBootstrap","storageBootstrap","realtimeBootstrap"].flatMap(role =>
     ["validate","reference-validate","pull","id-inspect","platform-inspect","platform-verify","repo-digests-inspect","repo-digests-verify","tag-probe","tag-existing-id-inspect","tag-existing-id-verify","tag-create","tag-final-id-inspect","tag-final-id-verify","evidence"].map(operation => `image-${role}-${operation}`)),
 ]);
+export const startupDiagnosticStages = Object.freeze([
+  "db-start-cli",
+  "db-start-version-num-query",
+  "db-start-version-num-verify",
+  "db-start-version-text-query",
+  "db-start-version-text-verify",
+  "db-start-cron-alter",
+  "db-start-cron-reload",
+  "db-start-cron-confirm",
+  "db-start-pgtap-extension"
+]);
 export const diagnosticStages = Object.freeze([
+  ...startupDiagnosticStages,
   ...["unclassified","preflight","manifest-before","cli-download","cli-check","images","network-setup","port-probe","db-start","isolation-before","migrations","security-before","pgtap","security-after","isolation-after","manifest-after","complete","port-probe-run","port-probe-inspect","port-probe-binding","port-probe-cleanup","firewall-hooks","firewall-setup","firewall-verify","route-isolation","security-before-sql","security-before-verify","cleanup","artifact-validation"], ...imageDiagnosticStages,
 ]);
 export const diagnosticCategories = Object.freeze([
+  "db-start-command-failed",
+  "db-start-version-mismatch",
+  "db-start-cron-not-disabled",
   "none",
   "unclassified",
   "required-tool-check-failed",

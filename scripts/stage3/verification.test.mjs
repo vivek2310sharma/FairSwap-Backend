@@ -409,4 +409,98 @@ test('retry: zero delays on first successful operation; no retry cache or tag fa
 });
 })();
 
-test('retry: network/security/bootstrap/SQL execution tail remains byte-for-byte unchanged',()=>{const tail=runner.slice(runner.indexOf('failure_stage=network-setup\n'));assert.equal(createHash('sha256').update(tail).digest('hex'),"3f8abb31b28a17847de7be3e53beab4b23029c3cb0120c9bc95c5cb47fc5a6cf")});
+test('retry: network/security/SQL code outside reviewed startup remains byte-for-byte unchanged',()=>{
+ const prefix=runner.slice(runner.indexOf('failure_stage=network-setup\n'),runner.indexOf('# BEGIN granular startup diagnostics'));
+ const suffix=runner.slice(runner.indexOf('# Defense in depth: remove default routes'));
+ assert.equal(createHash('sha256').update(prefix).digest('hex'),'e729b5256627690c83dbd4bfded228feb003b601a57258f106716e066db78a24');
+ assert.equal(createHash('sha256').update(suffix).digest('hex'),'9de9aadab1868bcdcce3dda1f96e74f07063a6b7e86270bd624a29215f071cec');
+});
+
+(function startupSpecs(){
+const startupStages=['db-start-cli','db-start-version-num-query','db-start-version-num-verify','db-start-version-text-query','db-start-version-text-verify','db-start-cron-alter','db-start-cron-reload','db-start-cron-confirm','db-start-pgtap-extension'];
+const match=runner.match(/# BEGIN granular startup diagnostics\n([\s\S]*?)# END granular startup diagnostics/);
+assert.ok(match);
+const startupBlock=match[1],q=s=>"'"+String(s).replace(/'/g,"'\\''")+"'";
+function mockStartup(fail='',{cronMismatch=false,queryOutputOnFailure=false}={}){
+const program=[
+'set -euo pipefail','umask 077',
+'raw=$(mktemp -d /tmp/fairswap-startup-mock.XXXXXXXX)',
+'trap \'[[ $raw == /tmp/fairswap-startup-mock.* ]] && rm -rf -- "$raw"\' EXIT',
+'db=synthetic-task-db; fail='+q(fail),
+'cron_mismatch='+Number(cronMismatch)+'; output_on_failure='+Number(queryOutputOnFailure),
+': >"$raw/calls"; : >"$raw/sleeps"; : >"$raw/next"',
+'cli_local() { printf "CALL:%s\\n" "$failure_stage" >>"$raw/calls"; printf "fixture-not-a-real-secret\\n"; printf "synthetic-private-message\\n" >&2; [[ $fail != db-start-cli ]]; }',
+'docker() {',
+' [[ $1 == exec && $2 == "$db" && $3 == psql ]] || return 1',
+' printf "CALL:%s\\n" "$failure_stage" >>"$raw/calls"',
+' if [[ $fail == "$failure_stage" ]]; then',
+'   if [[ $output_on_failure == 1 ]]; then',
+'     case "$failure_stage" in db-start-version-num-query) printf "170006\\n" ;; db-start-version-text-query) printf "17.6\\n" ;; db-start-cron-confirm) printf "off\\n" ;; *) printf "fixture-not-a-real-secret\\n" ;; esac',
+'   else printf "fixture-not-a-real-secret\\n"; fi',
+'   printf "synthetic-private-message\\n" >&2; return 1',
+' fi',
+' case "$failure_stage" in',
+' db-start-version-num-query) if [[ $fail == db-start-version-num-verify ]]; then printf "170007\\n"; else printf "170006\\n"; fi ;;',
+' db-start-version-text-query) if [[ $fail == db-start-version-text-verify ]]; then printf "17.7\\n"; else printf "17.6\\n"; fi ;;',
+' db-start-cron-confirm) if [[ $cron_mismatch == 1 ]]; then printf "on\\n"; else printf "off\\n"; fi ;;',
+' *) printf "fixture-not-a-real-secret\\n"; printf "synthetic-private-message\\n" >&2 ;;',
+' esac','}',
+'sleep() { printf "%s\\n" "$1" >>"$raw/sleeps"; }',
+'readonly -f cli_local docker sleep',
+'set +e','(',
+'set -e',
+'trap \'code=$?; printf "STATUS:%s\\nSTAGE:%s\\nCATEGORY:%s\\n" "$code" "$failure_stage" "$failure_category" >"$raw/state"; exit "$code"\' EXIT',
+startupBlock,
+'printf "SECURITY-CONTINUES\\n" >>"$raw/next"',
+') >"$raw/console" 2>&1',
+'code=$?','set -e',
+'cat "$raw/state" "$raw/calls"',
+'printf "NEXT:%s\\n" "$(wc -l <"$raw/next")"',
+'printf "SLEEPS:%s\\n" "$(wc -l <"$raw/sleeps")"',
+'if [[ -s $raw/console ]]; then printf "CONSOLE_LEAK:1\\n"; else printf "CONSOLE_LEAK:0\\n"; fi',
+'if grep -Rlq "fixture-not-a-real-secret" "$raw"; then printf "PRIVATE:1\\n"; else printf "PRIVATE:0\\n"; fi',
+].join('\n')+'\n';
+const win=process.platform==='win32',command=win?'wsl.exe':'bash';
+const args=win?['-d','Ubuntu','--exec','/bin/bash','--noprofile','--norc','-euo','pipefail','-s']:['--noprofile','--norc','-euo','pipefail','-s'];
+const output=execFileSync(command,args,{input:program,encoding:'utf8',stdio:'pipe',timeout:20000});
+assert.doesNotMatch(output,/fixture-not-a-real-secret|synthetic-private-message/);
+const field=k=>output.match(new RegExp('^'+k+':([^\\r\\n]+)$','m'))?.[1];
+return {status:Number(field('STATUS')),stage:field('STAGE'),category:field('CATEGORY'),next:Number(field('NEXT')),sleeps:Number(field('SLEEPS')),leak:Number(field('CONSOLE_LEAK')),private:Number(field('PRIVATE')),calls:[...output.matchAll(/^CALL:(.+)$/gm)].map(m=>m[1])};
+}
+for(const stage of startupStages)test('startup: mocked failure retains precise safe phase '+stage,()=>{
+const r=mockStartup(stage),category=stage.endsWith('-verify')?'db-start-version-mismatch':'db-start-command-failed';
+assert.notEqual(r.status,0);assert.equal(r.stage,stage);assert.equal(r.category,category);assert.equal(r.next,0);assert.equal(r.leak,0);assert.equal(r.private,1);
+const d={stage,category};assert.deepEqual(sanitizeDiagnostic(d),d);const artifact=collectDiagnostic(d);assert.deepEqual(artifact.diagnostic,d);assert.equal(artifact.success,false);
+const success=successfulContract();success.diagnostic=d;assert.throws(()=>verifyDbResults(success));
+if(stage==='db-start-cron-confirm'){assert.equal(r.calls.filter(s=>s===stage).length,5);assert.equal(r.sleeps,5)}
+});
+test('startup: successful diagnostics preserve command order and resume security checks',()=>{
+const r=mockStartup();assert.equal(r.status,0);assert.equal(r.next,1);assert.equal(r.leak,0);assert.equal(r.category,'none');assert.equal(r.sleeps,0);
+assert.deepEqual(r.calls,['db-start-cli','db-start-version-num-query','db-start-version-text-query','db-start-cron-alter','db-start-cron-reload','db-start-cron-confirm','db-start-pgtap-extension']);
+});
+test('startup: disabled Cron is mandatory after the unchanged five confirmation attempts',()=>{
+const r=mockStartup('',{cronMismatch:true});assert.notEqual(r.status,0);assert.equal(r.stage,'db-start-cron-confirm');assert.equal(r.category,'db-start-cron-not-disabled');assert.equal(r.next,0);assert.equal(r.sleeps,5);assert.equal(r.leak,0);
+});
+for(const stage of ['db-start-version-num-query','db-start-version-text-query','db-start-cron-confirm'])test('startup: valid-looking stdout cannot hide nonzero query exit '+stage,()=>{
+const r=mockStartup(stage,{queryOutputOnFailure:true});assert.notEqual(r.status,0);assert.equal(r.category,'db-start-command-failed');assert.equal(r.stage,stage);assert.equal(r.next,0);assert.equal(r.leak,0);
+});
+for(const d of [
+{stage:'db-start-cli\nsynthetic-private-message',category:'db-start-command-failed'},
+{stage:'db-start-unknown',category:'db-start-command-failed'},
+{stage:'db-start-cli',category:'unrecognized-startup-error'},
+{stage:'db-start-cli',category:'db-start-command-failed',stdout:'fixture-not-a-real-secret'},
+{stage:'db-start-cli',category:['db-start-command-failed']},
+])test('startup: malformed diagnostics cannot escape sanitizer '+JSON.stringify(Object.keys(d)),()=>{
+assert.deepEqual(sanitizeDiagnostic(d),unknownDiagnostic);assert.deepEqual(collectDiagnostic(d).diagnostic,unknownDiagnostic);
+});
+test('startup: cleanup failure cannot turn a startup failure into green evidence',()=>{
+const dir=mkdtempSync(path.join(tmpdir(),'stage3-startup-cleanup-'));
+try{writeFileSync(path.join(dir,'result.json'),JSON.stringify(successfulContract()));assert.equal(invalidateCleanupEvidence(dir,{stage:'db-start-cron-alter',category:'db-start-command-failed'}),false);const r=JSON.parse(readFileSync(path.join(dir,'result.json'),'utf8'));assert.equal(r.success,false);assert.equal(r.cleanup,'FAILED');assert.throws(()=>verifyDbResults(r))}finally{rmSync(dir,{recursive:true,force:true})}
+});
+test('startup: exactly the nine approved phases precede their operations',()=>{
+const markers=[...startupBlock.matchAll(/^failure_stage=(\S+)$/gm)].map(m=>m[1]);assert.deepEqual(markers,startupStages);
+for(const s of startupStages)assert.ok(diagnosticStages.includes(s));
+assert.ok(startupBlock.includes('for attempt in 1 2 3 4 5; do'));assert.ok(startupBlock.includes('[[ $cron_safe == 1 ]]'));
+assert.ok(runner.indexOf('# END granular startup diagnostics')<runner.indexOf('failure_stage=route-isolation'));
+});
+})();

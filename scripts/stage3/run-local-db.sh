@@ -60,11 +60,11 @@ sanitize_failure() {
   failure_stage=${failure_stage:-unclassified}
   failure_category=${failure_category:-none}
   case ${failure_stage:-unclassified} in
-    unclassified|preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete|port-probe-run|port-probe-inspect|port-probe-binding|port-probe-cleanup|firewall-hooks|firewall-setup|firewall-verify|route-isolation|security-before-sql|security-before-verify|cleanup|artifact-validation|image-postgres-buildx-check|image-postgres-index-fetch|image-postgres-index-digest|image-postgres-amd64-descriptor|image-postgres-child-fetch|image-postgres-child-digest|image-postgres-child-pull|image-postgres-child-id-inspect|image-pin-list|image-role-validate|image-postgres-child-id-verify|image-tools-evidence|image-postgres-reference-select|image-pgProve-reference-select|image-postgres-validate|image-postgres-reference-validate|image-postgres-pull|image-postgres-id-inspect|image-postgres-platform-inspect|image-postgres-platform-verify|image-postgres-repo-digests-inspect|image-postgres-repo-digests-verify|image-postgres-tag-probe|image-postgres-tag-existing-id-inspect|image-postgres-tag-existing-id-verify|image-postgres-tag-create|image-postgres-tag-final-id-inspect|image-postgres-tag-final-id-verify|image-postgres-evidence|image-pgProve-validate|image-pgProve-reference-validate|image-pgProve-pull|image-pgProve-id-inspect|image-pgProve-platform-inspect|image-pgProve-platform-verify|image-pgProve-repo-digests-inspect|image-pgProve-repo-digests-verify|image-pgProve-tag-probe|image-pgProve-tag-existing-id-inspect|image-pgProve-tag-existing-id-verify|image-pgProve-tag-create|image-pgProve-tag-final-id-inspect|image-pgProve-tag-final-id-verify|image-pgProve-evidence|image-authBootstrap-validate|image-authBootstrap-reference-validate|image-authBootstrap-pull|image-authBootstrap-id-inspect|image-authBootstrap-platform-inspect|image-authBootstrap-platform-verify|image-authBootstrap-repo-digests-inspect|image-authBootstrap-repo-digests-verify|image-authBootstrap-tag-probe|image-authBootstrap-tag-existing-id-inspect|image-authBootstrap-tag-existing-id-verify|image-authBootstrap-tag-create|image-authBootstrap-tag-final-id-inspect|image-authBootstrap-tag-final-id-verify|image-authBootstrap-evidence|image-storageBootstrap-validate|image-storageBootstrap-reference-validate|image-storageBootstrap-pull|image-storageBootstrap-id-inspect|image-storageBootstrap-platform-inspect|image-storageBootstrap-platform-verify|image-storageBootstrap-repo-digests-inspect|image-storageBootstrap-repo-digests-verify|image-storageBootstrap-tag-probe|image-storageBootstrap-tag-existing-id-inspect|image-storageBootstrap-tag-existing-id-verify|image-storageBootstrap-tag-create|image-storageBootstrap-tag-final-id-inspect|image-storageBootstrap-tag-final-id-verify|image-storageBootstrap-evidence|image-realtimeBootstrap-validate|image-realtimeBootstrap-reference-validate|image-realtimeBootstrap-pull|image-realtimeBootstrap-id-inspect|image-realtimeBootstrap-platform-inspect|image-realtimeBootstrap-platform-verify|image-realtimeBootstrap-repo-digests-inspect|image-realtimeBootstrap-repo-digests-verify|image-realtimeBootstrap-tag-probe|image-realtimeBootstrap-tag-existing-id-inspect|image-realtimeBootstrap-tag-existing-id-verify|image-realtimeBootstrap-tag-create|image-realtimeBootstrap-tag-final-id-inspect|image-realtimeBootstrap-tag-final-id-verify|image-realtimeBootstrap-evidence ) ;;
+    unclassified|preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|db-start-cli|db-start-version-num-query|db-start-version-num-verify|db-start-version-text-query|db-start-version-text-verify|db-start-cron-alter|db-start-cron-reload|db-start-cron-confirm|db-start-pgtap-extension|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete|port-probe-run|port-probe-inspect|port-probe-binding|port-probe-cleanup|firewall-hooks|firewall-setup|firewall-verify|route-isolation|security-before-sql|security-before-verify|cleanup|artifact-validation|image-postgres-buildx-check|image-postgres-index-fetch|image-postgres-index-digest|image-postgres-amd64-descriptor|image-postgres-child-fetch|image-postgres-child-digest|image-postgres-child-pull|image-postgres-child-id-inspect|image-pin-list|image-role-validate|image-postgres-child-id-verify|image-tools-evidence|image-postgres-reference-select|image-pgProve-reference-select|image-postgres-validate|image-postgres-reference-validate|image-postgres-pull|image-postgres-id-inspect|image-postgres-platform-inspect|image-postgres-platform-verify|image-postgres-repo-digests-inspect|image-postgres-repo-digests-verify|image-postgres-tag-probe|image-postgres-tag-existing-id-inspect|image-postgres-tag-existing-id-verify|image-postgres-tag-create|image-postgres-tag-final-id-inspect|image-postgres-tag-final-id-verify|image-postgres-evidence|image-pgProve-validate|image-pgProve-reference-validate|image-pgProve-pull|image-pgProve-id-inspect|image-pgProve-platform-inspect|image-pgProve-platform-verify|image-pgProve-repo-digests-inspect|image-pgProve-repo-digests-verify|image-pgProve-tag-probe|image-pgProve-tag-existing-id-inspect|image-pgProve-tag-existing-id-verify|image-pgProve-tag-create|image-pgProve-tag-final-id-inspect|image-pgProve-tag-final-id-verify|image-pgProve-evidence|image-authBootstrap-validate|image-authBootstrap-reference-validate|image-authBootstrap-pull|image-authBootstrap-id-inspect|image-authBootstrap-platform-inspect|image-authBootstrap-platform-verify|image-authBootstrap-repo-digests-inspect|image-authBootstrap-repo-digests-verify|image-authBootstrap-tag-probe|image-authBootstrap-tag-existing-id-inspect|image-authBootstrap-tag-existing-id-verify|image-authBootstrap-tag-create|image-authBootstrap-tag-final-id-inspect|image-authBootstrap-tag-final-id-verify|image-authBootstrap-evidence|image-storageBootstrap-validate|image-storageBootstrap-reference-validate|image-storageBootstrap-pull|image-storageBootstrap-id-inspect|image-storageBootstrap-platform-inspect|image-storageBootstrap-platform-verify|image-storageBootstrap-repo-digests-inspect|image-storageBootstrap-repo-digests-verify|image-storageBootstrap-tag-probe|image-storageBootstrap-tag-existing-id-inspect|image-storageBootstrap-tag-existing-id-verify|image-storageBootstrap-tag-create|image-storageBootstrap-tag-final-id-inspect|image-storageBootstrap-tag-final-id-verify|image-storageBootstrap-evidence|image-realtimeBootstrap-validate|image-realtimeBootstrap-reference-validate|image-realtimeBootstrap-pull|image-realtimeBootstrap-id-inspect|image-realtimeBootstrap-platform-inspect|image-realtimeBootstrap-platform-verify|image-realtimeBootstrap-repo-digests-inspect|image-realtimeBootstrap-repo-digests-verify|image-realtimeBootstrap-tag-probe|image-realtimeBootstrap-tag-existing-id-inspect|image-realtimeBootstrap-tag-existing-id-verify|image-realtimeBootstrap-tag-create|image-realtimeBootstrap-tag-final-id-inspect|image-realtimeBootstrap-tag-final-id-verify|image-realtimeBootstrap-evidence ) ;;
     *) failure_stage=unclassified; failure_category=unclassified ;;
   esac
   case ${failure_category:-none} in
-    none|unclassified|required-tool-check-failed|manifest-retrieval-failed|digest-check-failed|descriptor-check-failed|image-pull-failed|image-inspect-failed|platform-check-failed|repo-digest-check-failed|child-image-id-check-failed|pin-check-failed|tag-check-failed|tag-create-failed|evidence-write-failed|cleanup-failed|evidence-validation-failed|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding|security-parse|security-version|security-ledger|security-vault|security-setting|security-queues|security-buckets|security-rls|security-column-grants|security-rls-shape|security-extensions|security-rpcs|security-cron|security-runtime|security-trigger|security-unclassified|security-rls-email_outbox-present|security-rls-email_outbox-relrowsecurity|security-rls-email_outbox-relforcerowsecurity|security-rls-email_outbox-policies|security-rls-email_outbox-anon_any_dml|security-rls-email_outbox-authenticated_any_dml|security-rls-listing_media-present|security-rls-listing_media-relrowsecurity|security-rls-listing_media-relforcerowsecurity|security-rls-listing_media-policies|security-rls-listing_media-anon_any_dml|security-rls-listing_media-authenticated_any_dml|security-rls-listings-present|security-rls-listings-relrowsecurity|security-rls-listings-relforcerowsecurity|security-rls-listings-policies|security-rls-listings-anon_any_dml|security-rls-listings-authenticated_any_dml ) ;;
+    none|unclassified|db-start-command-failed|db-start-version-mismatch|db-start-cron-not-disabled|required-tool-check-failed|manifest-retrieval-failed|digest-check-failed|descriptor-check-failed|image-pull-failed|image-inspect-failed|platform-check-failed|repo-digest-check-failed|child-image-id-check-failed|pin-check-failed|tag-check-failed|tag-create-failed|evidence-write-failed|cleanup-failed|evidence-validation-failed|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding|security-parse|security-version|security-ledger|security-vault|security-setting|security-queues|security-buckets|security-rls|security-column-grants|security-rls-shape|security-extensions|security-rpcs|security-cron|security-runtime|security-trigger|security-unclassified|security-rls-email_outbox-present|security-rls-email_outbox-relrowsecurity|security-rls-email_outbox-relforcerowsecurity|security-rls-email_outbox-policies|security-rls-email_outbox-anon_any_dml|security-rls-email_outbox-authenticated_any_dml|security-rls-listing_media-present|security-rls-listing_media-relrowsecurity|security-rls-listing_media-relforcerowsecurity|security-rls-listing_media-policies|security-rls-listing_media-anon_any_dml|security-rls-listing_media-authenticated_any_dml|security-rls-listings-present|security-rls-listings-relrowsecurity|security-rls-listings-relforcerowsecurity|security-rls-listings-policies|security-rls-listings-anon_any_dml|security-rls-listings-authenticated_any_dml ) ;;
     *) failure_category=unclassified ;;
   esac
 }
@@ -479,26 +479,58 @@ then
 fi
 failure_stage=port-probe-cleanup
 docker rm -f "$probe"
-failure_stage=db-start
+# BEGIN granular startup diagnostics
+failure_stage=db-start-cli
+failure_category=db-start-command-failed
 cli_local db start >"$raw/start.log" 2>&1
 
-# Validate the actual PG17 patch before canonical migrations or compatibility SQL.
-[[ $(docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres -c 'SHOW server_version_num') == 170006 ]]
-[[ $(docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres -c "SELECT split_part(current_setting('server_version'), ' ', 1)") == 17.6 ]]
+# Capture exact query output privately; distinguish execution failure from a mismatch.
+failure_stage=db-start-version-num-query
+failure_category=db-start-command-failed
+docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  -c 'SHOW server_version_num' >"$raw/version-num.stdout" 2>"$raw/version-num.stderr"
+pg_version_num=$(cat -- "$raw/version-num.stdout")
+failure_stage=db-start-version-num-verify
+failure_category=db-start-version-mismatch
+[[ $pg_version_num == 170006 ]]
+failure_stage=db-start-version-text-query
+failure_category=db-start-command-failed
+docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  -c "SELECT split_part(current_setting('server_version'), ' ', 1)" >"$raw/version-text.stdout" 2>"$raw/version-text.stderr"
+pg_version_text=$(cat -- "$raw/version-text.stdout")
+failure_stage=db-start-version-text-verify
+failure_category=db-start-version-mismatch
+[[ $pg_version_text == 17.6 ]]
 # Task database only: no cron launches even while the transactional fixture switch is true.
+failure_stage=db-start-cron-alter
+failure_category=db-start-command-failed
 docker exec "$db" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
   -c "ALTER SYSTEM SET cron.launch_active_jobs = off" >"$raw/cron-config.log" 2>&1
+failure_stage=db-start-cron-reload
+failure_category=db-start-command-failed
 docker exec "$db" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
   -c "SELECT pg_reload_conf()" >>"$raw/cron-config.log" 2>&1
+failure_stage=db-start-cron-confirm
 cron_safe=0
 for attempt in 1 2 3 4 5; do
-  if [[ $(docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres -c 'SHOW cron.launch_active_jobs') == off ]]; then cron_safe=1; break; fi
+  failure_category=db-start-command-failed
+  if docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
+    -c 'SHOW cron.launch_active_jobs' >"$raw/cron-confirm.stdout" 2>>"$raw/cron-confirm.stderr"; then
+    cron_setting=$(cat -- "$raw/cron-confirm.stdout")
+    failure_category=db-start-cron-not-disabled
+    if [[ $cron_setting == off ]]; then cron_safe=1; break; fi
+  fi
   sleep 1
 done
 [[ $cron_safe == 1 ]]
 # Test infrastructure only; canonical migration files and ledger stay untouched.
+failure_stage=db-start-pgtap-extension
+failure_category=db-start-command-failed
 docker exec "$db" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
   -c 'CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions' >"$raw/pgtap-extension.log" 2>&1
+# Reset the diagnostic category before the unchanged route-isolation phase.
+failure_category=none
+# END granular startup diagnostics
 
 # Defense in depth: remove default routes inside this disposable database
 # namespace before introducing FairSwap SQL. Same-bridge SQL still works.

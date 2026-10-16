@@ -922,3 +922,138 @@ pushes, GitHub writes, PR/Issue updates, CI runs/reruns, Docker/PostgreSQL start
 hosted Supabase connections/operations, or hosted configuration changes.
 No runtime task resources were created. STOP for CTO review; publication and
 another CI execution require separate authorization.
+
+## Step 1I — Granular PG17 startup diagnostics (local source only)
+
+Classification: **DB_START_DIAGNOSTICS_PREPARED_AWAITING_CI_AUTHORIZATION**.
+
+### Confirmed evidence versus unproven causes
+
+Required local/published head is 3db64916bc9c00a3f6e2e171e48f02849d5d20e8;
+base remains cd9d697dd620375c681f2cff42340011d6242201. Read-only remote and
+PR #3 checks confirm those SHAs and the open draft state. No publication occurs.
+
+Re-inspected failed PG17 run 38957391265 (attempt one, failure), successful
+Backend run 38957391308 (attempt one, success), the exact published runner and
+previously checksum-verified sanitized artifacts. PG17's observed diagnostic is
+only db-start / none; exit code one was observed, not timeout code 124.
+Provenance, static contracts and the strict five-file/93-unit foundation passed.
+The result contains no observed PG17 server version, SQLSTATE or executed suite.
+All ten SQL suites remain NOT_VERIFIED, with 0/344 assertions executed; all six
+cleanup flags are true. The sanitized suite-results array is empty.
+
+Confirmed source defect: the db-start marker spans multiple distinct operations,
+making the actual failing command unobservable in the available evidence.
+It is NOT proven that supabase db start failed. A version query/mismatch,
+Cron alter/reload/confirmation failure, or pgTAP extension failure remains an
+unproven alternative. No operational/configuration defect or corrective SQL
+change is conclusively established, so no such correction is implemented.
+
+### Source-first comparison and prerequisites
+
+Canonical PG15 at the required base uses the same cli_local wrapper:
+the task-private project is its cwd and explicit --workdir, with the task network
+passed as --network-id. Both use pinned CLI 2.117.0 and a unique task identity;
+the expected container is supabase_db_<task-project-id>. Task-only config.toml
+selects major_version=17 in the separate PG17 runner; PG15 retains 15.
+The private task config keeps API, Studio, analytics, Edge runtime and local SMTP
+disabled, retains required bootstrap services and an empty Vault section.
+
+PG17's pinned image remains public.ecr.aws/supabase/postgres:17.6.1.167,
+index sha256:6942962433a569e87f228b4d4ab7e11db5deca64e43babb3a038443ad6c4f1bb,
+amd64 child sha256:16c0944c77885446d4f2ebbb2191b357feeb3b1295bde2fb1978c113129dbeb4.
+All existing image hashes/platform/ID/repository-digest checks precede startup.
+Unlike PG15, PG17 adds actual 170006/17.6 checks, Cron disable/reload/confirmation,
+and CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions before the
+unchanged route-isolation phase. The extension package/schema and required SQL
+privileges must already be available; no evidence proves which prerequisite failed.
+
+Version-specific public CLI v2.117.0 source was inspected without running the CLI:
+- [startup](https://github.com/supabase/cli/blob/v2.117.0/apps/cli-go/internal/db/start/start.go),
+  blob dc8327c816d5bf9ff773d9901954cdd9f16137b8: loads task config, starts the
+  container and checks readiness; failures can occur before returning to our runner.
+- [configuration](https://github.com/supabase/cli/blob/v2.117.0/apps/cli-go/pkg/config/config.go),
+  blob 04eae992898169f3444f934da8ff451480ae90eb: explicitly accepts major 17.
+- [container identity](https://github.com/supabase/cli/blob/v2.117.0/apps/cli-go/internal/utils/config.go),
+  blob d171d06753b6ce6dd0f67e96e62d83892964c05b: derives IDs from the project ID.
+These are source prerequisites, not proof of successful startup in this run.
+[PostgreSQL 17 ALTER SYSTEM documentation](https://www.postgresql.org/docs/17/sql-altersystem.html)
+describes reload/restart-dependent application of settings. The existing explicit
+reload and mandatory observed Cron-off confirmation are therefore retained.
+
+### Diagnostic-only local patch and fixed mapping
+
+Only run-local-db.sh, verify-db-results.mjs, verification.test.mjs and this
+append-only report change. The old broad db-start value remains accepted solely
+for historical sanitized evidence. New stage/category values are finite literals:
+
+| Stage | Failure category |
+| --- | --- |
+| db-start-cli | db-start-command-failed |
+| db-start-version-num-query | db-start-command-failed |
+| db-start-version-num-verify | db-start-version-mismatch |
+| db-start-version-text-query | db-start-command-failed |
+| db-start-version-text-verify | db-start-version-mismatch |
+| db-start-cron-alter | db-start-command-failed |
+| db-start-cron-reload | db-start-command-failed |
+| db-start-cron-confirm | db-start-command-failed or db-start-cron-not-disabled |
+| db-start-pgtap-extension | db-start-command-failed |
+
+Version query execution and exact-value validation now have distinct markers.
+Both query stdout and stderr are redirected to the verified private task directory;
+no SQL result becomes artifact content. The mandatory version comparisons remain
+170006 and 17.6. A nonzero query cannot be accepted because it printed a matching
+value, as required by the execution-versus-validation diagnostic split.
+
+Cron confirmation retains the existing five attempts, one-second waits and required
+off value. Failed queries cannot authorize continuation; exhaustion records command
+failure if the last query failed, or cron-not-disabled if its returned setting
+was unacceptable. Alter, reload and pgTAP failures remain fatal. No SQL statement,
+security-critical execution order, pin or network access was added or substituted.
+The category resets to none only after the entire startup block passes.
+
+Illustrative sanitized failure only (not new runtime evidence):
+{"stage":"db-start-version-num-verify","category":"db-start-version-mismatch"}
+Unknown/malformed diagnostics remain unclassified. Raw stdout/stderr, SQL values,
+connection strings, environment data and arbitrary errors are not exported.
+The evidence three-file allowlist and strict complete-success checks remain intact.
+
+### Actual verification and preservation
+
+- node --test scripts/stage3/verification.test.mjs: **218 passed, zero failed,
+  skipped or cancelled** (197 existing plus 21 new startup tests).
+- Mocked CLI/Docker/sleep exercise all nine phases, both version mismatches,
+  command errors with valid-looking stdout, five-attempt Cron exhaustion,
+  pgTAP failure, no console leakage, unknown/malformed diagnostics, strict
+  failure evidence, fatal cleanup and successful continuation into security checks.
+  No live Docker, PostgreSQL, registry request or real retry wait was used.
+- node --check: all four Stage 3 JavaScript modules PASS. Syntax checks for all
+  17 embedded Node programs PASS. WSL Ubuntu bash -n on the runner PASS.
+- Existing verify-baseline.mjs against the retained exact-byte Linux clone PASS:
+  raw approved manifest SHA-256
+  eb2dfee779a15634927cfbf25fcd6ffc59df591a585d1ec8f5f3d40e5caaf1dd
+  and all 58 migration byte hashes. Independent current HEAD Git-blob verification
+  of the same manifest and 58 migrations PASS. Windows checkout CRLF bytes were
+  not normalized or substituted.
+- Pre-edit raw inventory covers all 136 tracked paths. Every path outside the four
+  allowed files is unchanged, including toolchain/image pins, workflow, all SQL,
+  PG15 files and the manifest. Retry helper bytes and cleanup function bytes are
+  unchanged. Separate hash guards preserve the pre-startup network checks and
+  the complete post-startup route-isolation/security/migration/SQL tail.
+- Git diff integrity/scope checks PASS; index remains empty. Previous report bytes
+  are retained exactly, and the original four dirty developer documents remain
+  unchanged and unstaged on their original branch/worktree.
+
+### Remaining decision and stop
+
+The next authorized rehearsal can identify the failing startup subphase; this
+source-only work cannot recover the deleted task-private start.log or prove a
+runtime cause. No further diagnostic fields, raw logs or operational correction
+are proposed as evidence substitutes. If a concrete source/runtime defect is
+established later, propose its correction separately for CTO approval.
+
+Zero commits, pushes, GitHub writes, PR/Issue updates, Actions runs/reruns,
+Docker/PostgreSQL starts, hosted Supabase connections/operations, merges or
+deployments occurred in Step 1I. Both worktrees are preserved. Static-test
+temporary directories are removed by their traps/finally cleanup; no runtime
+database/network resources were created. STOP for CTO review.
