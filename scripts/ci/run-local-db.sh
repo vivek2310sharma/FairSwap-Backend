@@ -140,7 +140,7 @@ NODE
   fi
   printf 'FAIL: database CI stage=%s; raw output withheld\n' "$failure_stage" >&3
   case ${failure_category:-none} in
-    none|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|unclassified|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding|security-parse|security-version|security-ledger|security-vault|security-setting|security-queues|security-buckets|security-rls|security-extensions|security-rpcs|security-cron|security-runtime|security-trigger|security-unclassified) ;;
+    none|manifest-not-found|registry-denied|rate-limited|transport-error|storage-error|unsupported-manifest|unclassified|probe-run-error|probe-port-conflict|probe-network-rule-error|probe-entrypoint-error|probe-image-missing|probe-port-missing|probe-wildcard-binding|probe-other-binding|security-parse|security-version|security-ledger|security-vault|security-setting|security-queues|security-buckets|security-rls|security-rls-shape|security-rls-email_outbox-*|security-rls-listing_media-*|security-rls-listings-*|security-extensions|security-rpcs|security-cron|security-runtime|security-trigger|security-unclassified) ;;
     *) failure_category=unclassified ;;
   esac
   if [[ ${failure_category:-none} != none ]]; then
@@ -456,7 +456,20 @@ catch {
     ['security-runtime',equal(snapshot.checks?.runtime_settings,expectedSettings)],
     ['security-trigger',equal(snapshot.triggerAclContext,expected.triggerAclContext)],
   ];
-  writeFileSync(categoryPath,checks.find(([,passed])=>!passed)?.[0]??'security-unclassified');
+  let failed=checks.find(([,passed])=>!passed)?.[0]??'security-unclassified';
+  if(failed==='security-rls') {
+    const names=['email_outbox','listing_media','listings'];
+    const fields=['relrowsecurity','relforcerowsecurity','policies','anon_any_dml','authenticated_any_dml'];
+    failed='security-rls-shape';
+    for(const name of names){
+      const observed=snapshot.checks?.rls?.find(row=>row.relname===name);
+      const baseline=expected.checks.rls.find(row=>row.relname===name);
+      if(!observed||!baseline){failed='security-rls-'+name+'-present';break;}
+      const field=fields.find(key=>!equal(observed[key],baseline[key]));
+      if(field){failed='security-rls-'+name+'-'+field;break;}
+    }
+  }
+  writeFileSync(categoryPath,failed);
   process.exit(1);
 }
 NODE
