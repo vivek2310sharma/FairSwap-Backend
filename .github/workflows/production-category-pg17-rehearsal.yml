@@ -73,12 +73,45 @@ jobs:
           dir="$RUNNER_TEMP/prod-category-rehearsal-evidence"
           if [[ -f "$dir/result.json" && -f "$dir/SHA256SUMS" ]]; then
             ( cd "$dir" && sha256sum -c SHA256SUMS )
-            node --input-type=module - "$dir/result.json" <<'NODE'
-          import {readFileSync} from 'node:fs';
-          const report=JSON.parse(readFileSync(process.argv[2], 'utf8'));
+            node --input-type=module - "$dir/result.json" "$dir/forward-proposal.json" "releases/production/category-foundation-v1/manifest.json" <<'NODE'
+          import assert from 'node:assert/strict';
+          import {existsSync,readFileSync} from 'node:fs';
+          const [resultPath,proposalPath,manifestPath]=process.argv.slice(2);
+          const report=JSON.parse(readFileSync(resultPath, 'utf8'));
           const allowed=['schemaVersion','releaseId','kind','success','phase','cleanupVerified','hostedWrites','backupVerified','productionApproved'];
-          if(JSON.stringify(Object.keys(report).sort())!==JSON.stringify(allowed.sort()))process.exit(1);
-          if(report.releaseId!=='category-foundation-v1'||report.kind!=='ISOLATED_PG17_45_TO_52'||report.hostedWrites!==false||report.backupVerified!==false||report.productionApproved!==false)process.exit(1);
+          assert.deepEqual(Object.keys(report).sort(),allowed.sort());
+          assert.equal(report.releaseId,'category-foundation-v1');
+          assert.equal(report.kind,'ISOLATED_PG17_45_TO_52');
+          assert.equal(report.hostedWrites,false);
+          assert.equal(report.backupVerified,false);
+          assert.equal(report.productionApproved,false);
+          if(report.success===true) {
+            assert.equal(report.phase,'passed');
+            assert.equal(report.cleanupVerified,true);
+            assert.ok(existsSync(proposalPath));
+            const proposal=JSON.parse(readFileSync(proposalPath,'utf8'));
+            const manifest=JSON.parse(readFileSync(manifestPath,'utf8'));
+            assert.deepEqual(Object.keys(proposal).sort(),['schemaVersion','releaseId','status','generatedByCliVersion','productionBaselineTip','forwardMigrations'].sort());
+            assert.equal(proposal.schemaVersion,1);
+            assert.equal(proposal.releaseId,'category-foundation-v1');
+            assert.equal(proposal.status,'CLI_GENERATED_CANDIDATE_NOT_APPROVED_FOR_PRODUCTION');
+            assert.equal(proposal.generatedByCliVersion,'2.117.0');
+            assert.equal(proposal.productionBaselineTip,'20261013235311');
+            assert.equal(proposal.forwardMigrations.length,7);
+            for(let i=0;i<7;i++){
+              const entry=proposal.forwardMigrations[i];
+              const source=manifest.candidateSourceMigrations[i];
+              assert.deepEqual(Object.keys(entry).sort(),['version','file','source','sha256'].sort());
+              assert.match(entry.file,/^\d{14}_category_foundation_0[1-7]_[a-z0-9_]+\.sql$/);
+              assert.equal(entry.version,entry.file.slice(0,14));
+              assert.equal(entry.source,source.path);
+              assert.equal(entry.sha256,source.sha256);
+              assert.ok(entry.version > (i===0?'20261013235311':proposal.forwardMigrations[i-1].version));
+            }
+            console.log('PASS: 7 sanitized CLI-generated forward version/SQL SHA-256 pairs verified');
+          } else {
+            assert.equal(existsSync(proposalPath),false);
+          }
           console.log('Sanitized rehearsal evidence:',JSON.stringify(report));
           NODE
             echo 'safe=true' >> "$GITHUB_OUTPUT"
@@ -94,6 +127,7 @@ jobs:
           path: |
             ${{ runner.temp }}/prod-category-rehearsal-evidence/result.json
             ${{ runner.temp }}/prod-category-rehearsal-evidence/SHA256SUMS
+            ${{ runner.temp }}/prod-category-rehearsal-evidence/forward-proposal.json
           retention-days: 14
           if-no-files-found: error
           include-hidden-files: false
