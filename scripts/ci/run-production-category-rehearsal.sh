@@ -75,6 +75,9 @@ cleanup() {
   printf '{"schemaVersion":1,"releaseId":"category-foundation-v1","kind":"ISOLATED_PG17_45_TO_52","success":%s,"phase":"%s","cleanupVerified":%s,"hostedWrites":false,"backupVerified":false,"productionApproved":false}\n' \
     "$outcome" "$stage" "$([[ $cleanup_ok == 1 ]] && echo true || echo false)" >"$evidence/result.json"
   sha256sum "$evidence/result.json" | sed "s@  $evidence/@  @" >"$evidence/SHA256SUMS"
+  if [[ $outcome == true && -f "$evidence/forward-proposal.json" ]]; then
+    sha256sum "$evidence/forward-proposal.json" | sed "s@  $evidence/@  @" >>"$evidence/SHA256SUMS"
+  fi
   rm -rf -- "$task"
   if [[ $outcome != true ]]; then
     echo "FAIL: Production category rehearsal; phase=$stage, cleanupVerified=$([[ $cleanup_ok == 1 ]] && echo true || echo false)" >&2
@@ -405,5 +408,39 @@ console.log('PASS: nine hidden-release security/regression suites, 268 assertion
 NODE
 stage=cron-after-regressions-inert
 assert_cron_inert after-baseline
+# The proposal exposes only source paths, immutable SHA-256 pins and CLI-generated
+# filenames. It is NOT an approval or deployable migration package. No raw SQL,
+# postgres logs, credentials, data rows or host paths are uploaded.
+stage=forward-proposal
+node --input-type=module - "$project/rehearsal.json" "$evidence/forward-proposal.json" "$root/releases/production/category-foundation-v1/manifest.json" <<'NODE'
+import assert from "node:assert/strict";
+import {readFileSync,writeFileSync} from "node:fs";
+const [stageFile,output,manifestFile]=process.argv.slice(2);
+const stage=JSON.parse(readFileSync(stageFile,"utf8"));
+const manifest=JSON.parse(readFileSync(manifestFile,"utf8"));
+assert.equal(stage.releaseId,"category-foundation-v1");
+assert.equal(stage.candidates.length,7);
+assert.equal(manifest.candidateSourceMigrations.length,7);
+const prev="20261013235311";
+const migrationFiles=stage.candidates.map((entry,i)=>{
+  const approved=manifest.candidateSourceMigrations[i];
+  assert.equal(entry.source,approved.path);
+  assert.equal(entry.sha256,approved.sha256);
+  assert.match(entry.file,/^\d{14}_category_foundation_0[1-7]_[a-z0-9_]+\.sql$/);
+  assert.equal(entry.version,entry.file.slice(0,14));
+  assert.ok(entry.version>prev);
+  if(i>0)assert.ok(entry.version>stage.candidates[i-1].version);
+  return {version:entry.version,file:entry.file,source:entry.source,sha256:entry.sha256};
+});
+const release={
+  schemaVersion:1,
+  releaseId:"category-foundation-v1",
+  status:"CLI_GENERATED_CANDIDATE_NOT_APPROVED_FOR_PRODUCTION",
+  generatedByCliVersion:"2.117.0",
+  productionBaselineTip:prev,
+  forwardMigrations:migrationFiles
+};
+writeFileSync(output,JSON.stringify(release,null,2)+"\n",{flag:"wx",mode:0o600});
+NODE
 stage=passed
 success=1
