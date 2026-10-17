@@ -1,0 +1,189 @@
+name: Stage 3 PG17 compatibility rehearsal
+on:
+  pull_request:
+    branches: [chore/backend-extraction-baseline]
+permissions:
+  contents: read
+concurrency:
+  group: stage3-pg17-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  pg17-compatibility:
+    if: >-
+      github.repository == 'vivek2310sharma/FairSwap-Backend' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'test/stage3-moderation-pg17-compat'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout exact PR head without credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2; existing verified pin
+        timeout-minutes: 2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Set up pinned Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0; existing verified pin
+        timeout-minutes: 3
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+      - name: Reject branch, base SHA and source drift
+        timeout-minutes: 1
+        run: node scripts/stage3/verify-source.mjs
+      - name: Verify source and static contracts
+        timeout-minutes: 2
+        run: |
+          test "$(node -p process.versions.node)" = 24.15.0
+          node scripts/ci/verify-baseline.mjs
+          bash -n scripts/stage3/run-local-db.sh
+      - name: Verify the unchanged unit foundation
+        timeout-minutes: 7
+        run: |
+          test "$(corepack pnpm --version)" = 10.12.1
+          corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+          corepack pnpm typecheck
+          node scripts/ci/verify-unit-results.mjs --check-isolation
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            corepack pnpm test:unit --reporter=default --reporter=json \
+            --outputFile="$RUNNER_TEMP/stage3-unit.json"
+          node scripts/ci/verify-unit-results.mjs "$RUNNER_TEMP/stage3-unit.json" \
+            --summary "$RUNNER_TEMP/stage3-unit-summary.json"
+      - name: Rehearse one reviewed finalizer overlay; compatibility remains unapproved
+        id: database
+        timeout-minutes: 23
+        env:
+          REVIEWED_OVERLAY_HASHES: '{"scripts/stage3/finalizer-rehearsal-source.json":"06f4c40272d3e5dd082473f272f8a5408ced61bb5b133f0d46337917f8f80cae","scripts/stage3/finalizer-rehearsal.test.mjs":"c4b8fca18e75fe6928db433505f6d439e8b60bb7052fb4db50013962b4e5258f","scripts/stage3/prepare-finalizer-rehearsal.mjs":"54cc13b5569aadc546de68ed4c97c619d079e9f23848724676759cd579a9d7f6","scripts/stage3/step1q-finalizer.proposed.sql":"59a94b449566a4fee4cdbf42eb419aa34057cf1e50fa6c1f6909e77d5190dc13","scripts/stage3/verify-finalizer-rehearsal.mjs":"2a3e131650bd6685aaf470b813c59bc2a3dfd643d92f832eca18d8bbcf591c25","tests/stage3/step1q-finalizer-additional.proposed.test.sql":"caaf6cc19cba2c73d54ed835706545fae9d1b7499b0fbb55b808eedeb3133357"}'
+        run: |
+          approved=6e0ca44dfb5416661c780cb831617f5c3196c2a1
+          evidence="$RUNNER_TEMP/stage3-pg17-evidence"
+          owner=$(mktemp -d "$RUNNER_TEMP/step1s-source.XXXXXXXX")
+          source="$owner/source"
+          prepared=''
+          cleanup_sources() {
+            rc=$?
+            trap - EXIT
+            set +e
+            cleanup_ok=true
+            if [[ -n "$prepared" ]]; then
+              node "$source/scripts/stage3/prepare-finalizer-rehearsal.mjs" --remove-prepared "$prepared" || cleanup_ok=false
+            fi
+            if [[ -d "$source" ]]; then
+              SOURCE="$source" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,existsSync,unlinkSync,lstatSync} from 'node:fs';
+          import {createHash} from 'node:crypto';
+          const hashes=JSON.parse(process.env.REVIEWED_OVERLAY_HASHES);
+          for(const [file,hash] of Object.entries(hashes)) {
+            const p=process.env.SOURCE+'/'+file;
+            if(!existsSync(p))continue;
+            assert.ok(lstatSync(p).isFile()&&!lstatSync(p).isSymbolicLink());
+            assert.equal(createHash('sha256').update(readFileSync(p)).digest('hex'),hash);
+            unlinkSync(p);
+          }
+          NODE
+              [[ $? == 0 ]] || cleanup_ok=false
+              git -C "$source" diff --exit-code --quiet || cleanup_ok=false
+              git worktree remove "$source" || cleanup_ok=false
+            fi
+            rmdir "$owner" || cleanup_ok=false
+            if [[ "$cleanup_ok" != true ]]; then
+              node scripts/stage3/verify-finalizer-rehearsal.mjs --cleanup-failed "$evidence" cleanup unclassified
+              exit 1
+            fi
+            echo 'source-cleanup=true' >> "$GITHUB_OUTPUT"
+            exit "$rc"
+          }
+          trap cleanup_sources EXIT
+          git merge-base --is-ancestor "$approved" HEAD
+          APPROVED="$approved" SOURCE="$source" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,lstatSync} from 'node:fs';
+          import {createHash} from 'node:crypto';
+          import {execFileSync} from 'node:child_process';
+          const hashes=JSON.parse(process.env.REVIEWED_OVERLAY_HASHES);
+          const workflow='.github/workflows/stage3-pg17-compat.yml';
+          const expected=[...Object.keys(hashes).map(p=>'A\t'+p),'M\t'+workflow].sort();
+          const actual=execFileSync('git',['diff','--name-status',process.env.APPROVED,'HEAD'],{encoding:'utf8'}).trim().split('\n').sort();
+          assert.deepEqual(actual,expected);
+          for(const [p,h] of Object.entries(hashes)) {
+            assert.ok(lstatSync(p).isFile()&&!lstatSync(p).isSymbolicLink());
+            assert.equal(createHash('sha256').update(readFileSync(p)).digest('hex'),h);
+          }
+          NODE
+          git -c core.autocrlf=false worktree add --detach "$source" "$approved"
+          test -z "$(git -C "$source" status --porcelain)"
+          test "$(git -C "$source" rev-parse HEAD)" = "$approved"
+          SOURCE="$source" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+          import path from 'node:path';
+          import {createHash} from 'node:crypto';
+          const hashes=JSON.parse(process.env.REVIEWED_OVERLAY_HASHES);
+          for(const [p,h] of Object.entries(hashes)) {
+            const bytes=readFileSync(p);
+            assert.equal(createHash('sha256').update(bytes).digest('hex'),h);
+            const target=path.join(process.env.SOURCE,p);
+            mkdirSync(path.dirname(target),{recursive:true});
+            writeFileSync(target,bytes,{flag:'wx'});
+            assert.equal(createHash('sha256').update(readFileSync(target)).digest('hex'),h);
+          }
+          const {verifySource}=await import('file://'+process.env.SOURCE+'/scripts/stage3/prepare-finalizer-rehearsal.mjs');
+          verifySource(process.env.SOURCE);
+          NODE
+          node --test --test-concurrency=1 "$source/scripts/stage3/verification.test.mjs" \
+            "$source/scripts/stage3/finalizer-rehearsal.test.mjs"
+          prepared=$(node "$source/scripts/stage3/prepare-finalizer-rehearsal.mjs" --prepare)
+          timeout --signal=TERM --kill-after=30s 20m \
+            bash "$prepared/scripts/stage3/run-local-db.sh" "$evidence"
+      - name: Validate bounded diagnostic evidence; deny final compatibility acceptance
+        id: evidence
+        if: ${{ !cancelled() && steps.database.outcome != 'skipped' }}
+        timeout-minutes: 1
+        env:
+          SOURCE_CLEANUP: ${{ steps.database.outputs.source-cleanup }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {lstatSync,readFileSync,appendFileSync} from 'node:fs';
+          import {verifyChecksums,invalidate} from './scripts/stage3/verify-finalizer-rehearsal.mjs';
+          const dir=process.env.RUNNER_TEMP+'/stage3-pg17-evidence';
+          if(process.env.SOURCE_CLEANUP!=='true') {
+            invalidate(dir,{stage:'cleanup',category:'unclassified'});
+          }
+          for(const file of ['result.json','suite-results.json','SHA256SUMS']) {
+            const s=lstatSync(dir+'/'+file);
+            assert.ok(s.isFile()&&!s.isSymbolicLink()&&s.size>0&&s.size<=262144);
+          }
+          verifyChecksums(dir);
+          const r=JSON.parse(readFileSync(dir+'/result.json','utf8'));
+          const suites=JSON.parse(readFileSync(dir+'/suite-results.json','utf8'));
+          assert.equal(r.schemaVersion,1);
+          assert.equal(r.kind,'STEP1R_DIAGNOSTIC_ONLY');
+          assert.ok(Array.isArray(suites)&&suites.length<=11);
+          assert.equal(r.success,false);
+          assert.equal(r.compatibilityAccepted,false);
+          assert.equal(r.extensionApproval,false);
+          if(r.cleanup!=='FAILED')assert.equal(r.concurrencyVerified,false);
+          else assert.equal(r.executionVerified,false);
+          appendFileSync(process.env.GITHUB_OUTPUT,'safe=true\n');
+          console.log('Diagnostic execution verified:',r.executionVerified===true);
+          throw new Error('PG17 compatibility and extension approval remain false');
+          NODE
+      - name: Preserve allowlisted evidence even when compatibility fails
+        if: ${{ always() && steps.evidence.outputs.safe == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2; existing verified pin
+        timeout-minutes: 2
+        with:
+          name: stage3-pg17-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/stage3-pg17-evidence/result.json
+            ${{ runner.temp }}/stage3-pg17-evidence/suite-results.json
+            ${{ runner.temp }}/stage3-pg17-evidence/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
