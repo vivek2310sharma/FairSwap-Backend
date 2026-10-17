@@ -1,0 +1,17 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { verify, validateReleasePlan } from "./verify-production-category-release.mjs";
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const read = path => readFileSync(join(ROOT,path), "utf8");
+const original = JSON.parse(read("releases/production/category-foundation-v1/manifest.json"));
+const originalManifest = read("docs/extraction/MIGRATION_MANIFEST.sha256");
+const copy = () => structuredClone(original);
+test("7 approved immutable source migrations verify without a database", () => { assert.equal(verify(ROOT).approvedMigrations, 7); });
+test("Test-only category enable is always denied", () => { const x=copy(); x.candidateSourceMigrations.push({path:"supabase/migrations/20261010064519_enable_test_car_draft_categories.sql",sha256:"0".repeat(64)}); assert.throws(() => validateReleasePlan(x,originalManifest,read),/allowlist drift/); });
+test("one previously approved source byte changed", () => { const target=original.candidateSourceMigrations[1].path; assert.throws(() => validateReleasePlan(copy(),originalManifest,path => path===target?read(path)+"-- tampered\\n":read(path)),/Candidate SQL bytes changed/); });
+test("incorrect Production target is denied", () => { const x=copy(); x.targetProjectRef="wpppxlnbzqynvhpeuavd"; assert.throws(() => validateReleasePlan(x,originalManifest,read),/Unexpected production target/); });
+test("release cannot mark unverified backups approved", () => { const x=copy(); x.releaseGates.productionRestoreVerified=true; assert.throws(() => validateReleasePlan(x,originalManifest,read),/release gate/); });
+test("historical Production migration count cannot drift", () => { const x=copy(); x.productionBaseline.appliedVersions.pop(); assert.throws(() => validateReleasePlan(x,originalManifest,read),/45 applied/); });
