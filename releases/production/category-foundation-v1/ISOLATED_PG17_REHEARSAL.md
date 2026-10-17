@@ -15,9 +15,13 @@ migration files allocated by `supabase migration new` in the CI sandbox**.
 This avoids modifying historical sources or falsely applying their older version
 numbers after the Production ledger tip (`20261013235311`).
 
-This does not deploy those generated filenames. Before an actual release, pin
-reviewed forward migration filenames and checksums in a separate authorized
-Production release change, review dependency ordering, and re-run full acceptance.
+This does not deploy those generated filenames. The runner additionally emits
+an allowlisted `forward-proposal.json` with exactly seven CLI-allocated
+forward migration filenames, source paths and SHA-256 hashes, only when the
+45→52 rehearsal, postflight, regression and cleanup all pass. The artifact is
+checksum-verified and contains no raw SQL or private data. We can then pin
+those names in a reviewed release manifest, switch CI to enforce them, and
+re-run the same full acceptance. No filename proposal is a deployment approval.
 
 The CI workflow accepts pull requests only from the exact dedicated rehearsal
 branch into `main`; it checks out the source without persistent GitHub token
