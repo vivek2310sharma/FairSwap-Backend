@@ -289,12 +289,12 @@ for(const [file,expected] of Object.entries(releaseExpected)) {
     assert.equal(parseSuiteLog(file,log,0).assertions,expected);
   } else {
     assert.ok(log.includes('/supabase/tests/'+file), 'Unexpected suite log identity');
-    assert.ok(!/(?:^|\\n)\\s*(?:not ok\\b|Bail out!|Dubious|Failed\\b|Parse errors:)|\\bERROR:|Result:\\s*FAIL/i.test(log));
-    const counts=[...log.matchAll(/^Files=(\\d+), Tests=(\\d+),[^\\r\\n]*$/gm)];
+    assert.ok(!/(?:^|\n)\s*(?:not ok\b|Bail out!|Dubious|Failed\b|Parse errors:)|\bERROR:|Result:\s*FAIL/i.test(log));
+    const counts=[...log.matchAll(/^Files=(\d+), Tests=(\d+),[^\r\n]*$/gm)];
     assert.equal(counts.length,1);
     assert.deepEqual([Number(counts[0][1]),Number(counts[0][2])],[1,expected]);
-    assert.equal((log.match(/^Result: PASS\\r?$/gm)||[]).length,1);
-    assert.equal((log.match(/^All tests successful\\.\\r?$/gm)||[]).length,1);
+    assert.equal((log.match(/^Result: PASS\r?$/gm)||[]).length,1);
+    assert.equal((log.match(/^All tests successful\.\r?$/gm)||[]).length,1);
   }
   tests+=expected;
 }
