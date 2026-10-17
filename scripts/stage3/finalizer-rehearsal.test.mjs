@@ -52,7 +52,7 @@ function withFixture(mutate,inspect){
 test('overlay source pins exact approved head, 137 files, two Step 1Q payloads and no 59th migration',()=>{
  const m=manifest();assert.equal(m.head,'6e0ca44dfb5416661c780cb831617f5c3196c2a1');assert.equal(Object.keys(m.sources).length,137);
  assert.equal(Object.keys(m.sources).filter(f=>f.startsWith('supabase/migrations/')).length,58);
- assert.equal(m.payloads['scripts/stage3/step1q-finalizer.proposed.sql'],'fd050dadb1cd50fa3810ef9c0423c48e611f5e08b7ae3fbc989cedff411c6bba');
+ assert.equal(m.payloads['scripts/stage3/step1q-finalizer.proposed.sql'],'59a94b449566a4fee4cdbf42eb419aa34057cf1e50fa6c1f6909e77d5190dc13');
  assert.equal(m.payloads['tests/stage3/step1q-finalizer-additional.proposed.test.sql'],'caaf6cc19cba2c73d54ed835706545fae9d1b7499b0fbb55b808eedeb3133357');
 });
 test('reversing three exact hooks and collector substitutions recovers approved runner bytes',()=>{

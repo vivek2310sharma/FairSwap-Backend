@@ -14,7 +14,7 @@ export const overlayFiles=[
  'scripts/stage3/step1q-finalizer.proposed.sql','tests/stage3/step1q-finalizer-additional.proposed.test.sql'];
 export function manifest(root=sourceRoot){
  const bytes=readFileSync(path.join(root,manifestPath));
- assert.equal(digest(bytes),'5298bef9e55910ae75a68ad3f6bc0a702ee4991ff49376ac0f46f92af21c806f');
+ assert.equal(digest(bytes),'06f4c40272d3e5dd082473f272f8a5408ced61bb5b133f0d46337917f8f80cae');
  return JSON.parse(bytes);
 }
 export const extraSuite='step1q-finalizer-additional.proposed.test.sql';
@@ -98,7 +98,7 @@ export function prepare(root=sourceRoot){
   write('scripts/stage3/approved-run-local-db.sh',bytes(root,'scripts/stage3/run-local-db.sh'));
   writeFileSync(path.join(out,'scripts/stage3/run-local-db.sh'),deriveRunner(bytes(root,'scripts/stage3/run-local-db.sh').toString()),{mode:0o600});
   write('scripts/stage3/finalizer-rehearsal-state.sql',stateSql);
-  write('.step1r-source-owner',JSON.stringify({head:m.head,manifest:'5298bef9e55910ae75a68ad3f6bc0a702ee4991ff49376ac0f46f92af21c806f'}));
+  write('.step1r-source-owner',JSON.stringify({head:m.head,manifest:'06f4c40272d3e5dd082473f272f8a5408ced61bb5b133f0d46337917f8f80cae'}));
   verifySource(out,true);return out;
  }catch(e){discardCreated(out);throw e;}
 }

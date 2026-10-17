@@ -57,7 +57,7 @@ jobs:
         id: database
         timeout-minutes: 23
         env:
-          REVIEWED_OVERLAY_HASHES: '{"scripts/stage3/finalizer-rehearsal-source.json":"5298bef9e55910ae75a68ad3f6bc0a702ee4991ff49376ac0f46f92af21c806f","scripts/stage3/finalizer-rehearsal.test.mjs":"cc8cda0ceac82db9fd2b00972d2cde12db307f3cf8eed11c813757625a80259f","scripts/stage3/prepare-finalizer-rehearsal.mjs":"f539252d99bdc7344e562eb39134c455e08074d10d46992b4b2b633af45d203d","scripts/stage3/step1q-finalizer.proposed.sql":"fd050dadb1cd50fa3810ef9c0423c48e611f5e08b7ae3fbc989cedff411c6bba","scripts/stage3/verify-finalizer-rehearsal.mjs":"2a3e131650bd6685aaf470b813c59bc2a3dfd643d92f832eca18d8bbcf591c25","tests/stage3/step1q-finalizer-additional.proposed.test.sql":"caaf6cc19cba2c73d54ed835706545fae9d1b7499b0fbb55b808eedeb3133357"}'
+          REVIEWED_OVERLAY_HASHES: '{"scripts/stage3/finalizer-rehearsal-source.json":"06f4c40272d3e5dd082473f272f8a5408ced61bb5b133f0d46337917f8f80cae","scripts/stage3/finalizer-rehearsal.test.mjs":"c4b8fca18e75fe6928db433505f6d439e8b60bb7052fb4db50013962b4e5258f","scripts/stage3/prepare-finalizer-rehearsal.mjs":"54cc13b5569aadc546de68ed4c97c619d079e9f23848724676759cd579a9d7f6","scripts/stage3/step1q-finalizer.proposed.sql":"59a94b449566a4fee4cdbf42eb419aa34057cf1e50fa6c1f6909e77d5190dc13","scripts/stage3/verify-finalizer-rehearsal.mjs":"2a3e131650bd6685aaf470b813c59bc2a3dfd643d92f832eca18d8bbcf591c25","tests/stage3/step1q-finalizer-additional.proposed.test.sql":"caaf6cc19cba2c73d54ed835706545fae9d1b7499b0fbb55b808eedeb3133357"}'
         run: |
           approved=6e0ca44dfb5416661c780cb831617f5c3196c2a1
           evidence="$RUNNER_TEMP/stage3-pg17-evidence"

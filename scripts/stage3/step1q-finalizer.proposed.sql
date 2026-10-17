@@ -221,7 +221,7 @@ BEGIN
       v_category_family := NULL;
     ELSIF v_category_family_count = 1 AND v_context_family_count = 1
           AND v_category_family = v_context_family
-          AND v_macro_category = CASE WHEN v_category_family = 'property' THEN 'property' ELSE 'vehicles' END THEN
+          AND v_macro_category = (CASE WHEN v_category_family = 'property' THEN 'property' ELSE 'vehicles' END) THEN
       SELECT * INTO v_policy FROM app_security.test_submission_policies
       WHERE family = v_category_family;
       IF NOT FOUND OR v_policy.policy_key IS DISTINCT FROM 'test-submission-v1'

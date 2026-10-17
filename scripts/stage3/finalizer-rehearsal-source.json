@@ -141,7 +141,7 @@
     "vitest.config.ts": "0dbc3a3efbd1b07a14f0a76c0c7ca773c17e58b5ab12a1e0010979fef78afeac"
   },
   "payloads": {
-    "scripts/stage3/step1q-finalizer.proposed.sql": "fd050dadb1cd50fa3810ef9c0423c48e611f5e08b7ae3fbc989cedff411c6bba",
+    "scripts/stage3/step1q-finalizer.proposed.sql": "59a94b449566a4fee4cdbf42eb419aa34057cf1e50fa6c1f6909e77d5190dc13",
     "tests/stage3/step1q-finalizer-additional.proposed.test.sql": "caaf6cc19cba2c73d54ed835706545fae9d1b7499b0fbb55b808eedeb3133357"
   }
 }
