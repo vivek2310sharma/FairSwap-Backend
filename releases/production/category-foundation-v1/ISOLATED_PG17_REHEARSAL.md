@@ -25,11 +25,15 @@ credentials and does not receive any Supabase secrets or hosted database
 connection. The runner creates a fresh local Supabase PG17 database on a unique
 loopback-bound Docker bridge. Before bootstrap, it installs four exact per-task
 IPv4/IPv6 firewall rules in the native runner to block database-container
-egress and new connections to host services; after bootstrap it verifies the
-namespace identity and removes IPv4/IPv6 default routes **before any FairSwap
-SQL is introduced**. The runner verifies PostgreSQL 17.6, disables cron
-launches before migrations, and then replays 45 followed by seven. Cleanup
-removes only the task-owned objects and reverses precisely those four rules.
+egress and new connections to host services. A strict task-only Docker create
+adapter injects `-c cron.launch_active_jobs=off` into the **owned PG17 process
+startup**; an unrecognized CLI/bootstrap shape fails closed. It checks the
+Supabase CLI's Docker labels, pinned image ID and one-time startup receipt, and
+verifies `pg_settings.source='command line'` before introducing FairSwap SQL.
+After bootstrap it verifies namespace identity and removes IPv4/IPv6 default
+routes **before any FairSwap SQL is introduced**. The runner requires PostgreSQL
+17.6 and replays 45 followed by seven. Cleanup removes only the task-owned
+objects and reverses precisely those four firewall rules.
 
 The runner pulls the **official Supabase PostgreSQL 17.6.1.167 OCI index** by
 its pinned digest `sha256:6942962433a569e87f228b4d4ab7e11db5deca64e43babb3a038443ad6c4f1bb`
