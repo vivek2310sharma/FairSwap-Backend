@@ -15,13 +15,21 @@ migration files allocated by `supabase migration new` in the CI sandbox**.
 This avoids modifying historical sources or falsely applying their older version
 numbers after the Production ledger tip (`20261013235311`).
 
-This does not deploy those generated filenames. The runner additionally emits
-an allowlisted `forward-proposal.json` with exactly seven CLI-allocated
-forward migration filenames, source paths and SHA-256 hashes, only when the
-45→52 rehearsal, postflight, regression and cleanup all pass. The artifact is
-checksum-verified and contains no raw SQL or private data. We can then pin
-those names in a reviewed release manifest, switch CI to enforce them, and
-re-run the same full acceptance. No filename proposal is a deployment approval.
+This does not deploy those generated filenames. CLI v2.117.0 generated
+the exact seven forward-version names in successful GitHub Actions run
+[39068727798](https://github.com/vivek2310sharma/FairSwap-Backend/actions/runs/39068727798),
+artifact `12114173244` (ZIP sha256
+`974b6e3d6923d00b045c78aaaed96c823573ccf1b60afd98f842f98e03d7922a`;
+proposal JSON sha256 `1ca981617d5aefd9d9c272a760d7c67fc683d1c93c072ccfa5fc19fb82f69d87`).
+The immutable proposed release inventory is now checked into
+`releases/production/category-foundation-v1/forward-migration-plan.json`,
+where each filename maps to one approved, SHA-256-pinned historical SQL source.
+The CI sandbox copies those **exact filenames** after network isolation;
+it no longer generates fresh timestamps on each run. The guarded runner uploads
+a checksum-verified sanitized `forward-proposal.json`, and the CI verifier
+must match it to the pinned release plan byte-for-byte by structured fields.
+The generated SQL payloads are not duplicated in Backend's canonical 58-file
+`supabase/migrations` tree. **No filename pin is a Production approval.**
 
 The CI workflow accepts pull requests only from the exact dedicated rehearsal
 branch into `main`; it checks out the source without persistent GitHub token
