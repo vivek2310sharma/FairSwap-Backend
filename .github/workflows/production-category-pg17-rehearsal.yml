@@ -8,6 +8,8 @@ on:
       - 'scripts/ci/production-category-rehearsal.mjs'
       - 'scripts/ci/production-category-rehearsal.test.mjs'
       - 'scripts/ci/run-production-category-rehearsal.sh'
+      - 'scripts/ci/start-production-category-postgres-cron-off.mjs'
+      - 'scripts/ci/start-production-category-postgres-cron-off.test.mjs'
       - 'releases/production/category-foundation-v1/**'
   workflow_dispatch:
 
@@ -49,7 +51,8 @@ jobs:
           bash -n scripts/ci/run-production-category-rehearsal.sh
           node scripts/ci/verify-production-category-release.mjs
           node --test scripts/ci/verify-production-category-release.test.mjs \
-            scripts/ci/production-category-rehearsal.test.mjs
+            scripts/ci/production-category-rehearsal.test.mjs \
+            scripts/ci/start-production-category-postgres-cron-off.test.mjs
 
       - name: Execute exact local PG17 45-to-52 rehearsal and regression tests
         timeout-minutes: 33
