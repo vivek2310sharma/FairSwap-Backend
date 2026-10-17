@@ -31,6 +31,12 @@ SQL is introduced**. The runner verifies PostgreSQL 17.6, disables cron
 launches before migrations, and then replays 45 followed by seven. Cleanup
 removes only the task-owned objects and reverses precisely those four rules.
 
+The runner pulls the **official Supabase PostgreSQL 17.6.1.167 OCI index** by
+its pinned digest `sha256:6942962433a569e87f228b4d4ab7e11db5deca64e43babb3a038443ad6c4f1bb`
+from `ghcr.io/supabase/postgres`. Supabase publishes the same tag and
+digest through GHCR and its public ECR repository; the source switch avoids
+an intermittent registry throttle without changing the approved image bytes.
+
 After migration, the runner applies the checked-in read-only category
 postflight, checks unchanged Goods finalizer hash, enabled category guards,
 private context RLS and anonymous grants, and runs the nine Goods-oriented
