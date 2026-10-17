@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
-import { approvedPlan, prepare, checkLedger, verifyPrepared, stageCandidates } from "./production-category-rehearsal.mjs";
+import { approvedPlan, prepare, stageBaseline, checkLedger, verifyPrepared, stageCandidates } from "./production-category-rehearsal.mjs";
 
 test("rehearsal source is exactly the 45 Production versions plus seven pinned candidates", () => {
   const plan = approvedPlan();
@@ -26,6 +26,11 @@ test("empty project is staged only in a task-scoped isolated working directory",
     assert.equal(stage.baselineVersions.length, 45);
     assert.equal(stage.candidates.length, 0);
     assert.match(readFileSync(join(target, "supabase/config.toml"), "utf8"), /major_version = 17/);
+    assert.equal(readdirSync(join(target, "supabase/migrations")).filter(x => x.endsWith(".sql")).length, 0);
+    assert.throws(() => stageBaseline(target), /Missing isolated PG17 pre-SQL receipt/);
+    writeFileSync(join(target, "isolation-confirmed"), "pg17.6-cron-off-network-isolated-empty-ledger\n");
+    assert.equal(stageBaseline(target), 45);
+    assert.throws(() => stageBaseline(target), /Unexpected FairSwap SQL before network isolation/);
     assert.equal(readdirSync(join(target, "supabase/migrations")).filter(x => x.endsWith(".sql")).length, 45);
     assert.throws(() => prepare(target), /exists/);
     assert.throws(() => verifyPrepared(target), /Incomplete candidate/);
