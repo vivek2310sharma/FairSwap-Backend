@@ -23,6 +23,11 @@ network=''
 db=''
 started=0
 success=0
+fw_if=''
+fw4_fwd=0
+fw6_fwd=0
+fw4_input=0
+fw6_input=0
 cleanup() {
   local rc=$? cleanup_ok=1 existing_id
   trap - EXIT INT TERM
@@ -49,6 +54,23 @@ cleanup() {
     [[ -z $(docker volume ls -q --filter "label=com.supabase.cli.project=$project_id") ]] || cleanup_ok=0
     ! docker network inspect "$network" >/dev/null 2>&1 || cleanup_ok=0
   fi
+  # Undo only this task's exact per-interface firewall rules, never flush/prune.
+  if [[ $fw6_input == 1 ]]; then
+    sudo -n ip6tables -w -D INPUT -i "$fw_if" -m conntrack --ctstate NEW -j DROP || cleanup_ok=0
+  fi
+  if [[ $fw4_input == 1 ]]; then
+    sudo -n iptables -w -D INPUT -i "$fw_if" -m conntrack --ctstate NEW -j DROP || cleanup_ok=0
+  fi
+  if [[ $fw6_fwd == 1 ]]; then
+    sudo -n ip6tables -w -D DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP || cleanup_ok=0
+  fi
+  if [[ $fw4_fwd == 1 ]]; then
+    sudo -n iptables -w -D DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP || cleanup_ok=0
+  fi
+  if [[ $fw4_input == 1 ]] && sudo -n iptables -w -C INPUT -i "$fw_if" -m conntrack --ctstate NEW -j DROP >/dev/null 2>&1; then cleanup_ok=0; fi
+  if [[ $fw6_input == 1 ]] && sudo -n ip6tables -w -C INPUT -i "$fw_if" -m conntrack --ctstate NEW -j DROP >/dev/null 2>&1; then cleanup_ok=0; fi
+  if [[ $fw4_fwd == 1 ]] && sudo -n iptables -w -C DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP >/dev/null 2>&1; then cleanup_ok=0; fi
+  if [[ $fw6_fwd == 1 ]] && sudo -n ip6tables -w -C DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP >/dev/null 2>&1; then cleanup_ok=0; fi
   [[ $rc == 0 && $success == 1 && $cleanup_ok == 1 ]] && outcome=true || outcome=false
   printf '{"schemaVersion":1,"releaseId":"category-foundation-v1","kind":"ISOLATED_PG17_45_TO_52","success":%s,"phase":"%s","cleanupVerified":%s,"hostedWrites":false,"backupVerified":false,"productionApproved":false}\n' \
     "$outcome" "$stage" "$([[ $cleanup_ok == 1 ]] && echo true || echo false)" >"$evidence/result.json"
@@ -104,11 +126,45 @@ prove_ref="supabase/pg_prove@sha256:eda7c5e68719e9c8287e78c017118407b48df904a51c
 docker pull --platform linux/amd64 "$prove_ref" >"$task/pgprove-pull.log" 2>&1
 docker tag "$prove_ref" public.ecr.aws/supabase/pg_prove:3.36
 
-stage=internal-network
-docker network create --internal --driver bridge --label "com.supabase.cli.project=$project_id" "$network" >"$task/network-create.txt"
-[[ $(docker network inspect -f '{{.Internal}}' "$network") == true ]]
-# Bootstrap before historical SQL. Database is attached only to a Docker
-# internal network, without a routable egress gateway or hosted credentials.
+# GitHub's native Linux Docker daemon must support both DOCKER-USER chains.
+# No fallback to an unprotected bridge or wildcard host binding is allowed.
+stage=network-preflight
+sudo -n iptables -w -C FORWARD -j DOCKER-USER
+sudo -n ip6tables -w -C FORWARD -j DOCKER-USER
+fw_if="fs$(node -p 'require("crypto").randomBytes(6).toString("hex")')"
+[[ ${#fw_if} -le 15 && $fw_if =~ ^fs[a-f0-9]{12}$ ]]
+v6="fd$(node -p 'require("crypto").randomBytes(1).toString("hex")'):$(node -p 'require("crypto").randomBytes(2).toString("hex")'):$(node -p 'require("crypto").randomBytes(2).toString("hex")')::/64"
+stage=network-create
+docker network create --driver bridge --ipv6 --subnet "$v6" \
+  --opt com.docker.network.bridge.host_binding_ipv4=127.0.0.1 \
+  --opt "com.docker.network.bridge.name=$fw_if" \
+  --label "com.supabase.cli.project=$project_id" "$network" >"$task/network-create.txt"
+[[ $(docker network inspect -f '{{.Internal}}' "$network") == false ]]
+[[ $(docker network inspect -f '{{index .Options "com.docker.network.bridge.host_binding_ipv4"}}' "$network") == 127.0.0.1 ]]
+! sudo -n iptables -w -C DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP >/dev/null 2>&1
+! sudo -n ip6tables -w -C DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP >/dev/null 2>&1
+stage=network-firewall
+sudo -n iptables -w -I DOCKER-USER 1 -i "$fw_if" ! -o "$fw_if" -j DROP
+fw4_fwd=1
+sudo -n ip6tables -w -I DOCKER-USER 1 -i "$fw_if" ! -o "$fw_if" -j DROP
+fw6_fwd=1
+sudo -n iptables -w -I INPUT 1 -i "$fw_if" -m conntrack --ctstate NEW -j DROP
+fw4_input=1
+sudo -n ip6tables -w -I INPUT 1 -i "$fw_if" -m conntrack --ctstate NEW -j DROP
+fw6_input=1
+verify_firewall() {
+  sudo -n iptables -w -C FORWARD -j DOCKER-USER
+  sudo -n ip6tables -w -C FORWARD -j DOCKER-USER
+  sudo -n iptables -w -C DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP
+  sudo -n ip6tables -w -C DOCKER-USER -i "$fw_if" ! -o "$fw_if" -j DROP
+  sudo -n iptables -w -C INPUT -i "$fw_if" -m conntrack --ctstate NEW -j DROP
+  sudo -n ip6tables -w -C INPUT -i "$fw_if" -m conntrack --ctstate NEW -j DROP
+  ip link show "$fw_if" >/dev/null
+}
+stage=network-firewall-verify
+verify_firewall
+# Protected task-only bridge permits host-local CLI bootstrap. Firewall rules
+# block egress and host services; all default routes are removed before SQL.
 stage=database-bootstrap-start
 if ! cli_local db start >"$task/bootstrap.log" 2>&1; then
   # Only a fixed, allowlisted category escapes CI. Never upload bootstrap output.
@@ -127,15 +183,33 @@ fi
 started=1
 stage=database-bootstrap-network-check
 [[ $(docker inspect -f '{{range $n, $v := .NetworkSettings.Networks}}{{$n}}{{end}}' "$db") == "$network" ]]
+published=$(docker inspect -f '{{json .NetworkSettings.Ports}}' "$db")
+node --input-type=module - "$published" <<'NODE'
+import assert from 'node:assert/strict';
+const ports=JSON.parse(process.argv[2]);
+const db=ports['5432/tcp'];
+assert.ok(Array.isArray(db)&&db.length>0,'Database port must be loopback-published');
+assert.ok(db.every(p=>p.HostIp==='127.0.0.1'||p.HostIp==='::1'),'No wildcard or external port binding allowed');
+NODE
 stage=database-bootstrap-version-check
 [[ $(sql 'SHOW server_version_num') == 170006 ]]
 [[ $(sql "SELECT split_part(current_setting('server_version'), ' ', 1)") == 17.6 ]]
 stage=database-bootstrap-namespace-check
 db_pid=$(docker inspect -f '{{.State.Pid}}' "$db")
-[[ $db_pid =~ ^[1-9][0-9]*$ ]]
+db_sandbox=$(docker inspect -f '{{.NetworkSettings.SandboxKey}}' "$db")
+[[ $db_pid =~ ^[1-9][0-9]*$ && $db_sandbox == /var/run/docker/netns/* ]]
+[[ $(sudo -n stat -Lc %i "/proc/$db_pid/ns/net") == $(sudo -n stat -Lc %i "$db_sandbox") ]]
+stage=network-route-isolation
 for family in 4 6; do
-  [[ -z $(sudo -n nsenter --target "$db_pid" --net -- ip "-$family" route show default) ]] || exit 1
+  for attempt in 1 2 3; do
+    routes=$(sudo -n nsenter --target "$db_pid" --net -- ip "-$family" route show default)
+    [[ -n $routes ]] || break
+    sudo -n nsenter --target "$db_pid" --net -- ip "-$family" route del default
+  done
+  [[ -z $(sudo -n nsenter --target "$db_pid" --net -- ip "-$family" route show default) ]]
 done
+stage=network-isolation-verified
+verify_firewall
 stage=cron-disabled
 sql "ALTER SYSTEM SET cron.launch_active_jobs = 'off'" >/dev/null
 [[ $(sql "SELECT pg_reload_conf()") == t ]]
@@ -160,6 +234,8 @@ printf '%s\n' "$final_ledger" | node "$root/scripts/ci/production-category-rehea
 [[ $(sql 'SHOW cron.launch_active_jobs') == off ]]
 
 stage=postflight
+verify_firewall
+for family in 4 6; do [[ -z $(sudo -n nsenter --target "$db_pid" --net -- ip "-$family" route show default) ]]; done
 ( printf 'BEGIN READ ONLY; SET LOCAL statement_timeout = %s;\n' "'20s'"
   cat "$root/releases/production/category-foundation-v1/postflight.readonly.sql"
   printf '\nCOMMIT;\n'
