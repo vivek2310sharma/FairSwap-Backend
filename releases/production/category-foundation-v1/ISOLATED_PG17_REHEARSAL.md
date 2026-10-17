@@ -39,9 +39,12 @@ table do not exist, and that the migration ledger is absent or empty. It then
 writes a task-scoped isolation receipt, copies and checksum-verifies exactly
 45 baseline migrations, and explicitly replays 45 followed by seven. The
 runner requires `cron.launch_active_jobs=off` with command-line provenance
-and zero `cron.job_run_details` records before and after both migration
-batches and regression tests. Supabase bootstrap-created `cron.job` schedules
-are left intact and inert; the runner neither executes nor deletes them.
+from PostgreSQL startup. Before the 45-file replay, both `cron.job` and
+`cron.job_run_details` must be **absent**, proving no FairSwap pg_cron
+migration was prematurely applied. After the baseline, both tables must
+exist; any schedules installed by reviewed migration SQL remain inert and
+the execution-history table must be empty after baseline, after candidates,
+and after Goods regression tests. No cron schedules are deleted or run.
 Cleanup removes only task-owned objects and reverses precisely those four
 firewall rules.
 
