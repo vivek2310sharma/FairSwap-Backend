@@ -228,9 +228,19 @@ verify_firewall
 # The command-line PG17 setting must exist before ANY historical FairSwap SQL
 # and must not rely on mutable, session-level or database-level overrides.
 admin_sql() { docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U supabase_admin -d postgres -c "$1"; }
-stage=cron-disable-verify
-[[ $(admin_sql "SELECT (setting='off' AND source='command line' AND NOT pending_restart)::text FROM pg_settings WHERE name='cron.launch_active_jobs'") == true ]]
+stage=cron-disable-role-check
+[[ $(admin_sql 'SELECT 1') == 1 ]]
+stage=cron-disable-effective-setting
+[[ $(admin_sql "SELECT current_setting('cron.launch_active_jobs')") == off ]]
+stage=cron-disable-settings-table
+[[ $(admin_sql "SELECT setting FROM pg_settings WHERE name='cron.launch_active_jobs'") == off ]]
+stage=cron-disable-source
+[[ $(admin_sql "SELECT source FROM pg_settings WHERE name='cron.launch_active_jobs'") == 'command line' ]]
+stage=cron-disable-pending-restart
+[[ $(admin_sql "SELECT pending_restart::text FROM pg_settings WHERE name='cron.launch_active_jobs'") == false ]]
+stage=cron-disable-postgres-client
 [[ $(sql 'SHOW cron.launch_active_jobs') == off ]]
+stage=cron-disable-no-jobs
 if [[ $(admin_sql "SELECT to_regclass('cron.job') IS NOT NULL") == t ]]; then
   [[ $(admin_sql 'SELECT count(*) FROM cron.job') == 0 ]]
 fi
