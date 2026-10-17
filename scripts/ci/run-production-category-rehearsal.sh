@@ -287,17 +287,25 @@ stage=cron-disable-postgres-client
 # startup. Prove there is no execution history; do not remove bootstrap jobs
 # or loosen the global launch-disable invariant to force a green rehearsal.
 assert_cron_inert() {
+  local expected_phase="$1" has_jobs has_history history_count
+  [[ $expected_phase == before-baseline || $expected_phase == after-baseline ]] || return 1
   [[ $(admin_sql "SELECT (setting='off' AND source='command line' AND NOT pending_restart)::text FROM pg_settings WHERE name='cron.launch_active_jobs'") == true ]] || return 1
   [[ $(sql 'SHOW cron.launch_active_jobs') == off ]] || return 1
-  local has_jobs has_history history_count
   has_jobs=$(admin_sql "SELECT to_regclass('cron.job') IS NOT NULL")
   has_history=$(admin_sql "SELECT to_regclass('cron.job_run_details') IS NOT NULL")
+  if [[ $expected_phase == before-baseline ]]; then
+    # Empty SQL bootstrap must NOT have installed FairSwap's pg_cron extension.
+    [[ $has_jobs == f && $has_history == f ]]
+    return
+  fi
+  # One of the 45 approved historical migrations installs pg_cron.
+  # Installed schedules may be inert; execution history must remain empty.
   [[ $has_jobs == t && $has_history == t ]] || return 1
   history_count=$(admin_sql 'SELECT count(*) FROM cron.job_run_details')
   [[ $history_count == 0 ]]
 }
 stage=cron-bootstrap-inert
-assert_cron_inert
+assert_cron_inert before-baseline
 
 # No FairSwap SQL is allowed into the CLI project's migration directory before
 # startup, enforced in the preparation module. Verify that nothing was applied
@@ -324,7 +332,7 @@ printf '%s\n' "$baseline_ledger" | node "$root/scripts/ci/production-category-re
 [[ $(sql "SELECT md5(prosrc) FROM pg_proc WHERE oid=to_regprocedure('app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)')") == 118d04445fdd9139d90decd2048945f1 ]]
 [[ $(sql "SELECT setting_value FROM public.app_system_settings WHERE setting_key='moderation_automation_enabled'") == false ]]
 stage=cron-after-baseline-inert
-assert_cron_inert
+assert_cron_inert after-baseline
 printf '45\n' >"$project/baseline-confirmed"
 
 stage=candidates-stage
@@ -335,7 +343,7 @@ cli_local migration up --local >"$task/candidates.log" 2>&1
 final_ledger=$(sql "SELECT string_agg(version, ',' ORDER BY version) FROM supabase_migrations.schema_migrations")
 printf '%s\n' "$final_ledger" | node "$root/scripts/ci/production-category-rehearsal.mjs" --check-ledger "$project/rehearsal.json" 52
 stage=cron-after-candidates-inert
-assert_cron_inert
+assert_cron_inert after-baseline
 
 stage=postflight
 verify_firewall
@@ -350,7 +358,7 @@ for family in 4 6; do [[ -z $(sudo -n nsenter --target "$db_pid" --net -- ip "-$
 [[ $(sql "SELECT md5(prosrc) FROM pg_proc WHERE oid=to_regprocedure('app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)')") == 118d04445fdd9139d90decd2048945f1 ]]
 
 stage=cron-before-regression-inert
-assert_cron_inert
+assert_cron_inert after-baseline
 stage=goods-regression
 mkdir -m 700 "$task/suites"
 for suite in admin_medium_operation.test.sql admin_reviewed_contract.test.sql \
@@ -396,6 +404,6 @@ assert.equal(tests,268);
 console.log('PASS: nine hidden-release security/regression suites, 268 assertions');
 NODE
 stage=cron-after-regressions-inert
-assert_cron_inert
+assert_cron_inert after-baseline
 stage=passed
 success=1
