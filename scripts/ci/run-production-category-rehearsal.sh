@@ -212,10 +212,20 @@ for family in 4 6; do
 done
 stage=network-isolation-verified
 verify_firewall
-stage=cron-disabled
-sql "ALTER SYSTEM SET cron.launch_active_jobs = 'off'" >/dev/null
-[[ $(sql "SELECT pg_reload_conf()") == t ]]
+# The ordinary 'postgres' role is not guaranteed to be superuser in Supabase.
+# Use the local bootstrap-only supabase_admin role to set a server-wide GUC;
+# SIGHUP reload takes effect before any FairSwap migration or cron job exists.
+admin_sql() { docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U supabase_admin -d postgres -c "$1"; }
+stage=cron-disable-apply
+admin_sql "ALTER SYSTEM SET cron.launch_active_jobs = 'off'" >/dev/null
+stage=cron-disable-reload
+[[ $(admin_sql 'SELECT pg_reload_conf()') == t ]]
+stage=cron-disable-verify
+[[ $(admin_sql "SELECT (setting='off' AND source IN ('configuration file','command line') AND NOT pending_restart)::text FROM pg_settings WHERE name='cron.launch_active_jobs'") == true ]]
 [[ $(sql 'SHOW cron.launch_active_jobs') == off ]]
+if [[ $(admin_sql "SELECT to_regclass('cron.job') IS NOT NULL") == t ]]; then
+  [[ $(admin_sql 'SELECT count(*) FROM cron.job') == 0 ]]
+fi
 
 stage=baseline-apply
 cli_local migration up --local >"$task/baseline.log" 2>&1
