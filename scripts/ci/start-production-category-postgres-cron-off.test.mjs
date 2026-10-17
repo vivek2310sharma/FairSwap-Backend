@@ -32,5 +32,5 @@ test("fails closed for unexpected database identity or changed bootstrap", () =>
   assert.throws(() => rewriteOwnedPostgresLaunch(args("exec postgres -D /etc/postgresql\n"), name));
   assert.throws(() => rewriteOwnedPostgresLaunch(args().map(x => x === image ? "postgres:latest" : x), name));
   assert.throws(() => rewriteOwnedPostgresLaunch(args().filter(x => !x.includes("com.docker.compose.project=")), name));
-  assert.throws(() => rewriteOwnedPostgresLaunch(["rm", name], name));
+  assert.throws(() => rewriteOwnedPostgresLaunch(["rm", "--name", name], name));
 });
