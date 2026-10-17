@@ -165,10 +165,21 @@ verify_firewall() {
 }
 stage=network-firewall-verify
 verify_firewall
-# Protected task-only bridge permits host-local CLI bootstrap. Firewall rules
-# block egress and host services; all default routes are removed before SQL.
+# Protected task-only bridge permits the local Supabase CLI bootstrap.
+# The approved CLI Docker-create script must be rewritten with a server-wide
+# cron -c option before PostgreSQL starts. Any changed CLI shape fails closed.
+stage=database-bootstrap-adapter
+real_docker=$(command -v docker)
+[[ $real_docker == /* && $real_docker != "$task/bin/"* ]]
+export FAIRSWAP_CATEGORY_REHEARSAL_TASK="$task"
+export FAIRSWAP_EXPECTED_PG_IMAGE_ID="$pg_id"
+printf '#!/usr/bin/env bash\nexec node %q %q %q %q %q "$@"\n' \
+  "$root/scripts/ci/start-production-category-postgres-cron-off.mjs" \
+  "$real_docker" "$db" "$task/startup-override.json" "$pg_id" \
+  >"$task/bin/docker"
+chmod 700 "$task/bin/docker"
 stage=database-bootstrap-start
-if ! cli_local db start >"$task/bootstrap.log" 2>&1; then
+if ! PATH="$task/bin:$PATH" cli_local db start >"$task/bootstrap.log" 2>&1; then
   # Only a fixed, allowlisted category escapes CI. Never upload bootstrap output.
   if grep -Eiq 'toomanyrequests|too many requests|rate[ -]?limit|429' "$task/bootstrap.log"; then
     stage=database-bootstrap-registry-rate-limit
@@ -183,6 +194,8 @@ if ! cli_local db start >"$task/bootstrap.log" 2>&1; then
   exit 1
 fi
 started=1
+stage=database-bootstrap-adapter-confirm
+[[ $(cat -- "$task/startup-override.json") == '{"serverCronOff":true}' ]]
 stage=database-bootstrap-network-check
 [[ $(docker inspect -f '{{range $n, $v := .NetworkSettings.Networks}}{{$n}}{{end}}' "$db") == "$network" ]]
 published=$(docker inspect -f '{{json .NetworkSettings.Ports}}' "$db")
@@ -212,16 +225,11 @@ for family in 4 6; do
 done
 stage=network-isolation-verified
 verify_firewall
-# The ordinary 'postgres' role is not guaranteed to be superuser in Supabase.
-# Use the local bootstrap-only supabase_admin role to set a server-wide GUC;
-# SIGHUP reload takes effect before any FairSwap migration or cron job exists.
+# The command-line PG17 setting must exist before ANY historical FairSwap SQL
+# and must not rely on mutable, session-level or database-level overrides.
 admin_sql() { docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U supabase_admin -d postgres -c "$1"; }
-stage=cron-disable-apply
-admin_sql "ALTER SYSTEM SET cron.launch_active_jobs = 'off'" >/dev/null
-stage=cron-disable-reload
-[[ $(admin_sql 'SELECT pg_reload_conf()') == t ]]
 stage=cron-disable-verify
-[[ $(admin_sql "SELECT (setting='off' AND source IN ('configuration file','command line') AND NOT pending_restart)::text FROM pg_settings WHERE name='cron.launch_active_jobs'") == true ]]
+[[ $(admin_sql "SELECT (setting='off' AND source='command line' AND NOT pending_restart)::text FROM pg_settings WHERE name='cron.launch_active_jobs'") == true ]]
 [[ $(sql 'SHOW cron.launch_active_jobs') == off ]]
 if [[ $(admin_sql "SELECT to_regclass('cron.job') IS NOT NULL") == t ]]; then
   [[ $(admin_sql 'SELECT count(*) FROM cron.job') == 0 ]]
