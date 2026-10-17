@@ -41,6 +41,8 @@ from `ghcr.io/supabase/postgres`. Supabase publishes the same tag and
 digest through GHCR and its public ECR repository; the source switch avoids
 an intermittent registry throttle without changing the approved image bytes.
 
+Bootstrap image sources are also checksum-pinned: Supabase Auth v2.196.0, Storage v1.72.1 and Realtime v2.130.0 are fetched by their reviewed OCI digest from the official Supabase Docker Hub repository and retagged only to the CLI's matching ECR names. Image acquisition uses bounded rate-limit-only retries; any unresolved registry failure is a blocked rehearsal, not a reason to loosen database isolation.
+
 After migration, the runner applies the checked-in read-only category
 postflight, checks unchanged Goods finalizer hash, enabled category guards,
 private context RLS and anonymous grants, and runs the nine Goods-oriented
