@@ -148,6 +148,57 @@ export function stageCandidates(workDir, cliPath, root = ROOT) {
   fail(readdirSync(migrationDir).filter(exactSql).length === 52, "Rehearsal inventory is not 52 migrations");
   return stage;
 }
+// Forward filenames were minted once by Supabase CLI v2.117.0 in
+// successful evidence run 39068727798, then pinned for release review.
+// Do not regenerate per CI run or place duplicate SQL into the 58-source tree.
+export function approvedPinnedForwardPlan(root = ROOT) {
+  const manifest = approvedPlan(root);
+  const filepath = join(root, "releases/production/category-foundation-v1/forward-migration-plan.json");
+  const pin = readJson(filepath);
+  fail(pin.schemaVersion === 1 && pin.releaseId === expectedRelease &&
+    pin.status === "PINNED_FOR_REVIEW_NOT_APPROVED_FOR_EXECUTION", "Unapproved pinned release plan");
+  fail(pin.targetProjectRef === manifest.projectRef && pin.postgresVersion === "17.6" &&
+    pin.baselineMigrationCount === 45 && pin.baselineFinalVersion === "20261013235311", "Pinned Production target drift");
+  fail(pin.generatedByCliVersion === "2.117.0" &&
+    pin.generationEvidence?.githubRunId === 39068727798 &&
+    pin.generationEvidence?.artifactId === 12114173244 &&
+    pin.generationEvidence?.forwardProposalSha256 === "1ca981617d5aefd9d9c272a760d7c67fc683d1c93c072ccfa5fc19fb82f69d87", "Pinned CLI generation evidence mismatch");
+  fail(Array.isArray(pin.forwardMigrations) && pin.forwardMigrations.length === 7, "Pinned candidate count mismatch");
+  let last = pin.baselineFinalVersion;
+  for (const [i, entry] of pin.forwardMigrations.entries()) {
+    const approved = manifest.candidates[i];
+    const prefix = String(i + 1).padStart(2, "0");
+    const suffix = basename(approved.path, ".sql").replace(/^\d{14}_/, "");
+    const expectedFile = entry.version + "_category_foundation_" + prefix + "_" + suffix + ".sql";
+    fail(/^\d{14}$/.test(entry.version) && entry.version > last, "Pinned forward timestamp is not increasing");
+    fail(entry.file === expectedFile && exactSql(entry.file), "Pinned forward migration filename mismatch");
+    fail(entry.source === approved.path && entry.sha256 === approved.sha256, "Pinned migration source/hash mismatch");
+    fail(hash(readFileSync(join(root, entry.source))) === entry.sha256, "Pinned SQL source bytes drift");
+    last = entry.version;
+  }
+  return pin;
+}
+export function stagePinnedCandidates(workDir, root = ROOT) {
+  const dir = mustBeLocal(workDir);
+  const marker = join(dir, "baseline-confirmed");
+  fail(readFileSync(marker, "utf8").trim() === "45", "45-migration baseline has not been verified");
+  const stagePath = join(dir, "rehearsal.json");
+  const stage = readJson(stagePath);
+  fail(stage.candidates.length === 0 && stage.baselineVersions.length === 45, "Unexpected candidate staging state");
+  const migrationDir = join(dir, "supabase/migrations");
+  fail(readdirSync(migrationDir).filter(exactSql).length === 45, "Unexpected baseline staging inventory");
+  const plan = approvedPinnedForwardPlan(root);
+  for (const entry of plan.forwardMigrations) {
+    const dest = join(migrationDir, entry.file);
+    fail(!existsSync(dest), "Pinned migration file already exists");
+    copyFileSync(join(root, entry.source), dest);
+    fail(hash(readFileSync(dest)) === entry.sha256, "Pinned SQL copy mismatch");
+    stage.candidates.push({ source: entry.source, file: entry.file, version: entry.version, sha256: entry.sha256 });
+  }
+  fail(readdirSync(migrationDir).filter(exactSql).length === 52, "Incomplete pinned 52-migration inventory");
+  writeFileSync(stagePath, JSON.stringify(stage, null, 2) + "\n", { mode: 0o600 });
+  return stage;
+}
 export function verifyPrepared(workDir, root = ROOT) {
   const dir = mustBeLocal(workDir);
   const stage = readJson(join(dir, "rehearsal.json"));
@@ -175,6 +226,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       checkLedger(readFileSync(0, "utf8"), args[0], Number(args[1])); console.log("PASS: exact ledger", args[1]);
     } else if (mode === "--stage" && args.length === 2) {
       const p = stageCandidates(args[0], args[1]); console.log("PASS: 7 forward SQL copies created by Supabase CLI", p.candidates.length);
+    } else if (mode === "--stage-pinned" && args.length === 1) {
+      const stage = stagePinnedCandidates(args[0]); console.log("PASS: staged 7 pinned forward versions with immutable source checksums", stage.candidates.length);
+    } else if (mode === "--verify-pinned" && args.length === 0) {
+      const pin = approvedPinnedForwardPlan(); console.log("PASS: pinned 7 CLI-generated, checksum-matched forward migration versions", pin.forwardMigrations.length);
     } else if (mode === "--verify-staged" && args.length === 1) {
       verifyPrepared(args[0]); console.log("PASS: 52 exact staged migration source hashes");
     } else throw new Error("Unsupported arguments");
