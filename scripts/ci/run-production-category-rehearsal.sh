@@ -109,12 +109,28 @@ docker network create --internal --driver bridge --label "com.supabase.cli.proje
 [[ $(docker network inspect -f '{{.Internal}}' "$network") == true ]]
 # Bootstrap before historical SQL. Database is attached only to a Docker
 # internal network, without a routable egress gateway or hosted credentials.
-stage=database-bootstrap
-cli_local db start >"$task/bootstrap.log" 2>&1
+stage=database-bootstrap-start
+if ! cli_local db start >"$task/bootstrap.log" 2>&1; then
+  # Only a fixed, allowlisted category escapes CI. Never upload bootstrap output.
+  if grep -Eiq 'toomanyrequests|too many requests|rate[ -]?limit|429' "$task/bootstrap.log"; then
+    stage=database-bootstrap-registry-rate-limit
+  elif grep -Eiq 'no route to host|network is unreachable|network.*(not found|failed)|connection refused|failed to connect|timeout|timed out' "$task/bootstrap.log"; then
+    stage=database-bootstrap-network-or-timeout
+  elif grep -Eiq 'manifest unknown|image.*not found|pull access denied|failed to pull' "$task/bootstrap.log"; then
+    stage=database-bootstrap-image
+  elif grep -Eiq 'invalid.*config|unsupported.*config|invalid argument|unrecognized option' "$task/bootstrap.log"; then
+    stage=database-bootstrap-config
+  else stage=database-bootstrap-unclassified
+  fi
+  exit 1
+fi
 started=1
+stage=database-bootstrap-network-check
 [[ $(docker inspect -f '{{range $n, $v := .NetworkSettings.Networks}}{{$n}}{{end}}' "$db") == "$network" ]]
+stage=database-bootstrap-version-check
 [[ $(sql 'SHOW server_version_num') == 170006 ]]
 [[ $(sql "SELECT split_part(current_setting('server_version'), ' ', 1)") == 17.6 ]]
+stage=database-bootstrap-namespace-check
 db_pid=$(docker inspect -f '{{.State.Pid}}' "$db")
 [[ $db_pid =~ ^[1-9][0-9]*$ ]]
 for family in 4 6; do
