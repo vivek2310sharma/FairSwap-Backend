@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
-import { approvedPlan, prepare, stageBaseline, checkLedger, verifyPrepared, stageCandidates } from "./production-category-rehearsal.mjs";
+import { approvedPlan, approvedPinnedForwardPlan, prepare, stageBaseline, stagePinnedCandidates, checkLedger, verifyPrepared, stageCandidates } from "./production-category-rehearsal.mjs";
 
 test("rehearsal source is exactly the 45 Production versions plus seven pinned candidates", () => {
   const plan = approvedPlan();
@@ -14,6 +14,11 @@ test("rehearsal source is exactly the 45 Production versions plus seven pinned c
   const baselineVersions = new Set(plan.baseline.map(item => item.version));
   assert.equal(baselineVersions.size, 45);
   for (const row of plan.candidates) assert.equal(baselineVersions.has(basename(row.path).slice(0, 14)), false);
+  const pinned = approvedPinnedForwardPlan();
+  assert.equal(pinned.forwardMigrations.length, 7);
+  assert.equal(pinned.generationEvidence.githubRunId, 39068727798);
+  assert.equal(pinned.forwardMigrations[0].version, "20261017205755");
+  assert.equal(pinned.forwardMigrations[6].version, "20261017205807");
 });
 
 test("empty project is staged only in a task-scoped isolated working directory", () => {
@@ -41,6 +46,13 @@ test("empty project is staged only in a task-scoped isolated working directory",
     assert.throws(() => stageCandidates(target, "/bin/false"), /baseline-confirmed/);
     writeFileSync(join(target, "baseline-confirmed"), "45\n");
     assert.throws(() => stageCandidates(target, "/bin/false"), /CLI failed/);
+    const applied = stagePinnedCandidates(target);
+    assert.equal(applied.candidates.length, 7);
+    assert.equal(readdirSync(join(target, "supabase/migrations")).filter(x => x.endsWith(".sql")).length, 52);
+    assert.equal(verifyPrepared(target), true);
+    const finalLedger = [...applied.baselineVersions, ...applied.candidates.map(x => x.version)].sort().join(",") + "\n";
+    assert.equal(checkLedger(finalLedger, join(target, "rehearsal.json"), 52), true);
+    assert.throws(() => stagePinnedCandidates(target), /Unexpected candidate staging state/);
   } finally {
     rmSync(root, { recursive: true, force: true });
     if (previous === undefined) delete process.env.FAIRSWAP_CATEGORY_REHEARSAL_ONLY;
