@@ -41,7 +41,6 @@ jobs:
           test "$(node -p process.versions.node)" = 24.15.0
           node scripts/ci/verify-baseline.mjs
           bash -n scripts/stage3/run-local-db.sh
-          node --test scripts/stage3/verification.test.mjs
       - name: Verify the unchanged unit foundation
         timeout-minutes: 7
         run: |
@@ -54,18 +53,129 @@ jobs:
             --outputFile="$RUNNER_TEMP/stage3-unit.json"
           node scripts/ci/verify-unit-results.mjs "$RUNNER_TEMP/stage3-unit.json" \
             --summary "$RUNNER_TEMP/stage3-unit-summary.json"
-      - name: Rehearse isolated PG17 baseline without compatibility corrections
+      - name: Rehearse one reviewed finalizer overlay; compatibility remains unapproved
         id: database
         timeout-minutes: 23
+        env:
+          REVIEWED_OVERLAY_HASHES: '{"scripts/stage3/finalizer-rehearsal-source.json":"5298bef9e55910ae75a68ad3f6bc0a702ee4991ff49376ac0f46f92af21c806f","scripts/stage3/finalizer-rehearsal.test.mjs":"cc8cda0ceac82db9fd2b00972d2cde12db307f3cf8eed11c813757625a80259f","scripts/stage3/prepare-finalizer-rehearsal.mjs":"f539252d99bdc7344e562eb39134c455e08074d10d46992b4b2b633af45d203d","scripts/stage3/step1q-finalizer.proposed.sql":"fd050dadb1cd50fa3810ef9c0423c48e611f5e08b7ae3fbc989cedff411c6bba","scripts/stage3/verify-finalizer-rehearsal.mjs":"2a3e131650bd6685aaf470b813c59bc2a3dfd643d92f832eca18d8bbcf591c25","tests/stage3/step1q-finalizer-additional.proposed.test.sql":"caaf6cc19cba2c73d54ed835706545fae9d1b7499b0fbb55b808eedeb3133357"}'
         run: |
+          approved=6e0ca44dfb5416661c780cb831617f5c3196c2a1
+          evidence="$RUNNER_TEMP/stage3-pg17-evidence"
+          owner=$(mktemp -d "$RUNNER_TEMP/step1s-source.XXXXXXXX")
+          source="$owner/source"
+          prepared=''
+          cleanup_sources() {
+            rc=$?
+            trap - EXIT
+            set +e
+            cleanup_ok=true
+            if [[ -n "$prepared" ]]; then
+              node "$source/scripts/stage3/prepare-finalizer-rehearsal.mjs" --remove-prepared "$prepared" || cleanup_ok=false
+            fi
+            if [[ -d "$source" ]]; then
+              SOURCE="$source" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,existsSync,unlinkSync,lstatSync} from 'node:fs';
+          import {createHash} from 'node:crypto';
+          const hashes=JSON.parse(process.env.REVIEWED_OVERLAY_HASHES);
+          for(const [file,hash] of Object.entries(hashes)) {
+            const p=process.env.SOURCE+'/'+file;
+            if(!existsSync(p))continue;
+            assert.ok(lstatSync(p).isFile()&&!lstatSync(p).isSymbolicLink());
+            assert.equal(createHash('sha256').update(readFileSync(p)).digest('hex'),hash);
+            unlinkSync(p);
+          }
+          NODE
+              [[ $? == 0 ]] || cleanup_ok=false
+              git -C "$source" diff --exit-code --quiet || cleanup_ok=false
+              git worktree remove "$source" || cleanup_ok=false
+            fi
+            rmdir "$owner" || cleanup_ok=false
+            if [[ "$cleanup_ok" != true ]]; then
+              node scripts/stage3/verify-finalizer-rehearsal.mjs --cleanup-failed "$evidence" cleanup unclassified
+              exit 1
+            fi
+            echo 'source-cleanup=true' >> "$GITHUB_OUTPUT"
+            exit "$rc"
+          }
+          trap cleanup_sources EXIT
+          git merge-base --is-ancestor "$approved" HEAD
+          APPROVED="$approved" SOURCE="$source" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,lstatSync} from 'node:fs';
+          import {createHash} from 'node:crypto';
+          import {execFileSync} from 'node:child_process';
+          const hashes=JSON.parse(process.env.REVIEWED_OVERLAY_HASHES);
+          const workflow='.github/workflows/stage3-pg17-compat.yml';
+          const expected=[...Object.keys(hashes).map(p=>'A\t'+p),'M\t'+workflow].sort();
+          const actual=execFileSync('git',['diff','--name-status',process.env.APPROVED,'HEAD'],{encoding:'utf8'}).trim().split('\n').sort();
+          assert.deepEqual(actual,expected);
+          for(const [p,h] of Object.entries(hashes)) {
+            assert.ok(lstatSync(p).isFile()&&!lstatSync(p).isSymbolicLink());
+            assert.equal(createHash('sha256').update(readFileSync(p)).digest('hex'),h);
+          }
+          NODE
+          git -c core.autocrlf=false worktree add --detach "$source" "$approved"
+          test -z "$(git -C "$source" status --porcelain)"
+          test "$(git -C "$source" rev-parse HEAD)" = "$approved"
+          SOURCE="$source" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+          import path from 'node:path';
+          import {createHash} from 'node:crypto';
+          const hashes=JSON.parse(process.env.REVIEWED_OVERLAY_HASHES);
+          for(const [p,h] of Object.entries(hashes)) {
+            const bytes=readFileSync(p);
+            assert.equal(createHash('sha256').update(bytes).digest('hex'),h);
+            const target=path.join(process.env.SOURCE,p);
+            mkdirSync(path.dirname(target),{recursive:true});
+            writeFileSync(target,bytes,{flag:'wx'});
+            assert.equal(createHash('sha256').update(readFileSync(target)).digest('hex'),h);
+          }
+          const {verifySource}=await import('file://'+process.env.SOURCE+'/scripts/stage3/prepare-finalizer-rehearsal.mjs');
+          verifySource(process.env.SOURCE);
+          NODE
+          node --test --test-concurrency=1 "$source/scripts/stage3/verification.test.mjs" \
+            "$source/scripts/stage3/finalizer-rehearsal.test.mjs"
+          prepared=$(node "$source/scripts/stage3/prepare-finalizer-rehearsal.mjs" --prepare)
           timeout --signal=TERM --kill-after=30s 20m \
-            bash scripts/stage3/run-local-db.sh "$RUNNER_TEMP/stage3-pg17-evidence"
-      - name: Require complete sanitized evidence
+            bash "$prepared/scripts/stage3/run-local-db.sh" "$evidence"
+      - name: Validate bounded diagnostic evidence; deny final compatibility acceptance
+        id: evidence
         if: ${{ !cancelled() && steps.database.outcome != 'skipped' }}
         timeout-minutes: 1
-        run: node scripts/stage3/verify-db-results.mjs --verify "$RUNNER_TEMP/stage3-pg17-evidence"
+        env:
+          SOURCE_CLEANUP: ${{ steps.database.outputs.source-cleanup }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {lstatSync,readFileSync,appendFileSync} from 'node:fs';
+          import {verifyChecksums,invalidate} from './scripts/stage3/verify-finalizer-rehearsal.mjs';
+          const dir=process.env.RUNNER_TEMP+'/stage3-pg17-evidence';
+          if(process.env.SOURCE_CLEANUP!=='true') {
+            invalidate(dir,{stage:'cleanup',category:'unclassified'});
+          }
+          for(const file of ['result.json','suite-results.json','SHA256SUMS']) {
+            const s=lstatSync(dir+'/'+file);
+            assert.ok(s.isFile()&&!s.isSymbolicLink()&&s.size>0&&s.size<=262144);
+          }
+          verifyChecksums(dir);
+          const r=JSON.parse(readFileSync(dir+'/result.json','utf8'));
+          const suites=JSON.parse(readFileSync(dir+'/suite-results.json','utf8'));
+          assert.equal(r.schemaVersion,1);
+          assert.equal(r.kind,'STEP1R_DIAGNOSTIC_ONLY');
+          assert.ok(Array.isArray(suites)&&suites.length<=11);
+          assert.equal(r.success,false);
+          assert.equal(r.compatibilityAccepted,false);
+          assert.equal(r.extensionApproval,false);
+          if(r.cleanup!=='FAILED')assert.equal(r.concurrencyVerified,false);
+          else assert.equal(r.executionVerified,false);
+          appendFileSync(process.env.GITHUB_OUTPUT,'safe=true\n');
+          console.log('Diagnostic execution verified:',r.executionVerified===true);
+          throw new Error('PG17 compatibility and extension approval remain false');
+          NODE
       - name: Preserve allowlisted evidence even when compatibility fails
-        if: ${{ always() && steps.database.outcome != 'skipped' }}
+        if: ${{ always() && steps.evidence.outputs.safe == 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2; existing verified pin
         timeout-minutes: 2
         with:
