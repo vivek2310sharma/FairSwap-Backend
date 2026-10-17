@@ -40,7 +40,7 @@ an intermittent registry throttle without changing the approved image bytes.
 After migration, the runner applies the checked-in read-only category
 postflight, checks unchanged Goods finalizer hash, enabled category guards,
 private context RLS and anonymous grants, and runs the nine Goods-oriented
-pgTAP suites. Expected total: 270 assertions. It retains no synthetic listing
+pgTAP suites. Expected total: 268 assertions in the hidden Production release (the historical Test baseline has 270 when its two enabled-family-only checks run). It retains no synthetic listing
 data and only uploads a minimal sanitized result, plus checksum.
 
 ## What constitutes a PASS
@@ -53,7 +53,7 @@ data and only uploads a minimal sanitized result, plus checksum.
 - 52-migration read-only postflight PASS: inactive new categories, disabled new
   contract assignments, three guard triggers, context RLS/ACL protections,
   zero experimental Active listings and unchanged Goods moderation finalizer.
-- Nine regression suites, 270 assertions, zero failures.
+- Nine regression suites, 268 assertions for inactive experimental families, zero failures.
 - Container, volume and network removal verified; sanitized `success=true`.
 
 If the image registry rate-limits the runner, Docker cannot prove firewall and network-namespace
