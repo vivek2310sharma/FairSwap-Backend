@@ -22,10 +22,14 @@ Production release change, review dependency ordering, and re-run full acceptanc
 The CI workflow accepts pull requests only from the exact dedicated rehearsal
 branch into `main`; it checks out the source without persistent GitHub token
 credentials and does not receive any Supabase secrets or hosted database
-connection. The runner creates a fresh local Supabase PG17 database on an
-internal-only Docker network, verifies no IPv4/IPv6 default routes in its
-namespace, disables cron launches before introducing FairSwap schema, verifies
-the real PostgreSQL version, and then replays 45 followed by seven.
+connection. The runner creates a fresh local Supabase PG17 database on a unique
+loopback-bound Docker bridge. Before bootstrap, it installs four exact per-task
+IPv4/IPv6 firewall rules in the native runner to block database-container
+egress and new connections to host services; after bootstrap it verifies the
+namespace identity and removes IPv4/IPv6 default routes **before any FairSwap
+SQL is introduced**. The runner verifies PostgreSQL 17.6, disables cron
+launches before migrations, and then replays 45 followed by seven. Cleanup
+removes only the task-owned objects and reverses precisely those four rules.
 
 After migration, the runner applies the checked-in read-only category
 postflight, checks unchanged Goods finalizer hash, enabled category guards,
@@ -46,8 +50,8 @@ data and only uploads a minimal sanitized result, plus checksum.
 - Nine regression suites, 270 assertions, zero failures.
 - Container, volume and network removal verified; sanitized `success=true`.
 
-If the image registry rate-limits the runner, Docker cannot prove internal
-network isolation, the CLI cannot bootstrap PostgreSQL 17.6, the source
+If the image registry rate-limits the runner, Docker cannot prove firewall and network-namespace
+isolation, the CLI cannot bootstrap PostgreSQL 17.6, the source
 reproduction drifts, or any SQL/test check fails, **the outcome is BLOCKED/FAIL,
 not a rehearsal pass**. Previous Stage 3 evidence was blocked at a registry
 rate-limit before PostgreSQL started and is not being reused here.
