@@ -81,7 +81,7 @@ sql() { docker exec "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgre
 stage=cli-download
 curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
   "https://github.com/supabase/cli/releases/download/v2.117.0/supabase_linux_amd64.tar.gz" -o "$task/cli.tar.gz"
-echo "69c05f85b9e47ee706d30f1a6ca8a526b4e337bfd12c7ef522d24  $task/cli.tar.gz" | sha256sum -c - >/dev/null
+echo "69c05f85b9e47ee706d30f1a6ca8a526b4e337bfd12c7ef1ef522d24e7280d24  $task/cli.tar.gz" | sha256sum -c - >/dev/null
 tar -xzf "$task/cli.tar.gz" -C "$task/bin" supabase
 chmod 700 "$cli"
 [[ $(cli_local --version) == 2.117.0 ]]
