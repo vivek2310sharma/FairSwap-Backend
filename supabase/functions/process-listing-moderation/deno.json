@@ -1,0 +1,10 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.116.0",
+    "zod": "npm:zod@3.24.2",
+    "../_shared/listing-moderation-worker": "../_shared/listing-moderation-worker.ts",
+    "../../../src/lib/moderation/checker": "../../../src/lib/moderation/checker.ts",
+    "../../../src/lib/moderation/contract": "../../../src/lib/moderation/contract.ts",
+    "../../../src/lib/moderation/rules": "../../../src/lib/moderation/rules.ts"
+  }
+}

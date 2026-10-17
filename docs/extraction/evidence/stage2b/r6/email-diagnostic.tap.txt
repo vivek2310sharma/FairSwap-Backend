@@ -1,0 +1,18 @@
+Connecting to local database...
+psql:<DISPOSABLE_PROJECT>/supabase/tests/schema_email_outbox.test.sql:59: ERROR:  function has_constraint(unknown, unknown, unknown, unknown) does not exist
+LINE 1: SELECT has_constraint('public', 'email_outbox', 'uq_email_ou...
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+<DISPOSABLE_PROJECT>/supabase/tests/schema_email_outbox.test.sql .. 
+Dubious, test returned 3 (wstat 768, 0x300)
+Failed 3/34 subtests 
+
+Test Summary Report
+-------------------
+<DISPOSABLE_PROJECT>/supabase/tests/schema_email_outbox.test.sql (Wstat: 768 (exited 3) Tests: 31 Failed: 0)
+  Non-zero exit status: 3
+  Parse errors: Bad plan.  You planned 34 tests but ran 31.
+Files=1, Tests=31,  0 wallclock secs ( 0.02 usr +  0.00 sys =  0.02 CPU)
+Result: FAIL
+error running container: exit 1
+Try rerunning the command with --debug to troubleshoot the error.

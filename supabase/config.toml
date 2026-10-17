@@ -1,0 +1,81 @@
+# supabase/config.toml - Milestone 1.2 Local Configuration
+project_id = "fairswap-local"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+enabled = false
+
+[studio]
+enabled = false
+
+[realtime]
+enabled = true
+
+[storage]
+enabled = true
+
+[analytics]
+enabled = false
+
+[edge_runtime]
+enabled = false
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = [
+  "http://127.0.0.1:3000/auth/callback",
+  "http://localhost:3000/auth/callback",
+  "http://127.0.0.1:3001/auth/callback",
+  "http://localhost:3001/auth/callback"
+]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+double_confirm_changes = true
+otp_length = 6
+otp_expiry = 600
+max_frequency = "1m"
+
+[auth.email.template.confirmation]
+subject = "Confirm your FairSwap email address"
+content_path = "./supabase/templates/confirm_email.html"
+
+[auth.email.template.recovery]
+subject = "Reset your FairSwap Password"
+content_path = "./supabase/templates/recovery_email.html"
+
+[auth.email.template.magic_link]
+subject = "Your FairSwap sign-in code"
+content_path = "./supabase/templates/magic_link.html"
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[inbucket]
+enabled = true
+port = 54324
+smtp_port = 54325
+pop3_port = 54326
+
+[functions.process-email-outbox]
+verify_jwt = false
+
+[functions.process-listing-moderation]
+verify_jwt = false
+

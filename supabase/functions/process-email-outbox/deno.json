@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.116.0",
+    "zod": "npm:zod@3.24.2",
+    "../_shared/email-outbox-worker": "../_shared/email-outbox-worker.ts"
+  }
+}
