@@ -1,0 +1,61 @@
+{
+  "format": 1,
+  "project": "kriuhwppxgxsyyrbjsau",
+  "source_branch": "main",
+  "source_commit": "1ee5894edef7cd194f3710e904bd84fb1fd221c2",
+  "mode": "draft_schema_cold_foundation_candidate",
+  "published": false,
+  "allow_automatic_execution": false,
+  "required_gates": [
+    "Production backup and successful recovery drill verified by owner",
+    "Source CI/PG17 profile verified on identical selected release plan",
+    "No unexpected new category activation or RLS/SECURITY DEFINER regression",
+    "Web Production experimental family flags remain absent",
+    "No Test-only migration/functions/worker are copied"
+  ],
+  "selected_migrations": [
+    {
+      "path": "supabase/migrations/20261009201151_two_wheeler_draft_v1.sql",
+      "sha256": "dfed0a91e1f24c4c8f7c3a36d97a31ca331a9858b50f48b2829516aade0dcbf5"
+    },
+    {
+      "path": "supabase/migrations/20261009202059_two_wheeler_catalogue_lookup.sql",
+      "sha256": "2afca3f02c7535328ee6ee286d2a1f4b3df9ef51a1923b9e6a4c8f556b1a8c55"
+    },
+    {
+      "path": "supabase/migrations/20261009203141_two_wheeler_unresolved_mapping_correction.sql",
+      "sha256": "2f5cb60bd98a982410eb4f71bec0f991e1d91bf1ee1949749b6fe0c3059f7b3b"
+    },
+    {
+      "path": "supabase/migrations/20261009215128_two_wheeler_reference_errors.sql",
+      "sha256": "2d186ef8a24935e8d5a27f90e8a424d426a428a992d62991b60d518329c84a2a"
+    },
+    {
+      "path": "supabase/migrations/20261010064518_car_draft_v1.sql",
+      "sha256": "dbfdf55304cd26c161cb792f487ce4f5034985f10094d2fe761aee50914c88ca"
+    },
+    {
+      "path": "supabase/migrations/20261010084523_property_rental_draft_v1.sql",
+      "sha256": "c0dd1b704d33ba366e077fcde432e7f5faaed240b24ef84b830125e8e1855497"
+    },
+    {
+      "path": "supabase/migrations/20261010091239_property_scoped_draft_lock.sql",
+      "sha256": "ecd0a1746facbc485c2437a98e5974e4640581e6a9ceee71561fd11052b65aa8"
+    }
+  ],
+  "excluded_source_migrations": [
+    "20261009203412_enable_test_two_wheeler_draft_categories.sql",
+    "20261010064519_enable_test_car_draft_categories.sql",
+    "20261010084524_enable_test_property_rental_drafts.sql",
+    "20261011092234_test_family_submission_v1.sql",
+    "20261011095100_enable_test_family_submission_v1.sql",
+    "20261012120000_post_ad_current_base_compatibility.sql"
+  ],
+  "excluded_hosted_test_versions": [
+    "20261010214201",
+    "20261017125456",
+    "20261017172840"
+  ],
+  "existing_prod_baseline_count": 45,
+  "existing_stage_migration_count": 61
+}

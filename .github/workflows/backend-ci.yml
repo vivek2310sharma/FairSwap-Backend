@@ -60,6 +60,10 @@ jobs:
         timeout-minutes: 1
         run: node scripts/ci/verify-baseline.mjs
 
+      - name: Verify cold Production candidate source scope (offline only)
+        timeout-minutes: 1
+        run: node scripts/release/verify-experimental-prod-manifest.mjs
+
       - name: Typecheck
         timeout-minutes: 2
         run: corepack pnpm typecheck
