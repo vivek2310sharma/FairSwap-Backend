@@ -276,14 +276,30 @@ import {readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 const [root,dir]=process.argv.slice(2);
 const {requiredSuites,parseSuiteLog}=await import(pathToFileURL(root+'/scripts/ci/verify-db-results.mjs'));
+// The historical 58-migration Test fixture has two additional dynamic assertions
+// for ENABLED Vehicles/Property categories. This 52-migration Production-hidden
+// schema must have none; the assertions do not execute because no such category
+// is active or new-listing-enabled. All remaining assertions are mandatory.
+const releaseExpected={...requiredSuites,
+  'listings_insert_category_eligibility.test.sql':26};
 let tests=0;
-for(const [file,expected] of Object.entries(requiredSuites)) {
-  const parsed=parseSuiteLog(file,readFileSync(dir+'/'+file+'.log','utf8'),0);
-  assert.equal(parsed.assertions,expected);
-  tests+=parsed.assertions;
+for(const [file,expected] of Object.entries(releaseExpected)) {
+  const log=readFileSync(dir+'/'+file+'.log','utf8');
+  if(expected===requiredSuites[file]) {
+    assert.equal(parseSuiteLog(file,log,0).assertions,expected);
+  } else {
+    assert.ok(log.includes('/supabase/tests/'+file), 'Unexpected suite log identity');
+    assert.ok(!/(?:^|\\n)\\s*(?:not ok\\b|Bail out!|Dubious|Failed\\b|Parse errors:)|\\bERROR:|Result:\\s*FAIL/i.test(log));
+    const counts=[...log.matchAll(/^Files=(\\d+), Tests=(\\d+),[^\\r\\n]*$/gm)];
+    assert.equal(counts.length,1);
+    assert.deepEqual([Number(counts[0][1]),Number(counts[0][2])],[1,expected]);
+    assert.equal((log.match(/^Result: PASS\\r?$/gm)||[]).length,1);
+    assert.equal((log.match(/^All tests successful\\.\\r?$/gm)||[]).length,1);
+  }
+  tests+=expected;
 }
-assert.equal(tests,270);
-console.log('PASS: nine Goods security/regression suites, 270 assertions');
+assert.equal(tests,268);
+console.log('PASS: nine hidden-release security/regression suites, 268 assertions');
 NODE
 stage=passed
 success=1
