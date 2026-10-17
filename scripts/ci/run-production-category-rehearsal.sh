@@ -128,6 +128,48 @@ prove_ref="supabase/pg_prove@sha256:eda7c5e68719e9c8287e78c017118407b48df904a51c
 docker pull --platform linux/amd64 "$prove_ref" >"$task/pgprove-pull.log" 2>&1
 docker tag "$prove_ref" public.ecr.aws/supabase/pg_prove:3.36
 
+# The pinned CLI bootstraps a temporary Auth/Storage/Realtime schema source.
+# Preload the three reviewed OCI digest pins before isolation to avoid ECR
+# throttling inside db start. Only bounded 429 retries are allowed; no latest.
+prefetch_pinned() {
+  local role="$1" source="$2" target="$3" attempt ok=0 image_id digests
+  [[ $role =~ ^(auth|storage|realtime)$ ]] || return 1
+  [[ $source =~ ^supabase/[a-z-]+@sha256:[a-f0-9]{64}$ ]] || return 1
+  [[ $target =~ ^public.ecr.aws/supabase/[a-z-]+:[a-zA-Z0-9._-]+$ ]] || return 1
+  for attempt in 1 2 3; do
+    if docker pull --platform linux/amd64 "$source" >"$task/bootstrap-$role-$attempt.log" 2>&1; then
+      ok=1
+      break
+    fi
+    if [[ $attempt == 3 ]] || ! grep -Eiq 'toomanyrequests|too many requests|rate[ -]?limit|429' "$task/bootstrap-$role-$attempt.log"; then
+      return 1
+    fi
+    if [[ $attempt == 1 ]]; then sleep 12; else sleep 35; fi
+  done
+  [[ $ok == 1 ]] || return 1
+  image_id=$(docker image inspect -f '{{.Id}}' "$source")
+  [[ $image_id =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
+  [[ $(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$source") == linux/amd64 ]] || return 1
+  digests=$(docker image inspect -f '{{json .RepoDigests}}' "$source")
+  node --input-type=module - "$digests" "$source" <<'NODE'
+const [json,ref] = process.argv.slice(2);
+const got=JSON.parse(json);
+if(!Array.isArray(got)||!got.some(x=>x===ref||x==='docker.io/'+ref))process.exit(1);
+NODE
+  if docker image inspect "$target" >/dev/null 2>&1; then
+    [[ $(docker image inspect -f '{{.Id}}' "$target") == "$image_id" ]] || return 1
+  else
+    docker tag "$source" "$target"
+  fi
+  [[ $(docker image inspect -f '{{.Id}}' "$target") == "$image_id" ]]
+}
+stage=bootstrap-auth-image
+prefetch_pinned auth 'supabase/gotrue@sha256:c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232' 'public.ecr.aws/supabase/gotrue:v2.196.0'
+stage=bootstrap-storage-image
+prefetch_pinned storage 'supabase/storage-api@sha256:105a2584129c9600aebed6f5ac49ca4371c92b996ecd1af7179750333e9e2120' 'public.ecr.aws/supabase/storage-api:v1.72.1'
+stage=bootstrap-realtime-image
+prefetch_pinned realtime 'supabase/realtime@sha256:002193c9ff840a4946918641901bb6aa9e2036dc9ff7590e2b11e91d1e06bf86' 'public.ecr.aws/supabase/realtime:v2.130.0'
+
 # GitHub's native Linux Docker daemon must support both DOCKER-USER chains.
 # No fallback to an unprotected bridge or wildcard host binding is allowed.
 stage=network-preflight
