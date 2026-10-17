@@ -50,6 +50,7 @@ jobs:
           test "$(node -p process.versions.node)" = 24.15.0
           bash -n scripts/ci/run-production-category-rehearsal.sh
           node scripts/ci/verify-production-category-release.mjs
+          node scripts/ci/production-category-rehearsal.mjs --verify-pinned
           node --test scripts/ci/verify-production-category-release.test.mjs \
             scripts/ci/production-category-rehearsal.test.mjs \
             scripts/ci/start-production-category-postgres-cron-off.test.mjs
@@ -91,6 +92,7 @@ jobs:
             assert.ok(existsSync(proposalPath));
             const proposal=JSON.parse(readFileSync(proposalPath,'utf8'));
             const manifest=JSON.parse(readFileSync(manifestPath,'utf8'));
+            const pinned=JSON.parse(readFileSync('releases/production/category-foundation-v1/forward-migration-plan.json','utf8'));
             assert.deepEqual(Object.keys(proposal).sort(),['schemaVersion','releaseId','status','generatedByCliVersion','productionBaselineTip','forwardMigrations'].sort());
             assert.equal(proposal.schemaVersion,1);
             assert.equal(proposal.releaseId,'category-foundation-v1');
@@ -106,6 +108,7 @@ jobs:
               assert.equal(entry.version,entry.file.slice(0,14));
               assert.equal(entry.source,source.path);
               assert.equal(entry.sha256,source.sha256);
+              assert.deepEqual(entry,pinned.forwardMigrations[i]);
               assert.ok(entry.version > (i===0?'20261013235311':proposal.forwardMigrations[i-1].version));
             }
             console.log('PASS: 7 sanitized CLI-generated forward version/SQL SHA-256 pairs verified');
