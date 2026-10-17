@@ -32,8 +32,18 @@ Supabase CLI's Docker labels, pinned image ID and one-time startup receipt, and
 verifies `pg_settings.source='command line'` before introducing FairSwap SQL.
 After bootstrap it verifies namespace identity and removes IPv4/IPv6 default
 routes **before any FairSwap SQL is introduced**. The runner requires PostgreSQL
-17.6 and replays 45 followed by seven. Cleanup removes only the task-owned
-objects and reverses precisely those four firewall rules.
+17.6. Crucially, **the local Supabase migration directory remains empty
+throughout database bootstrap**. Before copying any FairSwap SQL, the runner
+checks that `public.categories`, `public.listings` and the Goods moderation
+table do not exist, and that the migration ledger is absent or empty. It then
+writes a task-scoped isolation receipt, copies and checksum-verifies exactly
+45 baseline migrations, and explicitly replays 45 followed by seven. The
+runner requires `cron.launch_active_jobs=off` with command-line provenance
+and zero `cron.job_run_details` records before and after both migration
+batches and regression tests. Supabase bootstrap-created `cron.job` schedules
+are left intact and inert; the runner neither executes nor deletes them.
+Cleanup removes only task-owned objects and reverses precisely those four
+firewall rules.
 
 The runner pulls the **official Supabase PostgreSQL 17.6.1.167 OCI index** by
 its pinned digest `sha256:6942962433a569e87f228b4d4ab7e11db5deca64e43babb3a038443ad6c4f1bb`
