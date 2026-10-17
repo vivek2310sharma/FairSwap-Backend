@@ -95,6 +95,7 @@ export SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws
 
 stage=source-integrity
 node "$root/scripts/ci/production-category-rehearsal.mjs" --verify-source
+node "$root/scripts/ci/production-category-rehearsal.mjs" --verify-pinned
 node "$root/scripts/ci/production-category-rehearsal.mjs" --prepare "$project"
 project_id=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).projectId' "$project/rehearsal.json")
 [[ $project_id =~ ^fairswap-category-[a-f0-9]{16}$ ]] || exit 1
@@ -339,7 +340,7 @@ assert_cron_inert after-baseline
 printf '45\n' >"$project/baseline-confirmed"
 
 stage=candidates-stage
-node "$root/scripts/ci/production-category-rehearsal.mjs" --stage "$project" "$cli"
+node "$root/scripts/ci/production-category-rehearsal.mjs" --stage-pinned "$project"
 node "$root/scripts/ci/production-category-rehearsal.mjs" --verify-staged "$project"
 stage=candidates-apply
 cli_local migration up --local >"$task/candidates.log" 2>&1
@@ -408,8 +409,10 @@ console.log('PASS: nine hidden-release security/regression suites, 268 assertion
 NODE
 stage=cron-after-regressions-inert
 assert_cron_inert after-baseline
-# The proposal exposes only source paths, immutable SHA-256 pins and CLI-generated
-# filenames. It is NOT an approval or deployable migration package. No raw SQL,
+# The pinned names originated from the successful Supabase CLI v2.117.0
+# artifact 12114173244; they are NOT regenerated during this CI run.
+# The proposal exposes only source paths, immutable SHA-256 pins and filenames.
+# It is NOT an approval or deployable migration package. No raw SQL,
 # postgres logs, credentials, data rows or host paths are uploaded.
 stage=forward-proposal
 node --input-type=module - "$project/rehearsal.json" "$evidence/forward-proposal.json" "$root/releases/production/category-foundation-v1/manifest.json" <<'NODE'
