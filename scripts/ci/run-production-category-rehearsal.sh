@@ -299,6 +299,24 @@ assert_cron_inert() {
 stage=cron-bootstrap-inert
 assert_cron_inert
 
+# No FairSwap SQL is allowed into the CLI project's migration directory before
+# startup, enforced in the preparation module. Verify that nothing was applied
+# during bootstrap. Only after protected networking + cron-off is proved may
+# the 45 pinned baseline SQL files be staged and explicitly replayed.
+stage=pre-replay-pristine-schema
+[[ $(sql "SELECT to_regclass('public.categories') IS NULL") == t ]]
+[[ $(sql "SELECT to_regclass('public.listings') IS NULL") == t ]]
+[[ $(sql "SELECT to_regclass('public.listing_moderation_requests') IS NULL") == t ]]
+stage=pre-replay-pristine-ledger
+has_ledger=$(sql "SELECT to_regclass('supabase_migrations.schema_migrations') IS NOT NULL")
+[[ $has_ledger == t || $has_ledger == f ]]
+if [[ $has_ledger == t ]]; then
+  [[ $(sql 'SELECT count(*) FROM supabase_migrations.schema_migrations') == 0 ]]
+fi
+stage=post-isolation-receipt
+printf 'pg17.6-cron-off-network-isolated-empty-ledger\n' >"$project/isolation-confirmed"
+stage=baseline-stage
+node "$root/scripts/ci/production-category-rehearsal.mjs" --stage-baseline "$project"
 stage=baseline-apply
 cli_local migration up --local >"$task/baseline.log" 2>&1
 baseline_ledger=$(sql "SELECT string_agg(version, ',' ORDER BY version) FROM supabase_migrations.schema_migrations")
