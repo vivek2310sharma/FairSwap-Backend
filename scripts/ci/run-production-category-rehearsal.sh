@@ -282,9 +282,18 @@ stage=cron-disable-pending-restart
 [[ $(admin_sql "SELECT pending_restart::text FROM pg_settings WHERE name='cron.launch_active_jobs'") == false ]]
 stage=cron-disable-postgres-client
 [[ $(sql 'SHOW cron.launch_active_jobs') == off ]]
-stage=cron-disable-no-jobs
-if [[ $(admin_sql "SELECT to_regclass('cron.job') IS NOT NULL") == t ]]; then
-  [[ $(admin_sql 'SELECT count(*) FROM cron.job') == 0 ]]
+stage=cron-bootstrap-table
+has_cron_table=$(admin_sql "SELECT to_regclass('cron.job') IS NOT NULL")
+[[ $has_cron_table == t || $has_cron_table == f ]]
+if [[ $has_cron_table == t ]]; then
+  stage=cron-bootstrap-count-query
+  local_cron_count=$(admin_sql 'SELECT count(*) FROM cron.job')
+  [[ $local_cron_count =~ ^[0-9]+$ ]]
+  stage=cron-bootstrap-empty
+  if [[ $local_cron_count != 0 ]]; then
+    echo 'FAIL: task-local Supabase bootstrap created cron jobs; no FairSwap SQL was replayed' >&2
+    exit 1
+  fi
 fi
 
 stage=baseline-apply
