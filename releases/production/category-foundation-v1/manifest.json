@@ -106,5 +106,15 @@
     "productionBaselineRehearsalPassed": false,
     "securityReviewApproved": false,
     "productionOwnerApproval": false
+  },
+  "productionDeploymentRecord": {
+    "status": "APPLIED_AND_DATABASE_VERIFIED",
+    "verifiedProductionMigrationCount": 52,
+    "finalVersion": "20261017205807",
+    "forwardMigrationCount": 7,
+    "deployedAtUtc": "2026-10-17T22:45:51.4618439Z",
+    "receiptFile": "production-deployment-20261018.json",
+    "forwardMigrationPlanFile": "forward-migration-plan.json",
+    "note": "The existing productionBaseline (45), top-level PREPARATION_ONLY status and releaseGates describe the historical pre-release preparation snapshot; see receiptFile for the deployed 52-version state."
   }
 }

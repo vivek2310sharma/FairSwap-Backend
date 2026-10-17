@@ -1,5 +1,11 @@
 # Deployment ownership
 
+## Production status update (18 October 2026; no ownership transfer)
+
+The hidden Cars/Two-Wheelers/Property database foundation was applied by an explicitly authorized manual Supabase CLI operator on 18 October 2026 (UTC completion 17 October 22:45:51). FairSwapProd's verified migration history is now **52 versions**. [Deployment receipt](../../releases/production/category-foundation-v1/production-deployment-20261018.json).
+
+This did **not** transfer Web/Backend deployment credentials or create a Backend deployment job. The original 58-file mixed-environment source directory must **not** be pushed raw to Production; use the isolated, verified 52-version Production baseline and approved forward-only migrations. The Stage 1A/1B/2A scope restrictions below describe historical extraction authorization and should not be mistaken for the current live database state.
+
 ## Current authority: unchanged
 
 FairSwap-Backend is the planned canonical source for FairSwap's shared Supabase

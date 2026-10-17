@@ -1,5 +1,7 @@
 # FairSwap-Backend
 
+> **Current Production database state (verified 18 October 2026):** FairSwapProd has **52 applied migrations** (45 baseline + 7 pinned hidden-category additions). See the [deployment receipt](releases/production/category-foundation-v1/production-deployment-20261018.json) and [exact forward plan](releases/production/category-foundation-v1/forward-migration-plan.json). Cars, Two-Wheelers and Property remain disabled; existing Goods moderation remains intact. **Do not run raw `supabase db push` from this repository's 58-file migration directory against Production**; it includes Test-only history. The Stage 1A/1B/2A text below is **historical extraction documentation**, not the current Production status or deployment authority.
+
 FairSwap is an India-first classifieds marketplace. This repository is the planned
 canonical source for FairSwap's shared Supabase backend.
 

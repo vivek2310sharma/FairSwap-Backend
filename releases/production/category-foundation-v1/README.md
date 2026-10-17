@@ -1,31 +1,35 @@
-# Phase 1 — Production-hidden category schema (REVIEW ONLY)
+# Production-hidden category foundation — APPLIED AND VERIFIED
 
-**TARGET:** FairSwapProd `kriuhwppxgxsyyrbjsau`, PostgreSQL 17.6, **45** currently applied migrations. **SOURCE:** Backend `main` canonical 58-file checksum-pinned migrations. **STATE:** `PREPARATION_ONLY_NOT_APPROVED_FOR_EXECUTION`.
+**Live Production (verified 18 October 2026):** FairSwapProd `kriuhwppxgxsyyrbjsau`, PostgreSQL 17.6, **52 applied migrations** (**45 existing + 7 approved forward migrations**). Cars, Two-Wheelers and Property have database foundations but remain **disabled** for customers. Goods moderation is unchanged.
 
-This is a concrete release *candidate* for adding the **draft-contract infrastructure** of Cars, Two-Wheelers and Property without enabling their categories or publication. It is **not** the new category launch. No historical migration changes, Test-only code, credentials, external outbound jobs, or live DB writes are included in this PR.
+**Canonical release evidence:** [Production deployment receipt](production-deployment-20261018.json) · [Seven exact pinned forward versions](forward-migration-plan.json) · [Historical preparation manifest](manifest.json) · [Read-only postflight](postflight.readonly.sql).
 
-## Exact candidate phase-one source files (7)
+## What was applied
 
-The seven paths, in order, are in [manifest.json](manifest.json). They import the source contracts and validated catalogue snapshots, install draft-only guard functions, and leave all experimental categories/new assignments **disabled**. Files are hash-pinned to the existing 58-file extraction manifest. This phase excludes all Test-only activation, the experimental finalizer, the moderation trigger repair already unneeded on Production, the test submission policy and the Post-Ad compatibility overlay.
+The operator ran Supabase CLI **2.117.0** against the linked FairSwapProd project with `db push --linked --skip-vault`, from an **isolated workspace** containing exactly the 45 Production-history files and the seven pinned forward files. The seven source SQL bodies were copied byte-for-byte and preserved the SHA-256 pins; the CLI-issued forward names and their source mappings are recorded in `forward-migration-plan.json`.
 
-**Do not** use `supabase db push` or apply all 58 original Backend migrations to Production. Production applied 45; the Backend source contains 13 additional migrations, and Test has 3 further migration records (61 total). Never cherry-pick `enable_test_*` migrations.
+- Production migration ledger: **45 → 52**, matching the exact 52-version list in the receipt; no pending release migrations were reported.
+- Checked-in read-only postflight: **PASS**, independently rerun via read-only Supabase access after the operator's release.
+- RLS: **47/47** public base tables enabled; all three new category-context tables protected and not readable by `anon`.
+- Publication: three listing guards enabled; zero experimental categories active; zero new experimental contract assignments; zero active experimental listings.
+- Goods: moderation automation and enqueue trigger enabled; finalizer body MD5 `118d04445fdd9139d90decd2048945f1`; execution privileges preserved.
+- CLI operator reported no seeds, roles, Vault changes, retries or migration history repairs. No website or mobile app was deployed.
+- Prior isolated PG17.6 rehearsal passed **268** Goods/security pgTAP assertions ([run 39069138056](https://github.com/vivek2310sharma/FairSwap-Backend/actions/runs/39069138056)). That rehearsal is not proof of live customer/worker deliveries.
 
-## Read-only release-preparation commands
+## Why the manifest still says 45 and PREPARATION_ONLY
 
-```bash
-node scripts/ci/verify-production-category-release.mjs
-node --test scripts/ci/verify-production-category-release.test.mjs
-```
+The existing `manifest.json.productionBaseline` records the **historical pre-release** 45-version state. Its original preparation status, candidate hashes, exclusion list and false `releaseGates` are **intentionally preserved** as immutable preparation evidence (and to preserve the existing static verifier's invariants). They must not be interpreted as the *current* Production deployment state.
 
-CI runs these without Supabase credentials or a database connection, verifies all seven SQL SHA-256 hashes, denies unexpected source/activation changes and verifies the **58 original migration files are unchanged**. The static script is not an integration test and does not prove the schema migration succeeds against Production's 45-version state.
+The **current deployed state as of 18 October 2026** is instead recorded in `manifest.json.productionDeploymentRecord` and `production-deployment-20261018.json`. The independent 52-version ledger observation and exact version-to-source mapping are preserved there. Backup/restore was not independently verified; the release relied on owner risk acceptance, not a verified restore.
 
-## Staged release gates (all deliberately OPEN)
+## Important: main's migration directory is NOT a Production deploy workspace
 
-1. **Recovery:** Verify Production Supabase backup availability and complete a recoverable restore/PITR rehearsal using an operator-approved isolated environment. The connected Supabase tools do not expose backup confirmation here. Creating a new hosted Supabase branch can cost money and needs separate cost approval.
-2. **True 45-migration rehearsal:** On a disposable Production-baseline replica, run `preflight.readonly.sql`, then apply **exactly seven source files in manifest order** as individually reviewed forward-only migration entries; assert no Test-only step is applied. Run `postflight.readonly.sql` and all Goods moderation/RLS/Post-Ad regression checks. Do not test against a 58-migration already-complete fixture and claim Production compatibility.
-3. **Security:** Resolve or explicitly review the existing Supabase advisor WARN items, especially publicly executable SECURITY DEFINER functions. Check service-role-only moderation RPCs and seller RLS after applying each migration.
-4. **Source deploy ownership:** Keep FairSwap-Backend as canonical source, with one controlled deployment owner; do not leave simultaneously active Web and Backend schema deployers. [Web handoff issue #157](https://github.com/vivek2310sharma/FairSwap-Web/issues/157).
-5. **Actual Production release:** Obtain reviewed SQL hashes, backups, reviewer approval, rollback/forward-fix plan and a release window. First apply migration to Production, validate `postflight.readonly.sql` and Goods tests, and **only then** deploy a separate Web production build with category flags off. Roll back/disable via approved forward-fix on failure.
-6. **Separate launch:** Later approve Cars, Two-Wheelers and Property submissions/publication only after fresh browser acceptance tests for each category. Never remove publication guards simply because this hidden-schema phase passed.
+`supabase/migrations/` remains the **58 original, checksum-pinned, multi-environment source files**. It includes historical Test-only category activations, plus the original versions of seven SQL bodies that Production applied under **different, forward-only versions**.
 
-**Production status:** No changes in this release-preparation PR. See [issue #5](https://github.com/vivek2310sharma/FairSwap-Backend/issues/5) for follow-up.
+**Never run `supabase db push` directly from this repository's raw `supabase/migrations/` directory against FairSwapProd.** That would present a different migration history and could propose Test-only steps. For any future Production schema release, construct a fresh isolated **52-version Production baseline** using the exact 45 original Production migrations and seven pinned forward names and unchanged SQL bodies in the forward plan; first compare that baseline with the live ledger and then add only separately approved forward migrations. No Test-only activation is implied by this record.
+
+The original SQL sources, PostgreSQL routines, preflight and postflight SQL were not changed by the GitHub record update.
+
+## Scope and status
+
+This documents the completed **hidden database foundation only**, not public submission, listing publication, feature activation, a future release permission, or transfer of the Backend/Web deployment ownership boundary. The draft rehearsal PR #8 was preparation-only; the actual release was performed separately by the explicitly authorized CLI operator.

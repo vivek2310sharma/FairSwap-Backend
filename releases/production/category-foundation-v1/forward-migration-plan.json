@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "category-foundation-v1",
+  "status": "PINNED_FOR_REVIEW_NOT_APPROVED_FOR_EXECUTION",
+  "targetProjectRef": "kriuhwppxgxsyyrbjsau",
+  "postgresVersion": "17.6",
+  "baselineMigrationCount": 45,
+  "baselineFinalVersion": "20261013235311",
+  "generatedByCliVersion": "2.117.0",
+  "generationEvidence": {
+    "githubRunId": 39068727798,
+    "artifactId": 12114173244,
+    "artifactSha256": "974b6e3d6923d00b045c78aaaed96c823573ccf1b60afd98f842f98e03d7922a",
+    "forwardProposalSha256": "1ca981617d5aefd9d9c272a760d7c67fc683d1c93c072ccfa5fc19fb82f69d87"
+  },
+  "forwardMigrations": [
+    {
+      "version": "20261017205755",
+      "file": "20261017205755_category_foundation_01_two_wheeler_draft_v1.sql",
+      "source": "supabase/migrations/20261009201151_two_wheeler_draft_v1.sql",
+      "sha256": "dfed0a91e1f24c4c8f7c3a36d97a31ca331a9858b50f48b2829516aade0dcbf5"
+    },
+    {
+      "version": "20261017205757",
+      "file": "20261017205757_category_foundation_02_two_wheeler_catalogue_lookup.sql",
+      "source": "supabase/migrations/20261009202059_two_wheeler_catalogue_lookup.sql",
+      "sha256": "2afca3f02c7535328ee6ee286d2a1f4b3df9ef51a1923b9e6a4c8f556b1a8c55"
+    },
+    {
+      "version": "20261017205759",
+      "file": "20261017205759_category_foundation_03_two_wheeler_unresolved_mapping_correction.sql",
+      "source": "supabase/migrations/20261009203141_two_wheeler_unresolved_mapping_correction.sql",
+      "sha256": "2f5cb60bd98a982410eb4f71bec0f991e1d91bf1ee1949749b6fe0c3059f7b3b"
+    },
+    {
+      "version": "20261017205801",
+      "file": "20261017205801_category_foundation_04_two_wheeler_reference_errors.sql",
+      "source": "supabase/migrations/20261009215128_two_wheeler_reference_errors.sql",
+      "sha256": "2d186ef8a24935e8d5a27f90e8a424d426a428a992d62991b60d518329c84a2a"
+    },
+    {
+      "version": "20261017205803",
+      "file": "20261017205803_category_foundation_05_car_draft_v1.sql",
+      "source": "supabase/migrations/20261010064518_car_draft_v1.sql",
+      "sha256": "dbfdf55304cd26c161cb792f487ce4f5034985f10094d2fe761aee50914c88ca"
+    },
+    {
+      "version": "20261017205805",
+      "file": "20261017205805_category_foundation_06_property_rental_draft_v1.sql",
+      "source": "supabase/migrations/20261010084523_property_rental_draft_v1.sql",
+      "sha256": "c0dd1b704d33ba366e077fcde432e7f5faaed240b24ef84b830125e8e1855497"
+    },
+    {
+      "version": "20261017205807",
+      "file": "20261017205807_category_foundation_07_property_scoped_draft_lock.sql",
+      "source": "supabase/migrations/20261010091239_property_scoped_draft_lock.sql",
+      "sha256": "ecd0a1746facbc485c2437a98e5974e4640581e6a9ceee71561fd11052b65aa8"
+    }
+  ]
+}
