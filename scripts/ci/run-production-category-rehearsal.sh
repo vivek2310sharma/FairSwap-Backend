@@ -282,19 +282,22 @@ stage=cron-disable-pending-restart
 [[ $(admin_sql "SELECT pending_restart::text FROM pg_settings WHERE name='cron.launch_active_jobs'") == false ]]
 stage=cron-disable-postgres-client
 [[ $(sql 'SHOW cron.launch_active_jobs') == off ]]
-stage=cron-bootstrap-table
-has_cron_table=$(admin_sql "SELECT to_regclass('cron.job') IS NOT NULL")
-[[ $has_cron_table == t || $has_cron_table == f ]]
-if [[ $has_cron_table == t ]]; then
-  stage=cron-bootstrap-count-query
-  local_cron_count=$(admin_sql 'SELECT count(*) FROM cron.job')
-  [[ $local_cron_count =~ ^[0-9]+$ ]]
-  stage=cron-bootstrap-empty
-  if [[ $local_cron_count != 0 ]]; then
-    echo 'FAIL: task-local Supabase bootstrap created cron jobs; no FairSwap SQL was replayed' >&2
-    exit 1
-  fi
-fi
+# pg_cron may contain schedules installed by the Supabase *local bootstrap*.
+# A schedule is inert when cron.launch_active_jobs=off at PostgreSQL process
+# startup. Prove there is no execution history; do not remove bootstrap jobs
+# or loosen the global launch-disable invariant to force a green rehearsal.
+assert_cron_inert() {
+  [[ $(admin_sql "SELECT (setting='off' AND source='command line' AND NOT pending_restart)::text FROM pg_settings WHERE name='cron.launch_active_jobs'") == true ]] || return 1
+  [[ $(sql 'SHOW cron.launch_active_jobs') == off ]] || return 1
+  local has_jobs has_history history_count
+  has_jobs=$(admin_sql "SELECT to_regclass('cron.job') IS NOT NULL")
+  has_history=$(admin_sql "SELECT to_regclass('cron.job_run_details') IS NOT NULL")
+  [[ $has_jobs == t && $has_history == t ]] || return 1
+  history_count=$(admin_sql 'SELECT count(*) FROM cron.job_run_details')
+  [[ $history_count == 0 ]]
+}
+stage=cron-bootstrap-inert
+assert_cron_inert
 
 stage=baseline-apply
 cli_local migration up --local >"$task/baseline.log" 2>&1
@@ -302,7 +305,8 @@ baseline_ledger=$(sql "SELECT string_agg(version, ',' ORDER BY version) FROM sup
 printf '%s\n' "$baseline_ledger" | node "$root/scripts/ci/production-category-rehearsal.mjs" --check-ledger "$project/rehearsal.json" 45
 [[ $(sql "SELECT md5(prosrc) FROM pg_proc WHERE oid=to_regprocedure('app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)')") == 118d04445fdd9139d90decd2048945f1 ]]
 [[ $(sql "SELECT setting_value FROM public.app_system_settings WHERE setting_key='moderation_automation_enabled'") == false ]]
-[[ $(sql 'SHOW cron.launch_active_jobs') == off ]]
+stage=cron-after-baseline-inert
+assert_cron_inert
 printf '45\n' >"$project/baseline-confirmed"
 
 stage=candidates-stage
@@ -312,7 +316,8 @@ stage=candidates-apply
 cli_local migration up --local >"$task/candidates.log" 2>&1
 final_ledger=$(sql "SELECT string_agg(version, ',' ORDER BY version) FROM supabase_migrations.schema_migrations")
 printf '%s\n' "$final_ledger" | node "$root/scripts/ci/production-category-rehearsal.mjs" --check-ledger "$project/rehearsal.json" 52
-[[ $(sql 'SHOW cron.launch_active_jobs') == off ]]
+stage=cron-after-candidates-inert
+assert_cron_inert
 
 stage=postflight
 verify_firewall
@@ -326,6 +331,8 @@ for family in 4 6; do [[ -z $(sudo -n nsenter --target "$db_pid" --net -- ip "-$
 [[ $(sql "SELECT count(*) FROM pg_trigger WHERE tgrelid='public.listings'::regclass AND tgname IN ('z_vehicle_listing_guard','zz_car_listing_guard','zzz_property_listing_guard') AND tgenabled='O'") == 3 ]]
 [[ $(sql "SELECT md5(prosrc) FROM pg_proc WHERE oid=to_regprocedure('app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)')") == 118d04445fdd9139d90decd2048945f1 ]]
 
+stage=cron-before-regression-inert
+assert_cron_inert
 stage=goods-regression
 mkdir -m 700 "$task/suites"
 for suite in admin_medium_operation.test.sql admin_reviewed_contract.test.sql \
@@ -370,5 +377,7 @@ for(const [file,expected] of Object.entries(releaseExpected)) {
 assert.equal(tests,268);
 console.log('PASS: nine hidden-release security/regression suites, 268 assertions');
 NODE
+stage=cron-after-regressions-inert
+assert_cron_inert
 stage=passed
 success=1
