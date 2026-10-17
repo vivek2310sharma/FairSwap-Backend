@@ -115,7 +115,9 @@ cli_local test db --help >"$task/cli-test-help.txt"
 # Pin the official immutable PG17 and pgTAP runner images, pulled before
 # restricting the isolated database network. Do not accept mutable latest tags.
 stage=postgres-image
-pg_ref="public.ecr.aws/supabase/postgres@sha256:6942962433a569e87f228b4d4ab7e11db5deca64e43babb3a038443ad6c4f1bb"
+# Same immutable OCI index digest as the official Supabase ECR publication.
+# Prefer official GHCR to avoid anonymous public ECR rate limiting.
+pg_ref="ghcr.io/supabase/postgres@sha256:6942962433a569e87f228b4d4ab7e11db5deca64e43babb3a038443ad6c4f1bb"
 docker pull --platform linux/amd64 "$pg_ref" >"$task/postgres-pull.log" 2>&1
 pg_id=$(docker image inspect -f '{{.Id}}' "$pg_ref")
 [[ -n $pg_id ]]
