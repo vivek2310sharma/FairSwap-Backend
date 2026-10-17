@@ -60,6 +60,12 @@ jobs:
         timeout-minutes: 1
         run: node scripts/ci/verify-baseline.mjs
 
+      - name: Verify pinned Production-hidden category release plan (static only)
+        timeout-minutes: 2
+        run: |
+          node scripts/ci/verify-production-category-release.mjs
+          node --test scripts/ci/verify-production-category-release.test.mjs
+
       - name: Typecheck
         timeout-minutes: 2
         run: corepack pnpm typecheck
