@@ -84,12 +84,30 @@ enabled = false
 enabled = false
 port = ${portBase + 3}
 `, { mode: 0o600 });
-  for (const row of baseline) {
-    copyFileSync(join(root, row.source), join(migrationDir, basename(row.source)));
-  }
+  // Leave the SQL directory EMPTY until the shell runner has proved that
+  // database bootstrap and task-scoped network isolation are complete.
   const stage = { releaseId: expectedRelease, projectId, postgres: "17.6", baselineVersions: baseline.map(x => x.version), candidates: [] };
   writeFileSync(join(dir, "rehearsal.json"), JSON.stringify(stage, null, 2) + "\n", { mode: 0o600 });
   return stage;
+}
+export function stageBaseline(workDir, root = ROOT) {
+  const dir = mustBeLocal(workDir);
+  const receipt = join(dir, "isolation-confirmed");
+  fail(existsSync(receipt), "Missing isolated PG17 pre-SQL receipt");
+  fail(readFileSync(receipt, "utf8").trim() === "pg17.6-cron-off-network-isolated-empty-ledger", "Invalid pre-SQL isolation receipt");
+  const stage = readJson(join(dir, "rehearsal.json"));
+  const { baseline } = approvedPlan(root);
+  fail(stage.candidates.length === 0, "Candidates staged before baseline");
+  fail(JSON.stringify(stage.baselineVersions) === JSON.stringify(baseline.map(row => row.version)), "Baseline recipe drift");
+  const migrationDir = join(dir, "supabase/migrations");
+  fail(readdirSync(migrationDir).filter(exactSql).length === 0, "Unexpected FairSwap SQL before network isolation");
+  for (const row of baseline) {
+    const target = join(migrationDir, basename(row.source));
+    copyFileSync(join(root, row.source), target);
+    fail(hash(readFileSync(target)) === row.sha256, "Copied baseline SQL drift: " + row.version);
+  }
+  fail(readdirSync(migrationDir).filter(exactSql).length === 45, "Incomplete post-isolation baseline SQL staging");
+  return baseline.length;
 }
 export function checkLedger(input, stageFile, expectedCount) {
   const stage = readJson(stageFile);
@@ -151,6 +169,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       const p = approvedPlan(); console.log("PASS: 45 baseline and 7 candidates, source hashes verified", p.baseline.length, p.candidates.length);
     } else if (mode === "--prepare" && args.length === 1) {
       const p = prepare(args[0]); console.log("PASS: staged 45 source migrations into isolated project", p.projectId);
+    } else if (mode === "--stage-baseline" && args.length === 1) {
+      console.log("PASS: staged", stageBaseline(args[0]), "baseline SQL files only after verified isolation");
     } else if (mode === "--check-ledger" && args.length === 2) {
       checkLedger(readFileSync(0, "utf8"), args[0], Number(args[1])); console.log("PASS: exact ledger", args[1]);
     } else if (mode === "--stage" && args.length === 2) {
