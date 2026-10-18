@@ -1,6 +1,6 @@
 # Manual scoped-token validation — FairSwap-Backend
 
-**Status (18 October 2026):** The repository owner confirmed creating two project-scoped Supabase tokens and storing them as encrypted **FairSwap-Backend repository-level Actions secrets**. Secret values have not been inspected or independently verified. This page and the related `backend-scoped-token-check.yml` workflow allow a deliberate, **read-only** identity/scope verification. They do **not** configure database migrations or hosted Supabase deployments.
+**Status (18 October 2026): VERIFIED FOR READ-ONLY SCOPED PROJECT ACCESS ONLY.** The repository owner created two scoped Supabase tokens and stored them as encrypted **FairSwap-Backend repository-level Actions secrets**. Both values were exercised by separate successful manually dispatched Actions jobs, and the opposite project rejected each token. Neither value was printed or inspected. This page and `backend-scoped-token-check.yml` document only this limited verification; they do **not** configure database migrations, hosted Supabase deployments, or approval protection.
 
 ## Secret-to-project mapping
 
@@ -20,6 +20,15 @@
 5. A missing secret, wrong scope, error, or unexpectedly broad permission **fails closed**. The workflow has no checkouts, no SQL commands, no deploy steps, no migrations, no `supabase link`, and no automatic trigger.
 
 The `Project Settings: Read` scope is required for the read-only GET endpoint. The workflow does not verify write permissions; **passing it must never be treated as release authorization**.
+
+## Executed read-only verification evidence — 18 October 2026
+
+| Target | GitHub Actions run | Executed job | Outcome |
+| --- | --- | --- | --- |
+| FairSwapTest | [39126378994](https://github.com/vivek2310sharma/FairSwap-Backend/actions/runs/39126378994) | `verify-test` succeeded; Production job skipped | Target HTTP 200; opposite project HTTP 403/404; zero writes |
+| FairSwapProd | [39126417831](https://github.com/vivek2310sharma/FairSwap-Backend/actions/runs/39126417831) | `verify-production` succeeded; Test job skipped | Target HTTP 200; opposite project HTTP 403/404; zero writes |
+
+GitHub job summaries and job logs were inspected; each printed the expected final `PASS` confirmation. Successful dispatch confirms tokens are available to the relevant jobs but **does not verify SQL-write access or whether an unauthorized workflow editor could access a repo-level never-expiring token**. No further Actions run is required for token identity acceptance.
 
 ## Important remaining release limits
 
