@@ -215,13 +215,23 @@ SELECT is(
 -- Create test listing
 DO $fixture$
 DECLARE
-  v_user_id uuid := gen_random_uuid();
-  v_category_id uuid;
-  v_city_id uuid;
-  v_listing_id uuid := gen_random_uuid();
+  v_user_id uuid := '11111111-0000-4000-8000-000000000099'::uuid;
+  v_category_id uuid := '77777777-0000-4000-8000-000000000099'::uuid;
+  v_city_id uuid := '88888888-0000-4000-8000-000000000099'::uuid;
+  v_listing_id uuid := '44444444-0000-4000-8000-000000000099'::uuid;
   v_req_id uuid;
+  v_now timestamptz := pg_catalog.clock_timestamp();
 BEGIN
-  -- Insert prerequisites
+  -- 1. Deterministic category & city
+  INSERT INTO public.categories (id, slug, name, sort_order, is_active)
+  VALUES (v_category_id, 'test-cat-v2-binding', 'Test Category V2 Binding', 99, true)
+  ON CONFLICT (id) DO NOTHING;
+
+  INSERT INTO public.cities (id, name, state, slug, is_active)
+  VALUES (v_city_id, 'Test City V2 Binding', 'State', 'test-city-v2-binding', true)
+  ON CONFLICT (id) DO NOTHING;
+
+  -- 2. Auth user with complete mandatory consent metadata and explicit timestamps
   INSERT INTO auth.users (id, email, raw_user_meta_data, created_at, updated_at)
   VALUES (
     v_user_id,
@@ -234,28 +244,37 @@ BEGIN
       'acceptable_use_version', '2026-09-18',
       'age_confirmed', 'true'
     ),
-    pg_catalog.clock_timestamp(),
-    pg_catalog.clock_timestamp()
+    v_now,
+    v_now
   )
-  ON CONFLICT DO NOTHING;
+  ON CONFLICT (id) DO NOTHING;
 
+  -- Verify provisioned account and profile exist for the test seller
+  IF NOT EXISTS (
+    SELECT 1 FROM public.user_accounts
+    WHERE user_id = v_user_id AND account_status = 'active'
+      AND created_at IS NOT NULL AND updated_at IS NOT NULL AND terms_accepted_at IS NOT NULL
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = v_user_id AND created_at IS NOT NULL AND updated_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'SETUP_FAIL: Test seller account or profile was not properly provisioned';
+  END IF;
+
+  -- Policy acceptances
   INSERT INTO public.policy_acceptance_records (
     user_id, terms_version, privacy_policy_version, acceptable_use_version, minimum_age_confirmed
   ) VALUES (
     v_user_id, '2026-09-18', '2026-09-18', '2026-09-18', 18
   ) ON CONFLICT DO NOTHING;
 
-  SELECT id INTO v_category_id FROM public.categories
-  WHERE is_active AND new_listing_enabled AND macro_category = 'goods'
-  LIMIT 1;
-  SELECT id INTO v_city_id FROM public.cities WHERE is_active LIMIT 1;
-
+  -- 3. Listings with complete valid attributes
   INSERT INTO public.listings (
-    id, seller_id, category_id, city_id, title, description, status, revision
+    id, seller_id, title, description, category_id, city_id, condition, price_type, price_paise
   ) VALUES (
-    v_listing_id, v_user_id, v_category_id, v_city_id,
-    'Authoritative DB Title', 'Authoritative DB Description text for local inspection.',
-    'draft', 1
+    v_listing_id, v_user_id, 'Authoritative DB Title',
+    'Authoritative DB Description text for local inspection.',
+    v_category_id, v_city_id, 'good', 'fixed', 10000
   );
 
   -- Insert valid V2 request bound to listing
