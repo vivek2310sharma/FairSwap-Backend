@@ -1,6 +1,6 @@
 # FairSwap-Backend
 
-> **Point 1 current ownership (18 October 2026):** This repository is now the canonical **source** for the 58 historical Supabase migrations and 10 pgTAP SQL tests. Web `main` and `staging` removed their tracked duplicates in merged PRs #160 and #159; Web CI reconstructs the pinned Backend source only inside disposable runners. Owner reports existing application/API and listing submission compatibility testing passed. **Exclusive hosted deployment ownership is NOT complete:** legacy CLI/Web operator permission review is deferred, no backend-hosted release workflow is authorized, and read-only project-isolated token checks do not prove deploy permissions. See [backend cutover checkpoint](docs/operations/BACKEND_ONLY_RELEASE_CUTOVER.md). The Stage 1/2 text below is retained as **historical extraction evidence**, not instructions to revert current runtime settings. Hosted listing moderation is intentionally ON in both Test and Production per owner confirmation; do not toggle it. No source cleanup or documentation update authorizes database writes.
+> **Point 1 current ownership (18 October 2026):** This repository is now the canonical **source** for the 58 historical Supabase migrations and 10 pgTAP SQL tests. Web `main` and `staging` removed their tracked duplicates in merged PRs #160 and #159; Web CI reconstructs the pinned Backend source only inside disposable runners. Owner reports existing application/API and listing submission compatibility testing passed. **Exclusive hosted deployment ownership is NOT complete:** legacy CLI/Web operator permission review is deferred, no backend-hosted release workflow is authorized, and read-only project-isolated token checks do not prove deploy permissions. See [Point 1 source boundary and owner action](docs/operations/POINT1_SOURCE_BOUNDARY_AND_OWNER_ACTION.md) and [deployment cutover checkpoint](docs/operations/BACKEND_ONLY_RELEASE_CUTOVER.md). The Stage 1/2 text below is retained as **historical extraction evidence**, not instructions to revert current runtime settings. Hosted listing moderation is intentionally ON in both Test and Production per owner confirmation; do not toggle it. No source cleanup or documentation update authorizes database writes.
 
 > **Current Production database state (verified 18 October 2026):** FairSwapProd has **52 applied migrations** (45 baseline + 7 pinned hidden-category additions). See the [deployment receipt](releases/production/category-foundation-v1/production-deployment-20261018.json) and [exact forward plan](releases/production/category-foundation-v1/forward-migration-plan.json). Cars, Two-Wheelers and Property remain disabled; existing Goods moderation remains intact. **Do not run raw `supabase db push` from this repository's 58-file migration directory against Production**; it includes Test-only history. The Stage 1A/1B/2A text below is **historical extraction documentation**, not the current Production status or deployment authority.
 
@@ -14,7 +14,7 @@ deployment authority has not been transferred from FairSwap-Web.
 Production and Test Supabase environments must remain untouched during repository
 initialization and extraction. Further implementation requires separate approval.
 
-## Stage 2A status
+## Historical Stage 2A status (superseded — not current state)
 
 The repository has one README-only initialization commit on `main`. The local
 `chore/backend-extraction-baseline` branch has local checkpoint
@@ -40,9 +40,11 @@ moderation rules, and Web/iOS/Android/Admin consumer compatibility. Web retains
 Next.js application code, authentication integration, media HTTP routes, and
 Vercel deployment.
 
-The moderation automation switch must remain disabled. No OpenAI moderation,
-new approval logic, or business-behavior changes are authorized. The disabled
-state is a required invariant, not a claim of a fresh hosted configuration check.
+Historical Stage 1 assumption (superseded): the initial baseline planned for
+moderation to remain OFF. Both hosted Test and Production moderation switches
+are now intentionally **ON** per the owner's verified configuration decision;
+never turn them off as part of Point 1. OpenAI moderation and new approval
+logic are separate points, not authorized by this source handover.
 
 ## Review documents
 
