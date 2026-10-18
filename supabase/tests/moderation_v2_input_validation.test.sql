@@ -317,6 +317,8 @@ BEGIN
     RAISE EXCEPTION 'Immutability trigger failed to block generation_id update';
   EXCEPTION WHEN check_violation THEN
     NULL; -- expected
+  END;
+
   -- Test authoritative binding: inserting mismatched title must fail
   BEGIN
     INSERT INTO app_moderation_v2.requests (
