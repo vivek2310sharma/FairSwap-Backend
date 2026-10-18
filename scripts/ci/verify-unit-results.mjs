@@ -18,6 +18,7 @@ export const approvedFiles = Object.freeze({
   "src/__tests__/moderation-v2-contract.test.ts": 103,
   "src/__tests__/moderation-v2-provider.test.ts": 83,
   "src/__tests__/moderation-v2-evaluator.test.ts": 60,
+  "src/__tests__/moderation-v2-sealer.test.ts": 93,
 });
 
 export const approvedFileCount = Object.keys(approvedFiles).length;

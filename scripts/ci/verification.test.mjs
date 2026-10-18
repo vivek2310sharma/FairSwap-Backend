@@ -56,7 +56,7 @@ test("accepts the existing explicit configuration and a complete report", () => 
   const summary = verifyUnitResults(passingReport());
   assert.equal(summary.totalFiles, approvedFileCount);
   assert.equal(summary.totalPassed, approvedTestCount);
-  assert.deepEqual(summary.files.map(f => f.passed), [39, 7, 10, 3, 34, 103, 83, 60]);
+  assert.deepEqual(summary.files.map(f => f.passed), [39, 7, 10, 3, 34, 103, 83, 60, 93]);
   assert.ok(!JSON.stringify(summary).includes(root));
 });
 

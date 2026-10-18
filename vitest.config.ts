@@ -19,6 +19,7 @@ export default defineConfig({
       "src/__tests__/moderation-v2-contract.test.ts",
       "src/__tests__/moderation-v2-provider.test.ts",
       "src/__tests__/moderation-v2-evaluator.test.ts",
+      "src/__tests__/moderation-v2-sealer.test.ts",
       "tests/unit/email-outbox-worker.test.ts",
     ],
   },
