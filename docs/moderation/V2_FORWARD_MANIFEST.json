@@ -8,7 +8,7 @@
     },
     {
       "file": "20261018182448_moderation_v2_input_validation.sql",
-      "sha256": "e1ba2d9268c47838a2e7499450b20e6c8fd04389aa56cbadcba7396ee45b52b5"
+      "sha256": "74bb9f01278bc7e782a2ee9377cbda30bebe739fd5c25f0ec1505edabf4fa503"
     }
   ],
   "tests": [
@@ -19,7 +19,7 @@
     },
     {
       "file": "moderation_v2_input_validation.test.sql",
-      "sha256": "ff4ce23165e7cda850df20f907bb8d113cbce4f39e9ce44c2dc60ff4c1680855",
+      "sha256": "354b6da0d168515927a5cd03e293c5ed5c4de45e5b4a2b303aa8573230f12d06",
       "assertions": 48
     }
   ]

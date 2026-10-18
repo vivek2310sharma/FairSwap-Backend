@@ -65,11 +65,11 @@ AS $$
   SELECT pg_catalog.regexp_replace(
     pg_catalog.regexp_replace(
       val,
-      '^[\x09\x0A\x0B\x0C\x0D\x20\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+',
+      E'^[\\x09\\x0A\\x0B\\x0C\\x0D\\x20\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+',
       '',
       'g'
     ),
-    '[\x09\x0A\x0B\x0C\x0D\x20\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+$',
+    E'[\\x09\\x0A\\x0B\\x0C\\x0D\\x20\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+$',
     '',
     'g'
   );
@@ -84,7 +84,7 @@ PARALLEL SAFE
 SECURITY INVOKER
 SET search_path = ''
 AS $$
-  SELECT (pg_catalog.length(val) + COALESCE(pg_catalog.cardinality(pg_catalog.regexp_matches(val, '[\uD800-\uDBFF\uDC00-\uDFFF]|[\U00010000-\U0010FFFF]', 'g')), 0))::integer;
+  SELECT pg_catalog.length(val) + pg_catalog.regexp_count(val, E'[\\U00010000-\\U0010FFFF]');
 $$;
 
 -- Computes SHA-256 hex digest over exact unmodified UTF-8 bytes

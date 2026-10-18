@@ -28,6 +28,15 @@ SELECT ok(has_function_privilege('service_role', 'app_moderation_v2.validate_v2_
 SELECT ok(has_function_privilege('service_role', 'app_moderation_v2.validate_v2_stored_text(text,text)', 'EXECUTE'),
   'service_role can execute validate_v2_stored_text');
 
+SELECT ok(NOT has_function_privilege('anon', 'app_moderation_v2.js_trim(text)', 'EXECUTE'),
+  'anonymous role cannot execute js_trim');
+SELECT ok(has_function_privilege('service_role', 'app_moderation_v2.js_trim(text)', 'EXECUTE'),
+  'service_role can execute js_trim');
+SELECT ok(NOT has_function_privilege('anon', 'app_moderation_v2.js_utf16_length(text)', 'EXECUTE'),
+  'anonymous role cannot execute js_utf16_length');
+SELECT ok(has_function_privilege('service_role', 'app_moderation_v2.js_utf16_length(text)', 'EXECUTE'),
+  'service_role can execute js_utf16_length');
+
 -- 3. Deterministic outcome: valid lower bounds and upper bounds
 SELECT is(
   app_moderation_v2.validate_v2_stored_text('abc', '1234567890'),
@@ -217,8 +226,10 @@ BEGIN
   VALUES (v_user_id, 'test_c2a@fairswap.internal')
   ON CONFLICT DO NOTHING;
 
-  SELECT id INTO v_category_id FROM public.categories LIMIT 1;
-  SELECT id INTO v_city_id FROM public.cities LIMIT 1;
+  SELECT id INTO v_category_id FROM public.categories
+  WHERE is_active AND new_listing_enabled AND macro_category = 'goods'
+  LIMIT 1;
+  SELECT id INTO v_city_id FROM public.cities WHERE is_active LIMIT 1;
 
   INSERT INTO public.listings (
     id, seller_id, category_id, city_id, title, description, status, revision
