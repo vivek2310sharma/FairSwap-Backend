@@ -1,0 +1,78 @@
+name: Backend V2 forward migration PG15 (test only)
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/forward-migrations/moderation-v2/**'
+      - 'supabase/tests/moderation_v2_*.test.sql'
+      - 'docs/moderation/V2_FORWARD_MANIFEST.json'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/forward-migrations/moderation-v2/**'
+      - 'supabase/tests/moderation_v2_*.test.sql'
+      - 'docs/moderation/V2_FORWARD_MANIFEST.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-v2-forward-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  forward-pg15:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 2
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        timeout-minutes: 3
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+
+      - name: Verify historical migration baseline
+        timeout-minutes: 1
+        run: node scripts/ci/verify-baseline.mjs
+
+      - name: Verify only allowlisted V2 forward SQL and pgTAP sources
+        timeout-minutes: 1
+        run: |
+          node scripts/ci/verify-v2-forward.mjs --check
+          node --test scripts/ci/verify-v2-forward.test.mjs
+
+      - name: Apply approved forward SQL only in network-isolated disposable PG15
+        timeout-minutes: 27
+        run: |
+          timeout --signal=TERM --kill-after=30s 25m \
+            bash scripts/ci/run-local-db.sh "$RUNNER_TEMP/backend-v2-forward-evidence" --v2-forward
+          echo 'PASS: V2 forward overlay, SQL suites and baseline security all verified'
+
+      - name: Verify sanitized baseline and isolation evidence
+        timeout-minutes: 1
+        run: node scripts/ci/verify-db-results.mjs --verify "$RUNNER_TEMP/backend-v2-forward-evidence"
+
+      - name: Upload sanitized baseline evidence only
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        timeout-minutes: 2
+        with:
+          name: backend-v2-forward-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/backend-v2-forward-evidence/result.json
+            ${{ runner.temp }}/backend-v2-forward-evidence/suite-results.json
+            ${{ runner.temp }}/backend-v2-forward-evidence/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false

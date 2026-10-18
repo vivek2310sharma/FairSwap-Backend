@@ -74,6 +74,10 @@ jobs:
         timeout-minutes: 1
         run: node --test scripts/ci/verification.test.mjs
 
+      - name: Validate sealed V2 forward migration contract (offline only)
+        timeout-minutes: 1
+        run: node --test scripts/ci/verify-v2-forward.test.mjs
+
       - name: Run the six unit files with network-blocking setup
         id: unit
         timeout-minutes: 3
