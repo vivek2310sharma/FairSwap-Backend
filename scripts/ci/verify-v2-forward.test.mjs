@@ -130,3 +130,50 @@ test("does not mutate source SQL or historical manifest", () => withFixture(({ d
   assert.deepEqual(readFileSync(path.join(dir, "supabase/forward-migrations/moderation-v2", migration)), a);
   assert.deepEqual(readFileSync(path.join(dir, "docs/extraction/MIGRATION_MANIFEST.sha256")), b);
 }));
+
+import { verifyForwardDb, verifyForwardSuite } from "./verify-v2-forward-results.mjs";
+
+test("checks exact forward ledger while retaining all 58 V1 migration versions", () => {
+  const existing = Array.from({ length: 58 }, (_, i) => String(20260901000000 + i));
+  const before = { migration_versions: existing, moderation_automation_enabled: "false",
+    vault_count: 0, httpRequests: 0, httpResponses: 0,
+    checks: { authRoles: "unchanged", v1Rls: true }, triggerAclContext: [] };
+  const version = "20261101000000";
+  const after = { ...structuredClone(before), migration_versions: [...existing, version].sort() };
+  const evidence = verifyForwardDb(before, after, [version + "_moderation_v2_synthetic.sql"]);
+  assert.equal(evidence.v1StateUnchanged, true);
+  assert.equal(evidence.forwardMigrations, 1);
+  assert.throws(() => verifyForwardDb(before, { ...after, vault_count: 1 }, [version + "_moderation_v2_synthetic.sql"]));
+  assert.throws(() => verifyForwardDb(before, { ...after, moderation_automation_enabled: "true" },
+    [version + "_moderation_v2_synthetic.sql"]));
+  assert.throws(() => verifyForwardDb(before, { ...after, checks: { v1Rls: false } },
+    [version + "_moderation_v2_synthetic.sql"]));
+  assert.throws(() => verifyForwardDb(before, { ...after, migration_versions: existing },
+    [version + "_moderation_v2_synthetic.sql"]));
+});
+
+test("requires exactly one clean pg_prove completion with approved assertion count", () => {
+  const log = "Running /task/supabase/tests/moderation_v2_synthetic.test.sql\n"
+    + "All tests successful.\nFiles=1, Tests=2, 0 wallclock secs\nResult: PASS\n";
+  assert.equal(verifyForwardSuite("moderation_v2_synthetic.test.sql", 2, log).success, true);
+  assert.throws(() => verifyForwardSuite("moderation_v2_synthetic.test.sql", 1, log));
+  assert.throws(() => verifyForwardSuite("moderation_v2_other.test.sql", 2, log));
+  assert.throws(() => verifyForwardSuite("moderation_v2_synthetic.test.sql", 2,
+    log.replace("Result: PASS", "Result: FAIL")));
+  assert.throws(() => verifyForwardSuite("moderation_v2_synthetic.test.sql", 2, log + "not ok 2\n"));
+});
+
+test("opt-in runner cannot bypass baseline, isolation or exact migration inventory", () => {
+  const runner = readFileSync(path.join(root, "scripts/ci/run-local-db.sh"), "utf8");
+  const baseline = runner.indexOf("failure_stage=security-after");
+  const forward = runner.indexOf("if [[ $v2_forward_mode == 1 ]]; then");
+  const isolation = runner.indexOf('check_isolation "$raw/isolation-after.json"');
+  assert.ok(baseline >= 0 && forward > baseline && isolation > forward);
+  assert.match(runner, /FAIRSWAP_DB_V2_FORWARD="\$v2_forward_mode"/);
+  assert.match(runner, /verify-v2-forward\.mjs" --check/);
+  assert.match(runner, /verify-v2-forward-results\.mjs" --check-db/);
+  assert.match(runner, /cli_local migration up --local/);
+  assert.match(runner, /v2-forward-security/);
+  assert.match(runner, /rm -- "\$project\/supabase\/migrations\/\$file"/);
+  assert.match(runner, /node "\$root\/scripts\/ci\/verify-baseline\.mjs"/);
+});
