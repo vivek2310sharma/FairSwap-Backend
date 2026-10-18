@@ -19,7 +19,7 @@
     },
     {
       "file": "moderation_v2_input_validation.test.sql",
-      "sha256": "261d20c040a688119507739c4d87553f4ad231214e88a780aaea8bd592a9f133",
+      "sha256": "b6d6450017f22e2028b814b42e23ec3fe6970566847c9311166e17d41aba1c6e",
       "assertions": 51
     }
   ]

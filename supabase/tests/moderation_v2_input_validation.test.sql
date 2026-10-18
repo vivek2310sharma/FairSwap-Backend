@@ -235,8 +235,14 @@ BEGIN
   ON CONFLICT (id) DO NOTHING;
 
   -- Immediately verify the category is eligible
-  IF NOT app_security.is_new_listing_category_eligible(v_category_id) THEN
-    RAISE EXCEPTION 'SETUP_FAIL: Test category % was not category-eligible', v_category_id;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.categories
+    WHERE id = v_category_id
+      AND is_active = true
+      AND new_listing_enabled = true
+      AND macro_category = 'goods'
+  ) OR NOT app_security.is_new_listing_category_eligible(v_category_id) THEN
+    RAISE EXCEPTION 'SETUP_FAIL: Test category % was not eligible or metadata mismatch', v_category_id;
   END IF;
 
   INSERT INTO public.cities (id, name, state, slug, is_active)
