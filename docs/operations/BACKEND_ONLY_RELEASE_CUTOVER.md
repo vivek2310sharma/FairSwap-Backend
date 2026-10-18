@@ -2,6 +2,8 @@
 
 **Status: PREPARED / NOT YET AUTHORITY-TRANSFERRED (18 October 2026).** This document explicitly does **not** claim that Web deployment credentials have been revoked or that Backend has been granted exclusive deploy rights.
 
+**Owner-approved freeze checkpoint (18 October 2026):** The owner attested that all **four legacy personal CLI tokens** (three Windows, one Mac/iOS) are unused and approved freezing old Web/Windows/Mac manual hosted Supabase deployments. Web [staging PR #169](https://github.com/vivek2310sharma/FairSwap-Web/pull/169) and [main PR #170](https://github.com/vivek2310sharma/FairSwap-Web/pull/170) now block `apply`/`rollback` in the two legacy Web Auth Management API tools *before network access* while retaining read-only `audit`. Web operator guidance [#171](https://github.com/vivek2310sharma/FairSwap-Web/pull/171) and [#172](https://github.com/vivek2310sharma/FairSwap-Web/pull/172) prohibits old Web/manual hosted releases. **This is a repository/operator freeze, NOT account-level token revocation**; direct Supabase CLI writes remain possible until those four PATs are revoked. **Backend release authority is still ungranted.** Current required owner action: revoke the four named old personal PATs in the Supabase account Access Tokens dashboard (do **not** revoke project-scoped Backend Test/Production tokens or Web runtime API keys), then report revocation status without sharing token values.
+
 ## Current verified evidence
 
 - Shared Backend source and 58 immutable historical SQL files are present in `FairSwap-Backend`.
