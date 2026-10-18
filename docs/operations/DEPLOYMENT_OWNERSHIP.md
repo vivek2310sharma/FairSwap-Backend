@@ -1,5 +1,7 @@
 # Deployment ownership
 
+> **18 October 2026 cutover:** Backend-only schema/function deployment ownership is **NOT YET VERIFIED**. The migration source is canonical in Backend, but Web read-only CI checkout, actual Web deployment-credential revocation, and Backend deploy-authority grant remain separate gates. See [exclusive owner cutover runbook](BACKEND_ONLY_RELEASE_CUTOVER.md). No change here confers authority by documentation alone.
+
 ## Production status update (18 October 2026; no ownership transfer)
 
 The hidden Cars/Two-Wheelers/Property database foundation was applied by an explicitly authorized manual Supabase CLI operator on 18 October 2026 (UTC completion 17 October 22:45:51). FairSwapProd's verified migration history is now **52 versions**. [Deployment receipt](../../releases/production/category-foundation-v1/production-deployment-20261018.json).
