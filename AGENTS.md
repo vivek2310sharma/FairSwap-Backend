@@ -1,5 +1,8 @@
 # FairSwap-Backend agent instructions
 
+> **Current-state override (18 October 2026):** FairSwap-Web PR #159 (staging) and PR #160 (main) have removed all 58 original historical migration SQL and 10 pgTAP duplicate files from Web. Read-only GitHub App checkout of pinned Backend source powers Web CI and passed all required checks. Older Stage 1A/1B/2A instructions below that prohibit *any* Web source cleanup are now historical stage boundaries, **not a reversal of the accepted Web cleanup**. Do not restore duplicate SQL to Web. Hosted Supabase deployment authority still has **NOT** been transferred; revocation and Backend-only credential verification are separate gates. FairSwapProd has 52 pinned deployed versions; never push this repository's raw 58-file historical source directory to it. Web remains owner of Next.js/Vercel and runtime Auth/media APIs.
+
+
 ## Authority and current stage
 
 Read `docs/extraction/POINT1_BASELINE.md` and
