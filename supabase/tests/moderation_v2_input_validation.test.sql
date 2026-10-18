@@ -222,9 +222,28 @@ DECLARE
   v_req_id uuid;
 BEGIN
   -- Insert prerequisites
-  INSERT INTO auth.users (id, email)
-  VALUES (v_user_id, 'test_c2a@fairswap.internal')
+  INSERT INTO auth.users (id, email, raw_user_meta_data, created_at, updated_at)
+  VALUES (
+    v_user_id,
+    'test_c2a@fairswap.internal',
+    jsonb_build_object(
+      'display_name', 'Test C2a Seller',
+      'terms_accepted', 'true',
+      'terms_version', '2026-09-18',
+      'privacy_policy_version', '2026-09-18',
+      'acceptable_use_version', '2026-09-18',
+      'age_confirmed', 'true'
+    ),
+    pg_catalog.clock_timestamp(),
+    pg_catalog.clock_timestamp()
+  )
   ON CONFLICT DO NOTHING;
+
+  INSERT INTO public.policy_acceptance_records (
+    user_id, terms_version, privacy_policy_version, acceptable_use_version, minimum_age_confirmed
+  ) VALUES (
+    v_user_id, '2026-09-18', '2026-09-18', '2026-09-18', 18
+  ) ON CONFLICT DO NOTHING;
 
   SELECT id INTO v_category_id FROM public.categories
   WHERE is_active AND new_listing_enabled AND macro_category = 'goods'
