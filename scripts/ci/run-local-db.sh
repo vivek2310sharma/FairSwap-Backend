@@ -540,17 +540,7 @@ if [[ $v2_forward_mode == 1 ]]; then
   node "$root/scripts/ci/verify-v2-forward-results.mjs" --check-db \
     "$raw/security-after.json" "$raw/v2-security-after.json" "$raw/v2-migrations.txt"
   failure_stage=v2-forward-test
-  while IFS=
-failure_stage=manifest-after
-node "$root/scripts/ci/verify-baseline.mjs"
-node --input-type=module - "$raw/manifest.json" "$root/scripts/ci/verify-baseline.mjs" "$project" <<'NODE'
-import {pathToFileURL} from 'node:url';import {writeFileSync} from 'node:fs';
-const {manifestSha256,verifyBaseline}=await import(pathToFileURL(process.argv[3]));verifyBaseline(process.argv[4]);
-writeFileSync(process.argv[2],JSON.stringify({sha256:manifestSha256,before:true,after:true}));
-NODE
-failure_stage=complete
-# EXIT trap removes task resources, validates all results and emits only sanitized evidence.
-\t' read -r file assertions; do
+  while IFS=$'\t' read -r file assertions; do
     [[ -n "$file" && "$assertions" =~ ^[1-9][0-9]*$ ]]
     cp -- "$root/supabase/tests/$file" "$project/supabase/tests/$file"
     cmp -- "$root/supabase/tests/$file" "$project/supabase/tests/$file"
