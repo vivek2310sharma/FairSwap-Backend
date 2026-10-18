@@ -1,6 +1,6 @@
 -- Disposable local PG15 only. Prove V2 request text binding and deterministic validation.
 BEGIN;
-SELECT plan(48);
+SELECT plan(51);
 
 -- 1. Schema and function presence
 SELECT has_column('app_moderation_v2', 'requests', 'original_title', 'requests has original_title column');
@@ -317,11 +317,54 @@ BEGIN
     RAISE EXCEPTION 'Immutability trigger failed to block generation_id update';
   EXCEPTION WHEN check_violation THEN
     NULL; -- expected
+  -- Test authoritative binding: inserting mismatched title must fail
+  BEGIN
+    INSERT INTO app_moderation_v2.requests (
+      listing_id, listing_revision, policy_version, request_lane, phase, status,
+      original_title, original_description
+    ) VALUES (
+      v_listing_id, 1, 'fairswap_moderation_v2.0.0', 'shadow', 'input_validation', 'pending_input',
+      'Forged Arbitrary Title', 'Authoritative DB Description text for local inspection.'
+    );
+    RAISE EXCEPTION 'Binding trigger failed to reject mismatched original_title';
+  EXCEPTION WHEN check_violation THEN
+    NULL; -- expected
+  END;
+
+  -- Test authoritative binding: inserting mismatched description must fail
+  BEGIN
+    INSERT INTO app_moderation_v2.requests (
+      listing_id, listing_revision, policy_version, request_lane, phase, status,
+      original_title, original_description
+    ) VALUES (
+      v_listing_id, 1, 'fairswap_moderation_v2.0.0', 'shadow', 'input_validation', 'pending_input',
+      'Authoritative DB Title', 'Forged Arbitrary Description'
+    );
+    RAISE EXCEPTION 'Binding trigger failed to reject mismatched original_description';
+  EXCEPTION WHEN check_violation THEN
+    NULL; -- expected
+  END;
+
+  -- Test authoritative binding: inserting with stale revision must fail
+  BEGIN
+    INSERT INTO app_moderation_v2.requests (
+      listing_id, listing_revision, policy_version, request_lane, phase, status,
+      original_title, original_description
+    ) VALUES (
+      v_listing_id, 999, 'fairswap_moderation_v2.0.0', 'shadow', 'input_validation', 'pending_input',
+      'Authoritative DB Title', 'Authoritative DB Description text for local inspection.'
+    );
+    RAISE EXCEPTION 'Binding trigger failed to reject stale listing_revision';
+  EXCEPTION WHEN check_violation THEN
+    NULL; -- expected
   END;
 END;
 $fixture$;
 
 SELECT pass('request creation stores authoritative original text');
+SELECT pass('request creation denies mismatched original_title');
+SELECT pass('request creation denies mismatched original_description');
+SELECT pass('request creation denies stale listing_revision');
 SELECT pass('request immutability trigger allows lawful status and phase updates');
 SELECT pass('request immutability trigger denies original_title tampering');
 SELECT pass('request immutability trigger denies listing_id tampering');

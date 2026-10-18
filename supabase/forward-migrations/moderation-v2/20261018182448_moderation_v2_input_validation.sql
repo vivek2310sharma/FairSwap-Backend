@@ -16,27 +16,66 @@ COMMENT ON COLUMN app_moderation_v2.requests.original_title IS
 COMMENT ON COLUMN app_moderation_v2.requests.original_description IS
   'DB-owned immutable original listing description snapshot (nullable) at V2 request creation';
 
--- Immutability guard trigger: request association, scalar identity and original text cannot mutate
+-- Authoritative input binding & immutability guard trigger:
+-- On INSERT: verifies listing exists, listing_revision matches locked listing,
+-- and original_title/original_description match the locked listing row exactly.
+-- On UPDATE: guards request association, scalar identity and original text against modification.
 CREATE OR REPLACE FUNCTION app_moderation_v2.enforce_request_immutability()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = ''
 AS $$
+DECLARE
+  v_listing record;
 BEGIN
-  IF NEW.id <> OLD.id
-     OR NEW.listing_id <> OLD.listing_id
-     OR NEW.listing_revision <> OLD.listing_revision
-     OR NEW.generation_id <> OLD.generation_id
-     OR NEW.protocol_version <> OLD.protocol_version
-     OR NEW.policy_version <> OLD.policy_version
-     OR NEW.request_lane <> OLD.request_lane
-     OR NEW.original_title <> OLD.original_title
-     OR NEW.original_description IS DISTINCT FROM OLD.original_description
-     OR NEW.created_at <> OLD.created_at THEN
-    RAISE EXCEPTION 'app_moderation_v2.requests immutable fields cannot be modified'
-      USING ERRCODE = '23514'; -- check_violation
+  IF TG_OP = 'INSERT' THEN
+    -- Verify and bind against the locked authoritative listing row
+    SELECT title, description, revision
+    INTO v_listing
+    FROM public.listings
+    WHERE id = NEW.listing_id
+    FOR SHARE;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Referenced listing does not exist'
+        USING ERRCODE = '23503'; -- foreign_key_violation
+    END IF;
+
+    IF NEW.listing_revision <> v_listing.revision THEN
+      RAISE EXCEPTION 'Stale listing revision: request revision % does not match listing revision %',
+        NEW.listing_revision, v_listing.revision
+        USING ERRCODE = '23514'; -- check_violation
+    END IF;
+
+    IF NEW.original_title <> v_listing.title THEN
+      RAISE EXCEPTION 'Request original_title does not match authoritative listing title'
+        USING ERRCODE = '23514'; -- check_violation
+    END IF;
+
+    IF NEW.original_description IS DISTINCT FROM v_listing.description THEN
+      RAISE EXCEPTION 'Request original_description does not match authoritative listing description'
+        USING ERRCODE = '23514'; -- check_violation
+    END IF;
+
+    RETURN NEW;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF NEW.id <> OLD.id
+       OR NEW.listing_id <> OLD.listing_id
+       OR NEW.listing_revision <> OLD.listing_revision
+       OR NEW.generation_id <> OLD.generation_id
+       OR NEW.protocol_version <> OLD.protocol_version
+       OR NEW.policy_version <> OLD.policy_version
+       OR NEW.request_lane <> OLD.request_lane
+       OR NEW.original_title <> OLD.original_title
+       OR NEW.original_description IS DISTINCT FROM OLD.original_description
+       OR NEW.created_at <> OLD.created_at THEN
+      RAISE EXCEPTION 'app_moderation_v2.requests immutable fields cannot be modified'
+        USING ERRCODE = '23514'; -- check_violation
+    END IF;
+    RETURN NEW;
   END IF;
+
   RETURN NEW;
 END;
 $$;
@@ -47,7 +86,7 @@ GRANT EXECUTE ON FUNCTION app_moderation_v2.enforce_request_immutability()
   TO service_role;
 
 CREATE TRIGGER trg_v2_requests_immutable_fields
-BEFORE UPDATE ON app_moderation_v2.requests
+BEFORE INSERT OR UPDATE ON app_moderation_v2.requests
 FOR EACH ROW
 EXECUTE FUNCTION app_moderation_v2.enforce_request_immutability();
 
@@ -177,11 +216,11 @@ BEGIN
   v_title_res := app_moderation_v2.validate_text_field('title', title_val);
   v_desc_res := app_moderation_v2.validate_text_field('description', desc_val);
 
-  IF v_title_res->'error' IS NOT NULL THEN
+  IF pg_catalog.jsonb_typeof(v_title_res->'error') = 'object' THEN
     v_errors := v_errors || pg_catalog.jsonb_build_array(v_title_res->'error');
   END IF;
 
-  IF v_desc_res->'error' IS NOT NULL THEN
+  IF pg_catalog.jsonb_typeof(v_desc_res->'error') = 'object' THEN
     v_errors := v_errors || pg_catalog.jsonb_build_array(v_desc_res->'error');
   END IF;
 
