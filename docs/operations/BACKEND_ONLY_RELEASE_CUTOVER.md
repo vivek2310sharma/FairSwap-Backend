@@ -20,11 +20,16 @@
 | GitHub Actions read-only private Backend source access for Web CI | **Read-only GitHub App**; never use a backend deployment token |
 | Production activation of Cars, Two-Wheelers, Property | Unchanged, OFF |
 
-## Access credential setup (reported, verification pending)
+## Access credential setup — read-only scope verified
 
-On 18 October 2026 the owner reported creating two Supabase **project-scoped** PATs and adding their values as `FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN` and `FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN` under **FairSwap-Backend repository Actions secrets**. These tokens have no expiry per the owner's preference. Their scope and presence remain **unverified until the manual, read-only check is separately authorized and passes**. See [token scope verification guide](BACKEND_SCOPED_TOKEN_CHECK.md).
+On 18 October 2026 the owner created two Supabase **project-scoped** PATs (set to never expire) and saved their values in **FairSwap-Backend repository Actions secrets**. Each secret was exercised only by its matching **manually triggered, read-only GitHub Actions job**. Both jobs succeeded:
 
-This is **credential storage**, not authority transfer: Web/manual CLI deploy identities have not been independently revoked, and no remote deployment workflow is installed. `main` raw 58-file migrations are not safe for either Test (live 61) or Production (live 52). Keep Production remote SQL changes disabled.
+- **Test:** [`FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN` check](https://github.com/vivek2310sharma/FairSwap-Backend/actions/runs/39126378994), `verify-test` passed; Test responded HTTP 200 and Production rejected the token (HTTP 403/404).
+- **Production:** [`FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN` check](https://github.com/vivek2310sharma/FairSwap-Backend/actions/runs/39126417831), `verify-production` passed; Production responded HTTP 200 and Test rejected the token (HTTP 403/404).
+
+These runs establish presence and correct **project read-access isolation**, not a successful migration deploy, independent approval enforcement, or revocation of old identities. Token values were not displayed. See the [token scope guide](BACKEND_SCOPED_TOKEN_CHECK.md).
+
+**Authority transfer remains pending:** Web/manual CLI deploy identities have not been independently revoked, and no hosted database/Edge deployment workflow is installed. `main` raw 58-file migrations are not safe for either Test (live 61) or Production (live 52). Keep Production remote SQL changes disabled.
 
 ## Mandatory safe cutover (no overlap)
 
