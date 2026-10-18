@@ -5,6 +5,10 @@
     {
       "file": "20261018172250_moderation_v2_private_foundation.sql",
       "sha256": "58c9ea477aa92a196107fb7d0b71089cf12dba9f4b2b986ad74b45d54e84d19e"
+    },
+    {
+      "file": "20261018182448_moderation_v2_input_validation.sql",
+      "sha256": "e1ba2d9268c47838a2e7499450b20e6c8fd04389aa56cbadcba7396ee45b52b5"
     }
   ],
   "tests": [
@@ -12,6 +16,11 @@
       "file": "moderation_v2_foundation.test.sql",
       "sha256": "e08c8fea04eab864c18d47a69e1d3ee4d8dab1801272cc0da10f11f3126202e9",
       "assertions": 38
+    },
+    {
+      "file": "moderation_v2_input_validation.test.sql",
+      "sha256": "ff4ce23165e7cda850df20f907bb8d113cbce4f39e9ce44c2dc60ff4c1680855",
+      "assertions": 48
     }
   ]
 }
