@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "baselineSha256": "eb2dfee779a15634927cfbf25fcd6ffc59df591a585d1ec8f5f3d40e5caaf1dd",
+  "migrations": [
+    {
+      "file": "20261018172250_moderation_v2_private_foundation.sql",
+      "sha256": "58c9ea477aa92a196107fb7d0b71089cf12dba9f4b2b986ad74b45d54e84d19e"
+    }
+  ],
+  "tests": [
+    {
+      "file": "moderation_v2_foundation.test.sql",
+      "sha256": "e08c8fea04eab864c18d47a69e1d3ee4d8dab1801272cc0da10f11f3126202e9",
+      "assertions": 38
+    }
+  ]
+}
