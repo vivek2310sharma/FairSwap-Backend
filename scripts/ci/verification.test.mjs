@@ -6,16 +6,16 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { verifyBaseline } from "./verify-baseline.mjs";
-import { approvedFiles, approvedNetworkSetup, verifyConfiguredFiles, verifyUnitIsolation, verifyUnitResults } from "./verify-unit-results.mjs";
+import { approvedFileCount, approvedTestCount, approvedFiles, approvedNetworkSetup, verifyConfiguredFiles, verifyUnitIsolation, verifyUnitResults } from "./verify-unit-results.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const config = readFileSync(path.join(root, "vitest.config.ts"), "utf8");
+const config = readFileSync(path.join(root, "vitest.config.ts"), "utf8").replaceAll("\r\n", "\n");
 
 function passingReport() {
   return {
     success: true,
-    numTotalTests: 93,
-    numPassedTests: 93,
+    numTotalTests: approvedTestCount,
+    numPassedTests: approvedTestCount,
     numFailedTests: 0,
     numPendingTests: 0,
     numTodoTests: 0,
@@ -54,9 +54,9 @@ function withTemporaryDirectory(callback) {
 test("accepts the existing explicit configuration and a complete report", () => {
   verifyConfiguredFiles(config);
   const summary = verifyUnitResults(passingReport());
-  assert.equal(summary.totalFiles, 5);
-  assert.equal(summary.totalPassed, 93);
-  assert.deepEqual(summary.files.map(f => f.passed), [39, 7, 10, 3, 34]);
+  assert.equal(summary.totalFiles, approvedFileCount);
+  assert.equal(summary.totalPassed, approvedTestCount);
+  assert.deepEqual(summary.files.map(f => f.passed), [39, 7, 10, 3, 34, 103, 83, 60]);
   assert.ok(!JSON.stringify(summary).includes(root));
 });
 
@@ -72,7 +72,7 @@ test("accepts exact relative and Windows-style absolute filenames", () => {
 const negativeReports = {
   "unsuccessful run": r => { r.success = false; },
   "missing totals": r => { delete r.numPassedTests; },
-  "wrong totals": r => { r.numTotalTests = 92; },
+  "wrong totals": r => { r.numTotalTests = approvedTestCount - 1; },
   "failed tests": r => { r.numFailedTests = 1; },
   "pending tests": r => { r.numPendingTests = 1; },
   "todo tests": r => { r.numTodoTests = 1; },
@@ -187,7 +187,7 @@ test("isolation pins the existing raw setup bytes and rejects weakened, missing 
 
 test("workflow checks isolation immediately before unit execution with failure propagation", () => {
   const workflow = readFileSync(path.join(root, ".github/workflows/backend-ci.yml"), "utf8");
-  const unitStep = workflow.slice(workflow.indexOf("      - name: Run the five unit files"),
+  const unitStep = workflow.slice(workflow.indexOf("      - name: Run approved unit files"),
     workflow.indexOf("      - name: Verify exact results"));
   assert.match(unitStep, /run: \|\r?\n\s+node scripts\/ci\/verify-unit-results\.mjs --check-isolation\r?\n\s+env -i/);
   assert.match(unitStep, /corepack pnpm test:unit/);
@@ -216,7 +216,7 @@ test("CLI fails closed for missing/malformed reports and writes only sanitized s
     writeFileSync(reportPath, JSON.stringify(passingReport()));
     const run = spawnSync(process.execPath, [script, reportPath, "--summary", summaryPath], { encoding: "utf8" });
     assert.equal(run.status, 0);
-    assert.equal(JSON.parse(readFileSync(summaryPath, "utf8")).totalPassed, 93);
+    assert.equal(JSON.parse(readFileSync(summaryPath, "utf8")).totalPassed, approvedTestCount);
     const before = readFileSync(reportPath);
     const overwrite = spawnSync(process.execPath, [script, reportPath, "--summary", reportPath]);
     assert.equal(overwrite.status, 1);

@@ -22,6 +22,8 @@
     "src/__tests__/moderation-worker.test.ts",
     "src/__tests__/moderation-worker-vault-auth.test.ts",
     "src/__tests__/moderation-v2-contract.test.ts",
+    "src/__tests__/moderation-v2-provider.test.ts",
+    "src/__tests__/moderation-v2-evaluator.test.ts",
     "tests/unit/email-outbox-worker.test.ts",
     "tests/setup/no-network.ts",
     "supabase/functions/_shared/email-outbox-worker.ts",

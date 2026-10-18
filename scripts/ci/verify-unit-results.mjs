@@ -15,7 +15,13 @@ export const approvedFiles = Object.freeze({
   "src/__tests__/moderation-worker.test.ts": 10,
   "src/__tests__/moderation-worker-vault-auth.test.ts": 3,
   "tests/unit/email-outbox-worker.test.ts": 34,
+  "src/__tests__/moderation-v2-contract.test.ts": 103,
+  "src/__tests__/moderation-v2-provider.test.ts": 83,
+  "src/__tests__/moderation-v2-evaluator.test.ts": 60,
 });
+
+export const approvedFileCount = Object.keys(approvedFiles).length;
+export const approvedTestCount = Object.values(approvedFiles).reduce((sum, count) => sum + count, 0);
 
 function requireCondition(condition, message) {
   if (!condition) throw new Error(message);
@@ -75,7 +81,7 @@ export function verifyConfiguredFiles(source) {
   const actual = include.elements.map(e => e.text);
   const expected = Object.keys(approvedFiles);
   requireCondition(actual.length === expected.length && new Set(actual).size === expected.length
-    && expected.every(file => actual.includes(file)), "Vitest discovery differs from the five approved files");
+    && expected.every(file => actual.includes(file)), "Vitest discovery differs from the approved files");
 }
 
 export function verifyUnitIsolation(root = repositoryRoot) {
@@ -92,13 +98,13 @@ export function verifyUnitResults(report, root = repositoryRoot) {
   requireCondition(report !== null && typeof report === "object" && !Array.isArray(report), "Expected JSON report object");
   requireCondition(report.success === true, "Vitest success must be true");
   for (const key of ["numTotalTests", "numPassedTests"]) {
-    requireCondition(report[key] === 93, `Expected 93 in ${key}`);
+    requireCondition(report[key] === approvedTestCount, `Expected ${approvedTestCount} in ${key}`);
   }
   for (const key of ["numFailedTests", "numPendingTests", "numTodoTests", "numFailedTestSuites", "numPendingTestSuites"]) {
     requireCondition(report[key] === 0, `Expected zero in ${key}`);
   }
   // Vitest 3 counts nested describe groups here; testResults is the file inventory.
-  requireCondition(Number.isSafeInteger(report.numTotalTestSuites) && report.numTotalTestSuites >= 5
+  requireCondition(Number.isSafeInteger(report.numTotalTestSuites) && report.numTotalTestSuites >= approvedFileCount
     && report.numPassedTestSuites === report.numTotalTestSuites, "Suite totals must all pass");
   for (const key of ["numSkippedTests", "numSkippedTestSuites", "numRuntimeErrorTestSuites", "unhandledErrorCount"]) {
     requireCondition(report[key] === undefined || report[key] === 0, `Unexpected ${key}`);
@@ -108,7 +114,7 @@ export function verifyUnitResults(report, root = repositoryRoot) {
       "Unexpected report errors");
   }
   requireCondition(report.snapshot?.failure === false, "Snapshot failure state must be false");
-  requireCondition(Array.isArray(report.testResults) && report.testResults.length === 5, "Expected exactly five test files");
+  requireCondition(Array.isArray(report.testResults) && report.testResults.length === approvedFileCount, "Expected exactly the approved test files");
   const normalizedRoot = path.resolve(root).replaceAll("\\", "/").replace(/\/$/, "");
   const seen = new Set();
   for (const result of report.testResults) {
@@ -136,8 +142,8 @@ export function verifyUnitResults(report, root = repositoryRoot) {
     schemaVersion: 1,
     success: true,
     files: Object.entries(approvedFiles).map(([file, passed]) => ({ file, passed })),
-    totalFiles: 5,
-    totalPassed: 93,
+    totalFiles: approvedFileCount,
+    totalPassed: approvedTestCount,
     failed: 0,
     skippedOrPending: 0,
   };
@@ -158,7 +164,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       requireCondition(!summaryPath || path.resolve(summaryPath) !== path.resolve(args[0]), "Summary must not overwrite raw report");
       verifyUnitIsolation();
       summary = verifyUnitResults(JSON.parse(readFileSync(args[0], "utf8")));
-      console.log("PASS: exactly five approved files and 93 passed tests (39/7/10/3/34)");
+      console.log(`PASS: exactly ${approvedFileCount} approved files and ${approvedTestCount} passed tests`);
     }
   } catch {
     // Never echo raw JSON, assertion messages, report filenames or local absolute paths.

@@ -82,23 +82,55 @@ describe("isolated OpenAI moderation adapter", () => {
     const body = fixture(); mutate(body);
     expect(await moderateOpenAI(text, options(body))).toMatchObject({ ok: false, code: "PROVIDER_SCHEMA" });
   });
-  it.each(["unsupported flag", "unsupported score", "required image absent", "support changed"])("rejects image %s", async test => {
+  it("masks all valid unsupported image scores without claiming coverage", async () => {
+    const body = fixture("image");
+    for (const category of categories.slice(0, 7)) body.results[0].category_scores[category] = 0.004;
+    const result = await moderateOpenAI(image, options(body));
+    expect(result).toMatchObject({ ok: true, flagged: false });
+    if (!result.ok) throw new Error("Expected synthetic success");
+    expect(result.findings.filter(f => !f.applicable)).toEqual(categories.slice(0, 7).map(category =>
+      ({ category, applicable: false, flag: null, score: null })));
+  });
+  it.each([-0.1, 1.1, null, "0.1"])("rejects invalid unsupported image score %s", async score => {
+    const body = fixture("image");
+    Object.assign(body.results[0].category_scores, { hate: score });
+    expect(await moderateOpenAI(image, options(body))).toMatchObject({ ok: false, code: "PROVIDER_SCHEMA" });
+  });
+  it.each(["unsupported flag", "required image absent", "support changed"])("rejects image %s", async test => {
     const body = fixture("image");
     if (test === "unsupported flag") body.results[0].categories.hate = true;
-    if (test === "unsupported score") body.results[0].category_scores.hate = 0.1;
+
     if (test === "required image absent") delete body.results[0].categories.violence;
     if (test === "support changed") body.results[0].category_applied_input_types.hate = ["image"];
     expect(await moderateOpenAI(image, options(body))).toMatchObject({ ok: false, code: "PROVIDER_SCHEMA" });
   });
   it.each([[401, "PROVIDER_AUTH"], [403, "PROVIDER_AUTH"], [429, "PROVIDER_RATE_LIMIT"],
     [400, "PROVIDER_INPUT"], [413, "PROVIDER_INPUT"], [422, "PROVIDER_INPUT"],
-    [500, "PROVIDER_HTTP"], [503, "PROVIDER_HTTP"], [302, "PROVIDER_HTTP"]] as const)("sanitizes HTTP %s", async (status, code) => {
+    [500, "PROVIDER_5XX"], [503, "PROVIDER_5XX"], [302, "PROVIDER_INPUT"]] as const)("sanitizes HTTP %s", async (status, code) => {
     expect(await moderateOpenAI(text, options({ error: "SECRET synthetic payload" }, status))).toEqual({ ok: false, target: { kind: "text", field: "title" }, code });
+  });
+  it.each([201, 301, 307, 404, 405, 409, 418, 400, 401, 403, 413, 422])("omits retry metadata for non-transient HTTP %s", async status => {
+    const opts = options({ error: "synthetic sensitive error body" }, status, { "retry-after": "2" });
+    expect(await moderateOpenAI(text, opts)).toEqual({ ok: false, target: { kind: "text", field: "title" },
+      code: status === 401 || status === 403 ? "PROVIDER_AUTH" : "PROVIDER_INPUT" });
+    expect(opts.transport).toHaveBeenCalledTimes(1);
   });
   it("returns bounded numeric retry delay without retrying", async () => {
     const opts = options(null, 429, { "retry-after": "2.5" });
     expect(await moderateOpenAI(text, opts)).toMatchObject({ ok: false, code: "PROVIDER_RATE_LIMIT", retryAfterMs: 2500 });
     expect(opts.transport).toHaveBeenCalledTimes(1);
+  });
+  it("returns sanitized provider identifiers for contract mapping", async () => {
+    expect(await moderateOpenAI(text, options(fixture(), 200, { "x-request-id": "req_synthetic" })))
+      .toMatchObject({ ok: true, responseId: "synthetic-response", requestId: "req_synthetic" });
+  });
+  it.each(["url/secret", "x".repeat(201), ""])("rejects incompatible response identifier %#", async id => {
+    expect(await moderateOpenAI(text, options({ ...fixture(), id })))
+      .toMatchObject({ ok: false, code: "PROVIDER_SCHEMA" });
+  });
+  it("rejects incompatible request identifier without exposing it", async () => {
+    expect(await moderateOpenAI(text, options(fixture(), 200, { "x-request-id": "secret/url" })))
+      .toEqual({ ok: false, target: { kind: "text", field: "title" }, code: "PROVIDER_SCHEMA" });
   });
   it.each(["secret", "999999999999", "-2"])("omits unsafe retry header %s", async retry => {
     expect(await moderateOpenAI(text, options(null, 429, { "retry-after": retry }))).not.toHaveProperty("retryAfterMs");
