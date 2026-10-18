@@ -1,0 +1,96 @@
+# No push/PR/schedule trigger: only the owner can manually verify one scoped token.
+# No checkout, SQL, link, migration, function deploy, or hosted write is permitted.
+name: "[MANUAL] Verify Backend Supabase token scopes (read-only)"
+
+run-name: "Read-only Supabase token check — ${{ inputs.target }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Project-scoped token to verify (no DB writes)"
+        required: true
+        type: choice
+        default: test
+        options:
+          - test
+          - production
+
+permissions: {}
+
+concurrency:
+  group: backend-scoped-token-readonly-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  verify-test:
+    if: ${{ github.ref == 'refs/heads/main' && github.actor == 'vivek2310sharma' && inputs.target == 'test' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify Test token reaches Test but NOT Production
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ secrets.FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN }}
+          EXPECTED_REF: wpppxlnbzqynvhpeuavd
+          FORBIDDEN_REF: kriuhwppxgxsyyrbjsau
+        run: |
+          set -euo pipefail
+          if [[ -z "${ACCESS_TOKEN:-}" ]]; then
+            echo "::error::Missing FairSwapTest secret. No token value was printed."
+            exit 1
+          fi
+          status() {
+            curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --proto '=https' --connect-timeout 10 --max-time 25 \
+              --header "Authorization: Bearer ${ACCESS_TOKEN}" \
+              --header 'Accept: application/json' \
+              "https://api.supabase.com/v1/projects/$1"
+          }
+          actual="$(status "${EXPECTED_REF}")"
+          if [[ "${actual}" != '200' ]]; then
+            echo "::error::FairSwapTest read failed (HTTP ${actual}); check project and Project Settings: Read."
+            exit 1
+          fi
+          other="$(status "${FORBIDDEN_REF}")"
+          if [[ "${other}" != '403' && "${other}" != '404' ]]; then
+            echo "::error::Test token must not access FairSwapProd (HTTP ${other})."
+            exit 1
+          fi
+          echo "PASS: Test token reads FairSwapTest only; FairSwapProd access denied; zero writes."
+
+  verify-production:
+    if: ${{ github.ref == 'refs/heads/main' && github.actor == 'vivek2310sharma' && inputs.target == 'production' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify Production token reaches Production but NOT Test
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ secrets.FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN }}
+          EXPECTED_REF: kriuhwppxgxsyyrbjsau
+          FORBIDDEN_REF: wpppxlnbzqynvhpeuavd
+        run: |
+          set -euo pipefail
+          if [[ -z "${ACCESS_TOKEN:-}" ]]; then
+            echo "::error::Missing FairSwapProd secret. No token value was printed."
+            exit 1
+          fi
+          status() {
+            curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --proto '=https' --connect-timeout 10 --max-time 25 \
+              --header "Authorization: Bearer ${ACCESS_TOKEN}" \
+              --header 'Accept: application/json' \
+              "https://api.supabase.com/v1/projects/$1"
+          }
+          actual="$(status "${EXPECTED_REF}")"
+          if [[ "${actual}" != '200' ]]; then
+            echo "::error::FairSwapProd read failed (HTTP ${actual}); check project and Project Settings: Read."
+            exit 1
+          fi
+          other="$(status "${FORBIDDEN_REF}")"
+          if [[ "${other}" != '403' && "${other}" != '404' ]]; then
+            echo "::error::Production token must not access FairSwapTest (HTTP ${other})."
+            exit 1
+          fi
+          echo "PASS: Production token reads FairSwapProd only; FairSwapTest access denied; zero writes."

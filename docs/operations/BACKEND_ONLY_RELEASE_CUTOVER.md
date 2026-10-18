@@ -20,6 +20,12 @@
 | GitHub Actions read-only private Backend source access for Web CI | **Read-only GitHub App**; never use a backend deployment token |
 | Production activation of Cars, Two-Wheelers, Property | Unchanged, OFF |
 
+## Access credential setup (reported, verification pending)
+
+On 18 October 2026 the owner reported creating two Supabase **project-scoped** PATs and adding their values as `FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN` and `FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN` under **FairSwap-Backend repository Actions secrets**. These tokens have no expiry per the owner's preference. Their scope and presence remain **unverified until the manual, read-only check is separately authorized and passes**. See [token scope verification guide](BACKEND_SCOPED_TOKEN_CHECK.md).
+
+This is **credential storage**, not authority transfer: Web/manual CLI deploy identities have not been independently revoked, and no remote deployment workflow is installed. `main` raw 58-file migrations are not safe for either Test (live 61) or Production (live 52). Keep Production remote SQL changes disabled.
+
 ## Mandatory safe cutover (no overlap)
 
 1. Inventory **metadata only** for Web repository Actions secrets/environments, Web operator CLI tokens, PATs, local CLI login, externally managed deployment jobs and Vercel environment variables. Do not print or share secret values. Identify **deploy credentials** separately from necessary **Web runtime** credentials.
