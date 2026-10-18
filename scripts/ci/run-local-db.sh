@@ -3,7 +3,14 @@
 set -euo pipefail
 umask 077
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'FAIL: native Linux amd64 required' >&2; exit 1; }
-[[ $# == 1 ]] || { echo 'Usage: bash run-local-db.sh <new evidence directory>' >&2; exit 1; }
+if [[ $# == 1 ]]; then
+  v2_forward_mode=0
+elif [[ $# == 2 && $2 == --v2-forward ]]; then
+  v2_forward_mode=1
+else
+  echo 'Usage: bash run-local-db.sh <new evidence directory> [--v2-forward]' >&2
+  exit 1
+fi
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 evidence=$(realpath -m -- "$1")
 [[ $evidence != "$root" && $evidence != "$root/"* ]] || exit 1
@@ -18,8 +25,10 @@ if [[ ${FAIRSWAP_DB_CLEAN_ENV:-} != 1 ]]; then
     DOCKER_CONFIG="$task/docker" DOCKER_HOST=unix:///var/run/docker.sock \
     SUPABASE_SKIP_UPDATE_CHECK=true SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws \
     FAIRSWAP_DB_CLEAN_ENV=1 FAIRSWAP_DB_TASK="$task" FAIRSWAP_DB_OWNER="$owner" \
-    bash "$root/scripts/ci/run-local-db.sh" "$evidence"
+    FAIRSWAP_DB_V2_FORWARD="$v2_forward_mode" \
+    bash "$root/scripts/ci/run-local-db.sh" "$evidence" "${@:2}"
 fi
+[[ ${FAIRSWAP_DB_V2_FORWARD:-} == "$v2_forward_mode" ]] || exit 1
 task=$(realpath -- "${FAIRSWAP_DB_TASK:?}")
 [[ $(basename -- "$task") == fairswap-db-ci.* && $task != "$root/"* ]] || exit 1
 [[ ${FAIRSWAP_DB_OWNER:?} == "$(cat -- "$task/owner")" ]] || exit 1
@@ -130,7 +139,7 @@ NODE
   if [[ $execution == 0 && $cleanup_ok == 1 && $collection == 0 ]]; then exit 0; fi
   # Report only an enumerated stage, never raw tool output, paths or exception text.
   case ${failure_stage:-unclassified} in
-    preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|isolation-after|manifest-after|complete|port-probe-run|port-probe-inspect|port-probe-binding|port-probe-cleanup|firewall-hooks|firewall-setup|firewall-verify|route-isolation|security-before-sql|security-before-verify|image-postgres-*|image-pgProve-*|image-authBootstrap-*|image-storageBootstrap-*|image-realtimeBootstrap-*) ;;
+    preflight|manifest-before|cli-download|cli-check|images|network-setup|port-probe|db-start|isolation-before|migrations|security-before|pgtap|security-after|v2-forward-inventory|v2-forward-apply|v2-forward-security|v2-forward-test|v2-forward-revert|isolation-after|manifest-after|complete|port-probe-run|port-probe-inspect|port-probe-binding|port-probe-cleanup|firewall-hooks|firewall-setup|firewall-verify|route-isolation|security-before-sql|security-before-verify|image-postgres-*|image-pgProve-*|image-authBootstrap-*|image-storageBootstrap-*|image-realtimeBootstrap-*) ;;
     *) failure_stage=unclassified ;;
   esac
   if [[ $execution == 0 ]]; then
@@ -506,6 +515,55 @@ NODE
 failure_stage=security-after
 docker exec -i "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
   <"$root/scripts/ci/assert-local-security.sql" >"$raw/security-after.json"
+
+# Opt-in, additive V2 forward pass; V1 baseline evidence was already captured.
+# Use the SAME disposable PG15 instance and isolated network. Do not weaken
+# its 58-migration reference checks, canonical V1 suites or cleanup ownership.
+if [[ $v2_forward_mode == 1 ]]; then
+  failure_stage=v2-forward-inventory
+  node "$root/scripts/ci/verify-v2-forward.mjs" --check >"$raw/v2-source-check.log" 2>&1
+  node "$root/scripts/ci/verify-v2-forward.mjs" --list-migrations >"$raw/v2-migrations.txt"
+  node "$root/scripts/ci/verify-v2-forward.mjs" --list-tests >"$raw/v2-tests.txt"
+  mapfile -t v2_migrations <"$raw/v2-migrations.txt"
+  [[ ${#v2_migrations[@]} -ge 1 ]]
+  for file in "${v2_migrations[@]}"; do
+    [[ ! -e "$project/supabase/migrations/$file" ]]
+    cp -- "$root/supabase/forward-migrations/moderation-v2/$file" "$project/supabase/migrations/$file"
+  done
+  failure_stage=v2-forward-apply
+  cli_local migration up --local >"$raw/v2-migration.log" 2>&1
+  failure_stage=v2-forward-security
+  docker exec -i "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
+    <"$root/scripts/ci/assert-v2-forward.sql" >"$raw/v2-security-assertions.log"
+  docker exec -i "$db" psql -X -Atq -v ON_ERROR_STOP=1 -U postgres -d postgres \
+    <"$root/scripts/ci/assert-local-security.sql" >"$raw/v2-security-after.json"
+  node "$root/scripts/ci/verify-v2-forward-results.mjs" --check-db \
+    "$raw/security-after.json" "$raw/v2-security-after.json" "$raw/v2-migrations.txt"
+  failure_stage=v2-forward-test
+  while IFS=
+failure_stage=manifest-after
+node "$root/scripts/ci/verify-baseline.mjs"
+node --input-type=module - "$raw/manifest.json" "$root/scripts/ci/verify-baseline.mjs" "$project" <<'NODE'
+import {pathToFileURL} from 'node:url';import {writeFileSync} from 'node:fs';
+const {manifestSha256,verifyBaseline}=await import(pathToFileURL(process.argv[3]));verifyBaseline(process.argv[4]);
+writeFileSync(process.argv[2],JSON.stringify({sha256:manifestSha256,before:true,after:true}));
+NODE
+failure_stage=complete
+# EXIT trap removes task resources, validates all results and emits only sanitized evidence.
+\t' read -r file assertions; do
+    [[ -n "$file" && "$assertions" =~ ^[1-9][0-9]*$ ]]
+    cp -- "$root/supabase/tests/$file" "$project/supabase/tests/$file"
+    cmp -- "$root/supabase/tests/$file" "$project/supabase/tests/$file"
+    cli_local test db --local "supabase/tests/$file" >"$raw/v2-suite-$file.log" 2>&1
+    node "$root/scripts/ci/verify-v2-forward-results.mjs" --check-suite \
+      "$file" "$assertions" "$raw/v2-suite-$file.log"
+  done <"$raw/v2-tests.txt"
+  node "$root/scripts/ci/verify-v2-forward.mjs" --check >"$raw/v2-source-recheck.log" 2>&1
+  failure_stage=v2-forward-revert
+  for file in "${v2_migrations[@]}"; do
+    rm -- "$project/supabase/migrations/$file"
+  done
+fi
 failure_stage=isolation-after
 check_isolation "$raw/isolation-after.json"
 failure_stage=manifest-after
