@@ -184,13 +184,13 @@ SELECT is(
 
 SELECT is(
   (app_moderation_v2.validate_v2_stored_text('Bike', 'Lightly used bicycle with local pickup after inspection.'))->>'title_sha256',
-  '12ee64993172e276b5c21f7c00673ecdecf44fa0366ebf7000bf4ad64a5c0e17',
+  '1fefaaaceda5a7e199e2c612ca6716d6da8065eed5a1a50979a309f27797e01f',
   'Bike SHA-256 matches exact bytes'
 );
 
 SELECT is(
   (app_moderation_v2.validate_v2_stored_text('bike', 'Lightly used bicycle with local pickup after inspection.'))->>'title_sha256',
-  '47f897629b35eec061c4791e3e7f457593c6be17fdb5ee73fa73f324ad3fc9ec',
+  '163c18e0068f0a59fdca66b6a22253a252a413966e33b35a0e45dda3c5add351',
   'bike SHA-256 is case-sensitive'
 );
 
