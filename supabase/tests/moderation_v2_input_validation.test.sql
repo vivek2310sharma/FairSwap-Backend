@@ -223,9 +223,21 @@ DECLARE
   v_now timestamptz := pg_catalog.clock_timestamp();
 BEGIN
   -- 1. Deterministic category & city
-  INSERT INTO public.categories (id, slug, name, sort_order, is_active)
-  VALUES (v_category_id, 'test-cat-v2-binding', 'Test Category V2 Binding', 99, true)
+  INSERT INTO public.categories (
+    id, slug, name, sort_order, is_active,
+    macro_category, new_listing_enabled
+  )
+  VALUES (
+    v_category_id, 'test-cat-v2-binding',
+    'Test Category V2 Binding', 99, true,
+    'goods', true
+  )
   ON CONFLICT (id) DO NOTHING;
+
+  -- Immediately verify the category is eligible
+  IF NOT app_security.is_new_listing_category_eligible(v_category_id) THEN
+    RAISE EXCEPTION 'SETUP_FAIL: Test category % was not category-eligible', v_category_id;
+  END IF;
 
   INSERT INTO public.cities (id, name, state, slug, is_active)
   VALUES (v_city_id, 'Test City V2 Binding', 'State', 'test-city-v2-binding', true)
