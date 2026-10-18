@@ -14,8 +14,8 @@ const config = readFileSync(path.join(root, "vitest.config.ts"), "utf8");
 function passingReport() {
   return {
     success: true,
-    numTotalTests: 93,
-    numPassedTests: 93,
+    numTotalTests: 196,
+    numPassedTests: 196,
     numFailedTests: 0,
     numPendingTests: 0,
     numTodoTests: 0,
@@ -54,9 +54,9 @@ function withTemporaryDirectory(callback) {
 test("accepts the existing explicit configuration and a complete report", () => {
   verifyConfiguredFiles(config);
   const summary = verifyUnitResults(passingReport());
-  assert.equal(summary.totalFiles, 5);
-  assert.equal(summary.totalPassed, 93);
-  assert.deepEqual(summary.files.map(f => f.passed), [39, 7, 10, 3, 34]);
+  assert.equal(summary.totalFiles, 6);
+  assert.equal(summary.totalPassed, 196);
+  assert.deepEqual(summary.files.map(f => f.passed), [39, 7, 10, 3, 103, 34]);
   assert.ok(!JSON.stringify(summary).includes(root));
 });
 
@@ -72,7 +72,7 @@ test("accepts exact relative and Windows-style absolute filenames", () => {
 const negativeReports = {
   "unsuccessful run": r => { r.success = false; },
   "missing totals": r => { delete r.numPassedTests; },
-  "wrong totals": r => { r.numTotalTests = 92; },
+  "wrong totals": r => { r.numTotalTests = 195; },
   "failed tests": r => { r.numFailedTests = 1; },
   "pending tests": r => { r.numPendingTests = 1; },
   "todo tests": r => { r.numTodoTests = 1; },
@@ -107,6 +107,20 @@ for (const [name, mutate] of Object.entries(negativeReports)) {
     assert.throws(() => verifyUnitResults(report));
   });
 }
+
+test("rejects missing or undercounted V2 contract suite", () => {
+  const file = "src/__tests__/moderation-v2-contract.test.ts";
+  const missing = passingReport();
+  missing.testResults = missing.testResults.filter(result => !result.name.replaceAll("\\", "/").endsWith(file));
+  assert.equal(missing.testResults.length, 5);
+  assert.throws(() => verifyUnitResults(missing));
+
+  const undercounted = passingReport();
+  const v2 = undercounted.testResults.find(result => result.name.replaceAll("\\", "/").endsWith(file));
+  assert.ok(v2);
+  v2.assertionResults.pop();
+  assert.throws(() => verifyUnitResults(undercounted));
+});
 
 test("rejects non-object JSON and missing assertion arrays", () => {
   for (const value of [null, [], "report", 1, {}]) assert.throws(() => verifyUnitResults(value));
@@ -187,7 +201,7 @@ test("isolation pins the existing raw setup bytes and rejects weakened, missing 
 
 test("workflow checks isolation immediately before unit execution with failure propagation", () => {
   const workflow = readFileSync(path.join(root, ".github/workflows/backend-ci.yml"), "utf8");
-  const unitStep = workflow.slice(workflow.indexOf("      - name: Run the five unit files"),
+  const unitStep = workflow.slice(workflow.indexOf("      - name: Run the six unit files"),
     workflow.indexOf("      - name: Verify exact results"));
   assert.match(unitStep, /run: \|\r?\n\s+node scripts\/ci\/verify-unit-results\.mjs --check-isolation\r?\n\s+env -i/);
   assert.match(unitStep, /corepack pnpm test:unit/);
@@ -216,7 +230,7 @@ test("CLI fails closed for missing/malformed reports and writes only sanitized s
     writeFileSync(reportPath, JSON.stringify(passingReport()));
     const run = spawnSync(process.execPath, [script, reportPath, "--summary", summaryPath], { encoding: "utf8" });
     assert.equal(run.status, 0);
-    assert.equal(JSON.parse(readFileSync(summaryPath, "utf8")).totalPassed, 93);
+    assert.equal(JSON.parse(readFileSync(summaryPath, "utf8")).totalPassed, 196);
     const before = readFileSync(reportPath);
     const overwrite = spawnSync(process.execPath, [script, reportPath, "--summary", reportPath]);
     assert.equal(overwrite.status, 1);
