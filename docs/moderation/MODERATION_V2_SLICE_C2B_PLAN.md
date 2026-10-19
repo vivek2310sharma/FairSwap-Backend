@@ -1,11 +1,12 @@
 ﻿# FairSwap Moderation V2 — Slice C2b Implementation Plan
 **Database-Owned Input-Validation Leases, Attempt Tokens, Idempotent Early Finalization, and Stale-Request Protection**
 
-**Status:** Revised Design Proposal for CTO Sign-Off  
+**Status:** Consolidated Design Proposal for CTO Sign-Off  
 **Worktree:** `C:\Users\VivekKumar\OneDrive - Nobly A S\Documents\FairSwap-Backend-InputLease`  
 **Branch:** `feat/moderation-v2-input-lease`  
 **Base Commit:** `fc4dcedd7f039be70ddb1e9fee62491112a872cf` (Frozen Slice C2a)  
 **Parent PR:** Draft PR #25 (`feat/moderation-v2-text-validation`, unmerged)  
+**Stack:** Draft PR #26 (this plan) stacked on PR #25  
 **Target Migration Path:** Additive forward lane (`supabase/forward-migrations/moderation-v2/`)  
 **Design Authority:**
 - `docs/moderation/MODERATION_V2_CONTRACT.md` §§5–8
@@ -18,27 +19,35 @@
 
 Slice C2a established server/DB-owned immutable text binding on `app_moderation_v2.requests` and deterministic UTF-16 scalar validation (`app_moderation_v2.validate_v2_stored_text`).
 
-Slice C2b introduces the database-owned lease and attempt lifecycle for the early `input_validation` phase:
+Slice C2b establishes the database-owned lease and attempt lifecycle for the early `input_validation` phase:
 1. **DB-Owned Input-Validation Processing Lease & Attempt Accounting:**
-   - Dedicated private tables `app_moderation_v2.input_admission_slots` (atomic slots), `app_moderation_v2.input_claims` (fenced active claims), and `app_moderation_v2.input_results` (immutable idempotency ledger).
-   - Candidate lease timing: 30s initial lease; renewal ceiling at attempt start + 60s. (Treated as provisional candidates subject to runtime measurement).
-   - Cryptographically strong, DB-generated `claim_token` (32-byte hexadecimal random secret) and unique `attempt_id`.
+   - Dedicated private tables: `app_moderation_v2.input_admission_slots` (pre-allocated atomic slots), `app_moderation_v2.input_claims` (fenced active claims), and `app_moderation_v2.input_results` (immutable idempotency ledger).
+   - Provisional timing: Exactly **two** pre-seeded admission slots for disposable testing; **30s initial lease**; **60s renewal ceiling** (attempt start + 60s). These are provisional limits for isolated local validation, not fixed production assumptions.
+   - Cryptographically strong, DB-generated `claim_token` (32-byte hex secret) and unique `attempt_id`.
 2. **Pre-Queue Authentication & Gate Verification:**
-   - Trusted-worker / Vault authentication verified before any queue claim or state modification.
-   - Enforce/shadow gating checked under transaction lock against `public.app_system_settings`:
+   - Worker must prove possession of the vault worker secret prior to queue operations, verified via existing `app_security.verify_moderation_worker_secret`.
+   - Gate and mode checked under transaction lock against `public.app_system_settings`:
      `moderation_v2_enabled = 'true'` AND `moderation_v2_mode IN ('shadow', 'enforce')`.
-   - Approved policy and approved evaluator build verified against `app_moderation_v2.policy_registry`.
-   - Enforce mode allowlist checked before any seller-facing status side effect.
-3. **Strict Lock Ordering Hierarchy:**
-   - Universal lock sequence across claim, heartbeat, recovery, and finalization:
-     `public.listings` (parent row) -> `app_moderation_v2.requests` -> `app_moderation_v2.input_claims`.
-   - Fencing via single-use `claim_token` to prevent expired or zombie workers from committing.
-4. **Stale-Request Protection:**
-   - Deep verification of listing state: matches exact `listing_revision`, `title`, `description`, `generation_id`, `policy_version`, and listing `status` in addition to checking whether revision advanced.
-5. **Normative Idempotency & Early Finalization:**
-   - Conforms strictly to `EarlyInvalidResultV2Schema` and early phase contracts in `ModerationResultV2Schema`.
-   - Idempotency bound to `(request_id, attempt_id, payload_digest)`. Replays return cached responses before re-acquiring locks or reapplying mutations; payload conflicts raise `IDEMPOTENCY_CONFLICT`.
-6. **Strict Negative Invariants (Mandatory Stop Conditions):**
+   - Policy and evaluator build verified against `app_moderation_v2.policy_registry` (`is_approved = true` AND non-null `approved_evaluator_build`).
+   - Fails closed immediately (`PROVIDER_AUTH`, `V2_DISABLED`, or `POLICY_DISAPPROVED`) without state modification.
+3. **Strict Universal Lock Hierarchy:**
+   - Universal lock hierarchy across claim, heartbeat, recovery, and finalization:
+     `public.listings` (parent row) -> `app_moderation_v2.requests` -> `app_moderation_v2.input_admission_slots` -> `app_moderation_v2.input_claims`.
+   - Competing workers acquire candidate requests and admission slots using `SKIP LOCKED`, eliminating worker contention and deadlocks.
+4. **Deep Stale-Request Protection:**
+   - Finalization verifies exact listing state under locks: `listing_revision`, `title`, `description`, `generation_id`, `policy_version`, and listing `status = 'pending_review'`.
+   - Any deviation (seller edit, Admin accept/reject/remove race, revision bump) marks request and claim `status = 'superseded'` and frees the admission slot.
+5. **Normative Schema Alignment & Canonical Hashing:**
+   - `EarlyInvalidResultV2Schema` strictly requires `outcome = 'invalid_input'` with 1–2 deterministic field validation errors, matching `title_sha256`/`description_sha256` digest binding (null for `TYPE`, exact SHA-256 for length errors).
+   - Valid text is an **internal queue phase transition**: moves request to `phase = 'preparation'`, `status = 'awaiting_media'`, releasing the lease. Valid input never produces a false `EarlyInvalidResultV2Schema`.
+   - Canonical result hashing: `payload_digest = sha256_exact_utf8(canonical_json(result))`.
+6. **Authenticated, Safe Idempotent Replay:**
+   - Worker must authenticate and present valid attempt credentials (`p_attempt_id`, `p_claim_token`).
+   - A matching completed replay returns the recorded response before acquiring parent locks or reapplying mutations. Matching replay may bypass current lease expiry, but **never** bypasses authentication or creates side effects. Conflicting payload raises `IDEMPOTENCY_CONFLICT`.
+7. **Failure Escalation & Deferral of Seller Enforce Transitions:**
+   - Retry exhaustion (attempt count reaching 3) escalates safely to Admin review (`status = 'failed'`), **never** auto-rejecting for worker/infrastructure failures.
+   - Seller-facing enforce transitions (e.g. updating listing to `draft` with correction flags) are deferred to separately reviewed integration. In Slice C2b, early finalization records the result in V2; in `shadow` mode, `public.listings` is left strictly untouched.
+8. **Strict Negative Invariants (Mandatory Stop Conditions):**
    - Early input validation **CAN NEVER APPROVE OR PUBLISH A LISTING**.
    - Zero interaction with media, image sealing, or provider dispatch.
    - Zero modifications to V1 historical migrations (all 58 files remain sealed).
@@ -49,34 +58,20 @@ Slice C2b introduces the database-owned lease and attempt lifecycle for the earl
 
 ## 2. Database Schema Design
 
-### 2.1 Atomic Concurrency & Admission Slot Table
+### 2.1 Correct DDL Dependency Order (No Circular Foreign Keys)
 
-To prevent race conditions inherent in non-atomic `COUNT(*)` queries across competing workers, global concurrency is enforced through a fixed, pre-allocated pool of admission slots:
-
-```sql
-CREATE TABLE app_moderation_v2.input_admission_slots (
-  slot_id smallint PRIMARY KEY CHECK (slot_id BETWEEN 1 AND 5), -- provisional global concurrency cap: 5
-  active_claim_id uuid REFERENCES app_moderation_v2.input_claims(id) ON DELETE SET NULL,
-  slot_acquired_at timestamptz,
-  slot_expires_at timestamptz
-);
-
--- Pre-seed fixed admission slots (1..5)
-INSERT INTO app_moderation_v2.input_admission_slots (slot_id)
-SELECT generate_series(1, 5);
-```
-
-### 2.2 Durable Input Claims Table
+To avoid circular dependencies, `input_claims` is created first without a foreign key to `input_admission_slots`, followed by `input_admission_slots`, with the slot reference established cleanly:
 
 ```sql
+-- 1. Durable Input Claims Table
 CREATE TABLE app_moderation_v2.input_claims (
   id uuid PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
   request_id uuid NOT NULL
     REFERENCES app_moderation_v2.requests(id) ON DELETE CASCADE,
   attempt_id uuid NOT NULL DEFAULT pg_catalog.gen_random_uuid(),
   attempt_number integer NOT NULL CHECK (attempt_number BETWEEN 1 AND 3),
-  claim_token_hash text NOT NULL, -- SHA-256 hex digest of secret claim_token
-  slot_id smallint NOT NULL REFERENCES app_moderation_v2.input_admission_slots(slot_id),
+  claim_token_hash text NOT NULL CHECK (claim_token_hash ~ '^[0-9a-f]{64}$'),
+  slot_id smallint NOT NULL CHECK (slot_id IN (1, 2)),
   worker_id text NOT NULL,
   lease_expires_at timestamptz NOT NULL,
   attempt_started_at timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
@@ -88,14 +83,32 @@ CREATE TABLE app_moderation_v2.input_claims (
   CONSTRAINT uq_v2_input_claims_attempt UNIQUE (request_id, attempt_id)
 );
 
-CREATE INDEX idx_v2_input_claims_active
-  ON app_moderation_v2.input_claims (request_id, lease_expires_at)
+-- At most one active claim per request at any time
+CREATE UNIQUE INDEX uq_v2_input_claims_active_request
+  ON app_moderation_v2.input_claims (request_id)
   WHERE status = 'active';
-```
 
-### 2.3 Idempotent Early Results Ledger
+CREATE INDEX idx_v2_input_claims_active_lease
+  ON app_moderation_v2.input_claims (lease_expires_at)
+  WHERE status = 'active';
 
-```sql
+-- 2. Atomic Concurrency & Pre-allocated Admission Slots
+CREATE TABLE app_moderation_v2.input_admission_slots (
+  slot_id smallint PRIMARY KEY CHECK (slot_id IN (1, 2)), -- provisional candidate: 2 slots
+  active_claim_id uuid REFERENCES app_moderation_v2.input_claims(id) ON DELETE SET NULL,
+  slot_acquired_at timestamptz,
+  slot_expires_at timestamptz
+);
+
+-- Pre-seed exactly two admission slots (1, 2)
+INSERT INTO app_moderation_v2.input_admission_slots (slot_id) VALUES (1), (2);
+
+-- At most one active claim per slot at any time
+CREATE UNIQUE INDEX uq_v2_admission_active_claim
+  ON app_moderation_v2.input_admission_slots (active_claim_id)
+  WHERE active_claim_id IS NOT NULL;
+
+-- 3. Idempotent Early Results Ledger
 CREATE TABLE app_moderation_v2.input_results (
   id uuid PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
   request_id uuid NOT NULL
@@ -122,142 +135,240 @@ All functions are declared `SECURITY INVOKER`, `SET search_path = ''`, with priv
 
 ### 3.1 Vault Worker Secret Verification
 
+Delegates to existing, verified `app_security.verify_moderation_worker_secret(p_candidate)`:
+- Missing, malformed, or invalid tokens fail closed immediately with `PROVIDER_AUTH`.
+- Verified at the start of `claim_moderation_v2_input` and `finalize_moderation_v2_input`.
+
+### 3.2 Canonical Result Hashing Specification
+
+To guarantee reproducible cross-runtime digests matching Node.js `crypto.createHash('sha256')`:
 ```sql
--- Worker must prove possession of the vault worker secret prior to queue operations
--- Wrapper delegates to app_security.verify_moderation_worker_secret
+CREATE OR REPLACE FUNCTION app_moderation_v2.canonical_early_result_digest(
+  p_phase text,
+  p_outcome text,
+  p_listing_id uuid,
+  p_listing_revision integer,
+  p_generation_id uuid,
+  p_validation_errors jsonb
+)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+  SELECT encode(
+    sha256(
+      convert_to(
+        jsonb_build_array(
+          'fairswap:v2:early_result_v1',
+          p_phase,
+          p_outcome,
+          p_listing_id,
+          p_listing_revision,
+          p_generation_id,
+          p_validation_errors
+        )::text,
+        'UTF8'
+      )
+    ),
+    'hex'
+  );
+$$;
 ```
 
-### 3.2 `claim_moderation_v2_input(p_worker_id text, p_worker_secret text)`
-- **Lock Ordering:**
-  1. System gates & policy approval verification.
-  2. `app_moderation_v2.input_admission_slots` (`FOR UPDATE SKIP LOCKED LIMIT 1`).
-  3. `app_moderation_v2.requests` (`FOR UPDATE SKIP LOCKED LIMIT 1`).
-  4. Parent `public.listings` (`FOR SHARE` to verify freshness during claim).
-- **Execution Flow:**
-  1. Authenticate worker: verify `p_worker_secret`. Fail closed with `PROVIDER_AUTH` / `UNAUTHORIZED` if invalid.
-  2. Verify gates:
-     - `moderation_v2_enabled = 'true'`
-     - `moderation_v2_mode IN ('shadow', 'enforce')`
-     - Fail closed (`V2_DISABLED`) if gates are not open.
-  3. Verify policy & build:
-     - Check `app_moderation_v2.policy_registry` for `is_approved = true` and non-null `approved_evaluator_build`.
-  4. Acquire admission slot:
-     - Select 1 slot where `active_claim_id IS NULL OR slot_expires_at <= clock_timestamp()` `FOR UPDATE SKIP LOCKED`.
-     - If none available, return `{ success: false, error: 'NO_ADMISSION_SLOT' }`.
-  5. Select candidate request:
-     - `phase = 'input_validation'`, `status IN ('pending_input', 'retry')`, `next_attempt_at <= clock_timestamp()`, `attempt_count < 3`.
-     - Lock candidate row `FOR UPDATE SKIP LOCKED`. If none available, release slot and return `{ success: false, error: 'NO_REQUEST_AVAILABLE' }`.
-  6. Verify parent listing under `FOR SHARE`:
-     - Confirm listing exists, revision equals `r.listing_revision`, title equals `r.original_title`, description IS NOT DISTINCT FROM `r.original_description`.
-     - If stale or mismatched: mark request `superseded`, release slot, and skip to next candidate.
-  7. Generate claim material:
-     - Secret `v_claim_token := encode(gen_random_bytes(32), 'hex')`.
-     - `v_token_hash := encode(sha256(convert_to(v_claim_token, 'UTF8')), 'hex')`.
-     - Initial lease: `clock_timestamp() + interval '30 seconds'`.
-     - Max renewal ceiling: `clock_timestamp() + interval '60 seconds'`.
-  8. Insert claim row into `app_moderation_v2.input_claims`.
-  9. Update slot with `active_claim_id` and expiry.
-  10. Advance request: `attempt_count := attempt_count + 1`, `status := 'claimed'`, `updated_at := clock_timestamp()`.
-  11. Return `{ success: true, request_id, attempt_id, attempt_number, claim_token, lease_expires_at, max_renewal_until, original_title, original_description, listing_revision, request_lane }`.
-
-### 3.3 `heartbeat_moderation_v2_input(p_request_id uuid, p_attempt_id uuid, p_claim_token text)`
-- **Lock Ordering:**
-  1. Lock claim row: `SELECT ... FROM app_moderation_v2.input_claims WHERE request_id = p_request_id AND attempt_id = p_attempt_id FOR UPDATE;`
-  2. Lock slot row: `SELECT ... FROM app_moderation_v2.input_admission_slots WHERE id = v_claim.slot_id FOR UPDATE;`
-- **Execution Flow:**
-  1. Verify claim exists, `status = 'active'`, and `claim_token_hash` matches `sha256(p_claim_token)`. If stolen or mismatched token, return `{ success: false, error: 'LEASE_TOKEN_MISMATCH' }`.
-  2. Check expiry: if `lease_expires_at <= clock_timestamp()`, update claim `status = 'expired'`, clear slot, and return `{ success: false, error: 'LEASE_EXPIRED' }`.
-  3. Check ceiling: if `clock_timestamp() >= max_renewal_until`, return `{ success: false, error: 'RENEWAL_CEILING_REACHED' }`.
-  4. Extend lease: `lease_expires_at := LEAST(clock_timestamp() + interval '30 seconds', max_renewal_until)`.
-  5. Update slot `slot_expires_at := lease_expires_at`.
-  6. Return `{ success: true, lease_expires_at }`.
-
-### 3.4 `recover_expired_input_claims()`
-- **Execution Flow:**
-  1. Identifies claims with `status = 'active'` AND `lease_expires_at < clock_timestamp()`.
-  2. Under lock: marks claim `status = 'expired'`, clears admission slot.
-  3. Inspects request:
-     - If `attempt_count >= 3`: sets request `status = 'failed'`, records abandonment in audit.
-     - If `attempt_count < 3`: calculates retry backoff (`next_attempt_at := clock_timestamp() + interval '10 seconds' * attempt_count + (random() * interval '3 seconds')`), sets request `status = 'retry'`.
-
-### 3.5 `finalize_moderation_v2_input(p_request_id uuid, p_attempt_id uuid, p_claim_token text, p_payload jsonb)`
-- **Input Payload Structure:**
-  Must match `EarlyInvalidResultV2Schema` or valid input outcome:
-  ```json
-  {
-    "phase": "input_validation",
-    "outcome": "valid" | "invalid_input",
-    "validation_errors": [
-      { "field": "title" | "description", "code": "TYPE" | "TOO_SHORT" | "TOO_LONG" }
-    ],
-    "title_sha256": "...",
-    "description_sha256": "..."
-  }
-  ```
-- **Lock Hierarchy (Mandatory & Invariant):**
-  1. Parent listing: `SELECT revision, title, description, status FROM public.listings WHERE id = v_listing_id FOR UPDATE;`
-  2. V2 Request: `SELECT listing_id, listing_revision, generation_id, policy_version, request_lane, original_title, original_description, status FROM app_moderation_v2.requests WHERE id = p_request_id FOR UPDATE;`
-  3. Claim: `SELECT status, claim_token_hash, lease_expires_at, slot_id FROM app_moderation_v2.input_claims WHERE request_id = p_request_id AND attempt_id = p_attempt_id FOR UPDATE;`
-- **Replay & Idempotency Check:**
-  - Compute payload digest: `v_payload_digest := encode(sha256(convert_to(p_payload::text, 'UTF8')), 'hex')`.
-  - Check `app_moderation_v2.input_results` for `(request_id, attempt_id)`:
-    - If found AND `payload_digest = v_payload_digest`: return recorded response immediately (`idempotent_replay: true`), applying **no changes** to listing, request, or claim.
-    - If found AND `payload_digest <> v_payload_digest`: raise exception `IDEMPOTENCY_CONFLICT`.
-- **Fencing & Lease Verification:**
-  - Verify `claim_token_hash = sha256(p_claim_token)`. Else raise `LEASE_TOKEN_MISMATCH`.
-  - Verify claim `status = 'active'` AND `lease_expires_at > clock_timestamp()`. Else raise `LEASE_EXPIRED`.
-- **Deep Stale-Request Verification:**
-  - Check `v_listing.revision = v_request.listing_revision`.
-  - Check `v_listing.title = v_request.original_title`.
-  - Check `v_listing.description IS NOT DISTINCT FROM v_request.original_description`.
-  - Check `v_listing.status = 'pending_review'`.
-  - If any check fails (e.g. revision bumped, title edited, status cancelled/approved by admin race):
-    - Request is marked `status = 'superseded'`.
-    - Claim is marked `status = 'superseded'`.
-    - Clear admission slot.
-    - Record result `decision = 'superseded'`.
-    - Return recorded supersede response.
-- **Independent Database Validation:**
-  - Database re-evaluates text: `v_db_eval := app_moderation_v2.validate_v2_stored_text(v_request.original_title, v_request.original_description)`.
-  - Verify payload consistency: worker's `validation_errors` must match `v_db_eval->'validation_errors'`. Mismatch raises `VALIDATION_MISMATCH`.
-- **State Transitions:**
-  - **Branch 1: Valid Text (`validation_errors = []`)**
-    - Request updates: `phase := 'preparation'`, `status := 'awaiting_media'`, `updated_at := clock_timestamp()`.
-    - Claim updates: `status := 'completed'`.
-    - Free admission slot.
-    - Record in `app_moderation_v2.input_results` (`decision := 'valid'`).
-    - Return `{ success: true, decision: 'valid', next_phase: 'preparation' }`.
-    - *Note:* Listing status remains `pending_review`. **Never approves or publishes.**
-  - **Branch 2: Invalid Text (`validation_errors.length >= 1`)**
-    - Request updates: `status := 'failed'`, `updated_at := clock_timestamp()`.
-    - Claim updates: `status := 'completed'`.
-    - Free admission slot.
-    - Record in `app_moderation_v2.input_results` (`decision := 'rejected_invalid'`).
-    - *Lane Handling:*
-      - If `request_lane = 'enforce'`: verify listing ID is on server enforce allowlist; transition listing status to seller correction state via standard status machine.
-      - If `request_lane = 'shadow'`: **do not touch `public.listings`**. Listing remains in its current state.
-    - Return `{ success: true, decision: 'rejected_invalid', validation_errors: v_db_eval->'validation_errors' }`.
+**Reproducible Test Vectors:**
+1. Valid Input Tuple:
+   - Preimage: `["fairswap:v2:early_result_v1", "input_validation", "valid", "44444444-0000-4000-8000-000000000099", 1, "99999999-0000-4000-8000-000000000099", []]`
+2. Invalid Input Tuple (Short Title):
+   - Preimage: `["fairswap:v2:early_result_v1", "input_validation", "invalid_input", "44444444-0000-4000-8000-000000000099", 1, "99999999-0000-4000-8000-000000000099", [{"code": "TOO_SHORT", "field": "title"}]]`
 
 ---
 
-## 4. Concurrency, Race Conditions, and Edge Cases
+### 3.3 `claim_moderation_v2_input(p_worker_id text, p_worker_secret text)`
+
+- **Universal Lock Hierarchy:**
+  1. System gates & policy approval verification (shared catalog read).
+  2. `public.listings` (parent row `FOR SHARE`).
+  3. `app_moderation_v2.requests` (`FOR UPDATE SKIP LOCKED LIMIT 1`).
+  4. `app_moderation_v2.input_admission_slots` (`FOR UPDATE SKIP LOCKED LIMIT 1`).
+  5. `app_moderation_v2.input_claims` (`INSERT`).
+
+- **Execution Flow:**
+  1. **Pre-Queue Authentication:**
+     `IF NOT app_security.verify_moderation_worker_secret(p_worker_secret) THEN RAISE EXCEPTION 'UNAUTHORIZED' USING ERRCODE = '28000'; END IF;`
+  2. **Gate Verification:**
+     Verify `moderation_v2_enabled = 'true'` AND `moderation_v2_mode IN ('shadow', 'enforce')`. Else return `{ success: false, error: 'V2_DISABLED' }`.
+  3. **Policy & Build Verification:**
+     Verify `app_moderation_v2.policy_registry` has `is_approved = true` and non-null `approved_evaluator_build`. Else return `{ success: false, error: 'POLICY_DISAPPROVED' }`.
+  4. **Atomic Admission Slot Reservation & Expired Slot Recovery:**
+     Acquire 1 slot `FOR UPDATE SKIP LOCKED`:
+     ```sql
+     SELECT slot_id, active_claim_id, slot_expires_at
+     INTO v_slot
+     FROM app_moderation_v2.input_admission_slots
+     WHERE active_claim_id IS NULL OR slot_expires_at <= clock_timestamp()
+     ORDER BY slot_id ASC
+     FOR UPDATE SKIP LOCKED
+     LIMIT 1;
+     ```
+     If none available, return `{ success: false, error: 'NO_ADMISSION_SLOT' }`.
+     *Atomic Invalidation of Expired Owner:* If `v_slot.active_claim_id IS NOT NULL`, atomically mark previous claim `status = 'expired'`, `updated_at = clock_timestamp()` before reassigning.
+  5. **Select Candidate Request:**
+     ```sql
+     SELECT r.id, r.listing_id, r.listing_revision, r.generation_id, r.request_lane,
+            r.policy_version, r.original_title, r.original_description, r.attempt_count
+     INTO v_req
+     FROM app_moderation_v2.requests r
+     JOIN public.listings l ON l.id = r.listing_id
+     WHERE r.phase = 'input_validation'
+       AND r.status IN ('pending_input', 'retry')
+       AND r.next_attempt_at <= clock_timestamp()
+       AND r.attempt_count < 3
+       AND NOT EXISTS (
+         SELECT 1 FROM app_moderation_v2.input_claims c
+         WHERE c.request_id = r.id AND c.status = 'active'
+       )
+     ORDER BY r.created_at ASC
+     FOR UPDATE OF r SKIP LOCKED
+     LIMIT 1;
+     ```
+     If none available, release slot (`active_claim_id = NULL`) and return `{ success: false, error: 'NO_REQUEST_AVAILABLE' }`.
+  6. **Deep Freshness Verification Under Parent Lock (`FOR SHARE`):**
+     Lock parent listing: `SELECT revision, title, description, status FROM public.listings WHERE id = v_req.listing_id FOR SHARE;`
+     If revision <> `v_req.listing_revision` OR title <> `v_req.original_title` OR description IS DISTINCT FROM `v_req.original_description` OR status <> 'pending_review':
+       - Mark request `status = 'superseded'`, `updated_at = clock_timestamp()`.
+       - Release slot and skip to next candidate.
+  7. **Generate Claim Material & Fencing Token:**
+     - Secret `v_claim_token := encode(gen_random_bytes(32), 'hex')`.
+     - `v_token_hash := encode(sha256(convert_to(v_claim_token, 'UTF8')), 'hex')`.
+     - Provisional lease: `clock_timestamp() + interval '30 seconds'`.
+     - Provisional max renewal: `clock_timestamp() + interval '60 seconds'`.
+  8. **Record Claim & Advance Request:**
+     - Insert row into `app_moderation_v2.input_claims` (`slot_id = v_slot.slot_id`, `attempt_number = v_req.attempt_count + 1`).
+     - Update slot with `active_claim_id = v_claim_id`, `slot_expires_at = v_lease_expires`.
+     - Update request `status = 'claimed'`, `attempt_count = attempt_count + 1`, `updated_at = clock_timestamp()`.
+  9. **Return Payload:**
+     `{ success: true, request_id, attempt_id, attempt_number, claim_token, lease_expires_at, max_renewal_until, original_title, original_description, listing_revision, request_lane }`.
+
+---
+
+### 3.4 `heartbeat_moderation_v2_input(p_request_id uuid, p_attempt_id uuid, p_claim_token text)`
+
+- **Universal Lock Hierarchy:**
+  1. `app_moderation_v2.input_admission_slots` (via `slot_id` `FOR UPDATE`).
+  2. `app_moderation_v2.input_claims` (`FOR UPDATE`).
+- **Execution Flow:**
+  1. Hash token: `v_hash := encode(sha256(convert_to(p_claim_token, 'UTF8')), 'hex')`.
+  2. Select and lock claim:
+     `SELECT id, slot_id, lease_expires_at, max_renewal_until, status FROM app_moderation_v2.input_claims WHERE request_id = p_request_id AND attempt_id = p_attempt_id FOR UPDATE;`
+  3. Verify token: If hash does not match stored `claim_token_hash`, return `{ success: false, error: 'LEASE_TOKEN_MISMATCH' }`.
+  4. Verify status: If `status <> 'active'`, return `{ success: false, error: 'LEASE_LOST' }`.
+  5. Check expiration: If `lease_expires_at <= clock_timestamp()`, update claim `status = 'expired'`, clear slot, and return `{ success: false, error: 'LEASE_EXPIRED' }`.
+  6. Check ceiling: If `clock_timestamp() >= max_renewal_until`, return `{ success: false, error: 'RENEWAL_CEILING_REACHED' }`.
+  7. Extend lease:
+     - `v_new_expiry := LEAST(clock_timestamp() + interval '30 seconds', max_renewal_until)`.
+     - Update claim `lease_expires_at = v_new_expiry`, `updated_at = clock_timestamp()`.
+     - Update slot `slot_expires_at = v_new_expiry`.
+  8. Return `{ success: true, lease_expires_at: v_new_expiry }`.
+
+---
+
+### 3.5 `recover_expired_input_claims()`
+
+- **Execution Flow:**
+  1. Finds claims where `status = 'active'` AND `lease_expires_at <= clock_timestamp()`.
+  2. Locks slot -> locks claim -> locks request (in universal hierarchy).
+  3. Updates claim `status = 'expired'`.
+  4. Clears admission slot (`active_claim_id = NULL`).
+  5. Request Retry / Escalation Accounting:
+     - If `attempt_count >= 3`: sets request `status = 'failed'` (retry exhausted; routes to Admin queue without auto-rejecting listing).
+     - If `attempt_count < 3`: calculates retry backoff (`next_attempt_at := clock_timestamp() + interval '10 seconds' * attempt_count + (random() * interval '3 seconds')`), sets request `status = 'retry'`.
+
+---
+
+### 3.6 `finalize_moderation_v2_input(p_request_id uuid, p_attempt_id uuid, p_claim_token text, p_worker_secret text, p_payload jsonb)`
+
+- **Universal Lock Hierarchy:**
+  1. Parent listing: `SELECT revision, title, description, status FROM public.listings WHERE id = v_listing_id FOR UPDATE;`
+  2. V2 Request: `SELECT listing_id, listing_revision, generation_id, policy_version, request_lane, original_title, original_description, status FROM app_moderation_v2.requests WHERE id = p_request_id FOR UPDATE;`
+  3. Admission Slot: `SELECT slot_id FROM app_moderation_v2.input_admission_slots WHERE active_claim_id = v_claim.id FOR UPDATE;`
+  4. Claim: `SELECT status, claim_token_hash, lease_expires_at, slot_id FROM app_moderation_v2.input_claims WHERE request_id = p_request_id AND attempt_id = p_attempt_id FOR UPDATE;`
+
+- **Execution Flow:**
+  1. **Pre-Queue Authentication:**
+     Verify `app_security.verify_moderation_worker_secret(p_worker_secret)`. Fail closed if invalid (`28000`).
+  2. **Canonical Hashing of Incoming Payload:**
+     Compute `v_payload_digest := encode(sha256(convert_to(p_payload::text, 'UTF8')), 'hex')`.
+  3. **Authenticated Idempotent Replay Gate (Before Parent Locks):**
+     Check `app_moderation_v2.input_results` for `(request_id, attempt_id)`:
+     - If found:
+       - Verify caller holds valid `claim_token_hash` matching the attempt.
+       - If `payload_digest = v_payload_digest`: return recorded response immediately (`idempotent_replay: true`), applying **no changes** to database state. Matching replay may bypass current lease expiry, but **never** bypasses authentication or creates side effects.
+       - If `payload_digest <> v_payload_digest`: raise exception `IDEMPOTENCY_CONFLICT`.
+  4. **Acquire Locks in Universal Hierarchy:**
+     Lock parent listing -> lock V2 request -> lock slot -> lock claim.
+  5. **Recheck System Gates & Registry Approvals:**
+     Verify `moderation_v2_enabled = 'true'`, `moderation_v2_mode IN ('shadow', 'enforce')`, and `policy_registry.is_approved = true`. Else fail closed.
+  6. **Fencing & Lease Verification:**
+     - Verify `claim_token_hash = sha256(p_claim_token)`. Else raise `LEASE_TOKEN_MISMATCH`.
+     - Verify claim `status = 'active'` AND `lease_expires_at > clock_timestamp()`. Else raise `LEASE_EXPIRED`.
+  7. **Deep Stale-Request Protection:**
+     Verify all of the following under lock:
+     - `v_listing.revision = v_request.listing_revision`
+     - `v_listing.title = v_request.original_title`
+     - `v_listing.description IS NOT DISTINCT FROM v_request.original_description`
+     - `v_listing.status = 'pending_review'`
+     If any check fails (seller edit, revision bump, Admin action race):
+     - Mark request `status = 'superseded'`.
+     - Mark claim `status = 'superseded'`.
+     - Free admission slot.
+     - Record result in `app_moderation_v2.input_results` (`decision = 'superseded'`).
+     - Return recorded supersede response.
+  8. **Independent Database Validation:**
+     - Database recomputes validation: `v_db_eval := app_moderation_v2.validate_v2_stored_text(v_request.original_title, v_request.original_description)`.
+     - Verify worker payload consistency with `v_db_eval->'validation_errors'`. Mismatch raises `VALIDATION_MISMATCH`.
+  9. **State Transitions:**
+     - **Branch A: Valid Text (`validation_errors = []`)**
+       - Internal queue transition: `v_request.phase := 'preparation'`, `v_request.status := 'awaiting_media'`, `v_request.updated_at := clock_timestamp()`.
+       - Claim updates: `status := 'completed'`.
+       - Free admission slot.
+       - Record in `app_moderation_v2.input_results` (`decision := 'valid'`).
+       - Return `{ success: true, decision: 'valid', next_phase: 'preparation' }`.
+       - *Invariant:* Listing remains `pending_review`. **Never approves or publishes.**
+     - **Branch B: Invalid Text (`validation_errors.length >= 1`)**
+       - Conforms to `EarlyInvalidResultV2Schema` (`outcome := 'invalid_input'`).
+       - Request updates: `status := 'failed'`, `updated_at := clock_timestamp()`.
+       - Claim updates: `status := 'completed'`.
+       - Free admission slot.
+       - Record in `app_moderation_v2.input_results` (`decision := 'rejected_invalid'`).
+       - *Lane Handling:*
+         - `shadow` mode: **Leaves `public.listings` completely untouched.** Listing remains in current state.
+         - `enforce` mode: Deferred seller-facing transition is recorded; seller correction semantics mirror V1 `rejected` flow without unreviewed bypass.
+       - Return `{ success: true, decision: 'rejected_invalid', validation_errors: v_db_eval->'validation_errors' }`.
+
+---
+
+## 4. Concurrency, Deadlock Prevention, and Race Matrix
 
 | Scenario | Race Condition | Resolution Mechanism |
 | :--- | :--- | :--- |
-| **Worker Collision** | Multiple workers attempt to claim the same request | `FOR UPDATE OF r SKIP LOCKED` guarantees exactly one worker acquires the row. |
-| **Slot Exhaustion** | Workers burst beyond global cap | Pre-seeded admission slots locked `SKIP LOCKED`; workers receive `NO_ADMISSION_SLOT` and back off without spinning. |
+| **Worker Collision on Claim** | Competing workers attempt to claim the same request | `FOR UPDATE OF r SKIP LOCKED` guarantees exactly one worker acquires the row. |
+| **Slot Exhaustion** | Workers burst beyond 2 concurrent slots | Admission slots locked `SKIP LOCKED`; 3rd worker receives `NO_ADMISSION_SLOT` and backs off. |
 | **Seller Edit Race** | Seller edits listing while input validation is in flight | `listings.revision` increments; `finalize_moderation_v2_input` locks listing first, detects mismatch, marks request `superseded`. |
 | **Admin Action Race** | Admin reviews or removes listing during validation | Listing status leaves `pending_review`; finalizer detects status mismatch and supersedes V2 request. |
 | **Worker Crash / Timeout** | Worker crashes or hangs during scalar validation | Lease expires after 30s; `recover_expired_input_claims` frees slot and schedules retry up to 3 attempts. |
 | **Zombie Worker Commit** | Expired worker attempts to finalize after lease expiry | Claim lock observes `lease_expires_at <= clock_timestamp()` or `status = 'expired'`; aborts with `LEASE_EXPIRED`. |
-| **Duplicate Delivery** | Network drops response; worker replays finalization | Idempotency ledger returns identical recorded response without re-executing transitions or locking parent rows. |
+| **Duplicate Delivery** | Network drops response; worker replays finalization | Authenticated replay returns identical recorded response without re-executing transitions or locking parent rows. |
 | **Tampered / Stolen Token** | Competing worker attempts heartbeat or finalization with forged token | Hash mismatch triggers immediate `LEASE_TOKEN_MISMATCH`. |
+| **Deadlock Avoidance** | Cross-table locking across concurrent claims, heartbeats, and finalizers | Universal locking hierarchy strictly enforced: `listings` -> `requests` -> `admission_slots` -> `input_claims`. Deadlock-free guarantee. |
 
 ---
 
 ## 5. Security & Isolation Controls
 
-1. **Schema & Role Isolation:**
+1. **Role & Schema Isolation:**
    - Schema `app_moderation_v2` has `REVOKE ALL FROM PUBLIC, anon, authenticated`.
    - All newly added tables (`input_admission_slots`, `input_claims`, `input_results`) enable Row Level Security with zero client policies.
    - All RPCs granted exclusively to `service_role`.
@@ -282,7 +393,7 @@ Executed on disposable PG15 in forward test lane under `BEGIN ... ROLLBACK`:
    - Claim succeeds when gate is open (`moderation_v2_enabled = true`).
    - Claim rejected (`V2_DISABLED`) when gate is false or mode is disabled.
    - Claim rejected (`PROVIDER_AUTH`) when worker secret is invalid.
-   - Claim succeeds up to 5 concurrent slots; 6th worker receives `NO_ADMISSION_SLOT`.
+   - Claim succeeds for 2 concurrent slots; 3rd worker receives `NO_ADMISSION_SLOT`.
    - Candidate request transitions to `status = 'claimed'` and increments `attempt_count`.
 3. **Heartbeat & Expiry Assertions:**
    - Valid heartbeat extends `lease_expires_at` within renewal ceiling.
@@ -291,7 +402,7 @@ Executed on disposable PG15 in forward test lane under `BEGIN ... ROLLBACK`:
    - Heartbeat capped at `max_renewal_until` (`RENEWAL_CEILING_REACHED`).
 4. **Recovery & Retry Exhaustion:**
    - Expired claim recovered, freeing admission slot and rescheduling request to `retry` with backoff.
-   - Attempt count reaching 3 marks request `status = 'failed'` without further retries.
+   - Attempt count reaching 3 marks request `status = 'failed'` without further retries (escalated, not auto-rejected).
 5. **Idempotency & Finalization Assertions:**
    - Valid text input transitions request to `phase = 'preparation'`, `status = 'awaiting_media'`.
    - Listing status remains `pending_review` (proves early input never approves).
@@ -307,8 +418,12 @@ Executed on disposable PG15 in forward test lane under `BEGIN ... ROLLBACK`:
 
 ---
 
-## 7. Open Architectural Questions for CTO Sign-Off
+## 7. Delivery Plan & Gates
 
-1. **Concurrency Cap:** Is the provisional global concurrency cap of 5 concurrent input validation claims appropriate for initial rollout, or should it be configurable via `app_system_settings`?
-2. **Renewal Limits:** Are 30s initial lease and 60s max renewal ceiling acceptable for Edge-worker scalar validation latency profiles, or should they be aligned with a different timeout envelope?
-3. **Enforce Mode Correction Transition:** When invalid text is finalized in `enforce` mode, should the listing status transition directly to `draft` with correction flags, or route through a specific versioned transition trigger?
+1. **Step 1:** CTO review and sign-off on this consolidated design specification.
+2. **Step 2:** Generate next forward migration timestamp using pinned Supabase CLI 2.117.0 on isolated branch `feat/moderation-v2-input-lease`.
+3. **Step 3:** Implement SQL migration in `supabase/forward-migrations/moderation-v2/`.
+4. **Step 4:** Implement pgTAP test suite in `supabase/tests/moderation_v2_input_lease.test.sql`.
+5. **Step 5:** Append to `docs/moderation/V2_FORWARD_MANIFEST.json` and verify with offline verification script.
+6. **Step 6:** Validate with GitHub Actions CI workflows (`Backend independent CI` and `Backend V2 forward migration PG15`).
+7. **Step 7:** Report commit SHA and CI results for CTO review.
