@@ -535,7 +535,8 @@ BEGIN
     END IF;
   END;
 
-  -- Test 15: Invalid evaluated_at timestamp format rejected
+  -- Test 15: Strict envelope contract guards (invalid timestamp, impossible dates, missing/null/invalid outcome)
+  -- 15a: Non-ISO string
   v_err_caught := false;
   BEGIN
     PERFORM app_moderation_v2.finalize_moderation_v2_input(
@@ -562,6 +563,121 @@ BEGIN
   END;
   IF NOT v_err_caught THEN
     RAISE EXCEPTION 'Finalize should have rejected non-ISO evaluated_at';
+  END IF;
+
+  -- 15b: Impossible calendar date/time (2026-99-99T25:61:61+99:99)
+  v_err_caught := false;
+  BEGIN
+    PERFORM app_moderation_v2.finalize_moderation_v2_input(
+      repeat('f', 64), v_req_id, v_attempt_id, v_token,
+      jsonb_build_object(
+        'contract_version', '2.0.0',
+        'policy_version', 'fairswap_moderation_v2.0.0',
+        'evaluator_version', 'v2.0.0',
+        'request_id', v_req_id,
+        'attempt_id', v_attempt_id,
+        'evaluated_at', '2026-99-99T25:61:61+99:99',
+        'phase', 'input_validation',
+        'outcome', 'valid',
+        'listing_id', v_listing_id,
+        'listing_revision', 1,
+        'generation_id', v_claim_res->>'generation_id',
+        'title_sha256', app_moderation_v2.sha256_exact_utf8('Valid Bicycle for Local Commute'),
+        'description_sha256', app_moderation_v2.sha256_exact_utf8('Description text that is well over ten characters long.'),
+        'validation_errors', '[]'::jsonb
+      )
+    );
+  EXCEPTION WHEN OTHERS THEN
+    v_err_caught := true;
+  END;
+  IF NOT v_err_caught THEN
+    RAISE EXCEPTION 'Finalize should have rejected impossible calendar date';
+  END IF;
+
+  -- 15c: Missing outcome
+  v_err_caught := false;
+  BEGIN
+    PERFORM app_moderation_v2.finalize_moderation_v2_input(
+      repeat('f', 64), v_req_id, v_attempt_id, v_token,
+      jsonb_build_object(
+        'contract_version', '2.0.0',
+        'policy_version', 'fairswap_moderation_v2.0.0',
+        'evaluator_version', 'v2.0.0',
+        'request_id', v_req_id,
+        'attempt_id', v_attempt_id,
+        'evaluated_at', v_eval_time,
+        'phase', 'input_validation',
+        'listing_id', v_listing_id,
+        'listing_revision', 1,
+        'generation_id', v_claim_res->>'generation_id',
+        'title_sha256', app_moderation_v2.sha256_exact_utf8('Valid Bicycle for Local Commute'),
+        'description_sha256', app_moderation_v2.sha256_exact_utf8('Description text that is well over ten characters long.'),
+        'validation_errors', '[]'::jsonb
+      )
+    );
+  EXCEPTION WHEN OTHERS THEN
+    v_err_caught := true;
+  END;
+  IF NOT v_err_caught THEN
+    RAISE EXCEPTION 'Finalize should have rejected missing outcome';
+  END IF;
+
+  -- 15d: JSON-null outcome
+  v_err_caught := false;
+  BEGIN
+    PERFORM app_moderation_v2.finalize_moderation_v2_input(
+      repeat('f', 64), v_req_id, v_attempt_id, v_token,
+      jsonb_build_object(
+        'contract_version', '2.0.0',
+        'policy_version', 'fairswap_moderation_v2.0.0',
+        'evaluator_version', 'v2.0.0',
+        'request_id', v_req_id,
+        'attempt_id', v_attempt_id,
+        'evaluated_at', v_eval_time,
+        'phase', 'input_validation',
+        'outcome', null,
+        'listing_id', v_listing_id,
+        'listing_revision', 1,
+        'generation_id', v_claim_res->>'generation_id',
+        'title_sha256', app_moderation_v2.sha256_exact_utf8('Valid Bicycle for Local Commute'),
+        'description_sha256', app_moderation_v2.sha256_exact_utf8('Description text that is well over ten characters long.'),
+        'validation_errors', '[]'::jsonb
+      )
+    );
+  EXCEPTION WHEN OTHERS THEN
+    v_err_caught := true;
+  END;
+  IF NOT v_err_caught THEN
+    RAISE EXCEPTION 'Finalize should have rejected JSON-null outcome';
+  END IF;
+
+  -- 15e: Invalid outcome string
+  v_err_caught := false;
+  BEGIN
+    PERFORM app_moderation_v2.finalize_moderation_v2_input(
+      repeat('f', 64), v_req_id, v_attempt_id, v_token,
+      jsonb_build_object(
+        'contract_version', '2.0.0',
+        'policy_version', 'fairswap_moderation_v2.0.0',
+        'evaluator_version', 'v2.0.0',
+        'request_id', v_req_id,
+        'attempt_id', v_attempt_id,
+        'evaluated_at', v_eval_time,
+        'phase', 'input_validation',
+        'outcome', 'unknown_outcome',
+        'listing_id', v_listing_id,
+        'listing_revision', 1,
+        'generation_id', v_claim_res->>'generation_id',
+        'title_sha256', app_moderation_v2.sha256_exact_utf8('Valid Bicycle for Local Commute'),
+        'description_sha256', app_moderation_v2.sha256_exact_utf8('Description text that is well over ten characters long.'),
+        'validation_errors', '[]'::jsonb
+      )
+    );
+  EXCEPTION WHEN OTHERS THEN
+    v_err_caught := true;
+  END;
+  IF NOT v_err_caught THEN
+    RAISE EXCEPTION 'Finalize should have rejected unknown outcome';
   END IF;
 
   -- Test 16: Missing / invalid mode guards across claim, heartbeat, and finalize
@@ -609,7 +725,7 @@ SELECT pass('stale request rejected with STALE_REQUEST on listing mutation');
 SELECT pass('delayed heartbeat on completed request returns REQUEST_TERMINATED and never reverts request');
 SELECT pass('superseded result exact replay returns cached response idempotently');
 SELECT pass('superseded result altered replay raises IDEMPOTENCY_CONFLICT');
-SELECT pass('invalid non-ISO evaluated_at timestamp rejected with exception');
+SELECT pass('envelope contract guards reject invalid timestamp, impossible dates, missing/null/invalid outcome');
 SELECT pass('claim fails closed with V2_DISABLED when moderation_v2_mode is invalid');
 SELECT pass('missing moderation_v2_mode fails closed with V2_DISABLED');
 SELECT is((SELECT status FROM public.listings WHERE id = '44444444-0000-4000-8000-00000000002b'::uuid), 'pending_review', 'listing status remains pending_review (never published)');

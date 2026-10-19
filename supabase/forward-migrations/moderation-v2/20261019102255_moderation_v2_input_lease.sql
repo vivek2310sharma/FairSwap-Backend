@@ -345,6 +345,7 @@ BEGIN
   FROM app_moderation_v2.requests
   WHERE phase = 'input_validation'
     AND status IN ('pending_input', 'retry')
+    AND request_lane = v_mode
     AND next_attempt_at <= pg_catalog.clock_timestamp()
     AND attempt_count < 3
   ORDER BY next_attempt_at ASC, created_at ASC
@@ -373,6 +374,15 @@ BEGIN
 
   IF v_req.status NOT IN ('pending_input', 'retry') THEN
     RETURN jsonb_build_object('success', false, 'error', 'CONCURRENT_CLAIM');
+  END IF;
+
+  -- Revalidate request lane and policy under lock before allocating slot
+  IF v_req.request_lane IS DISTINCT FROM v_mode THEN
+    RETURN jsonb_build_object('success', false, 'error', 'INVALID_REQUEST_LANE');
+  END IF;
+
+  IF v_req.policy_version IS DISTINCT FROM 'fairswap_moderation_v2.0.0' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'POLICY_VERSION_MISMATCH');
   END IF;
 
   SELECT slot_id INTO v_slot_id
@@ -670,7 +680,8 @@ BEGIN
   v_desc_sha256 := p_result->>'description_sha256';
   v_validation_errors := p_result->'validation_errors';
 
-  -- Strict validation of incoming envelope against EarlyInvalidResultV2Schema:
+  -- Strict validation of incoming worker envelope against EarlyInvalidResultV2Schema (for invalid_input)
+  -- and worker input-validation contract (for valid internal transition):
   SELECT array_agg(k) INTO v_incoming_keys FROM jsonb_object_keys(p_result) AS k;
   FOREACH v_k IN ARRAY v_incoming_keys LOOP
     IF v_k NOT IN ('contract_version', 'policy_version', 'evaluator_version', 'request_id', 'attempt_id', 'evaluated_at', 'phase', 'outcome', 'listing_id', 'listing_revision', 'generation_id', 'title_sha256', 'description_sha256', 'validation_errors') THEN
@@ -687,7 +698,8 @@ BEGIN
      OR v_evaluated_at IS NULL
      OR v_evaluated_at !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$'
      OR v_phase IS DISTINCT FROM 'input_validation'
-     OR v_outcome NOT IN ('valid', 'invalid_input')
+     OR v_outcome IS NULL
+     OR (v_outcome IS DISTINCT FROM 'valid' AND v_outcome IS DISTINCT FROM 'invalid_input')
      OR v_listing_id IS NULL
      OR v_listing_revision IS NULL OR v_listing_revision < 0
      OR v_generation_id IS NULL
@@ -696,6 +708,13 @@ BEGIN
      OR v_validation_errors IS NULL OR jsonb_typeof(v_validation_errors) <> 'array' THEN
     RAISE EXCEPTION 'Envelope does not conform to contract identity schema' USING ERRCODE = '22000';
   END IF;
+
+  -- Validate evaluated_at as a real calendar/clock timestamp (rejects out-of-range dates, times, and offsets)
+  BEGIN
+    PERFORM v_evaluated_at::timestamptz;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION 'Evaluated_at timestamp out of range' USING ERRCODE = '22008';
+  END;
 
   v_err_count := jsonb_array_length(v_validation_errors);
 
@@ -907,11 +926,11 @@ BEGIN
   END IF;
 
   IF v_db_err_count = 0 THEN
-    IF v_outcome <> 'valid' OR v_err_count <> 0 THEN
+    IF v_outcome IS DISTINCT FROM 'valid' OR v_err_count <> 0 THEN
       RAISE EXCEPTION 'VALIDATION_MISMATCH: worker reported invalid for valid text' USING ERRCODE = '22000';
     END IF;
   ELSE
-    IF v_outcome <> 'invalid_input' THEN
+    IF v_outcome IS DISTINCT FROM 'invalid_input' THEN
       RAISE EXCEPTION 'VALIDATION_MISMATCH: worker reported valid for invalid text' USING ERRCODE = '22000';
     END IF;
     IF (v_db_eval->'validation_errors')::text IS DISTINCT FROM v_validation_errors::text THEN
