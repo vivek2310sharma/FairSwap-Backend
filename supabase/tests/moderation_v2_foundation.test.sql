@@ -95,7 +95,12 @@ SELECT ok(NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_proc p
     JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'app_moderation_v2'
-  ), 'foundation deliberately has no callable V2 functions');
+      AND (
+        p.prosecdef -- must not be SECURITY DEFINER
+        OR has_function_privilege('anon', p.oid, 'EXECUTE')
+        OR has_function_privilege('authenticated', p.oid, 'EXECUTE')
+      )
+  ), 'all V2 routines are SECURITY INVOKER and inaccessible to client roles');
 
 -- Validate grants under the real roles, without exposing content or IDs.
 SET LOCAL ROLE anon;
