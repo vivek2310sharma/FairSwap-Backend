@@ -221,6 +221,11 @@ DECLARE
   v_listing_id uuid := '44444444-0000-4000-8000-000000000099'::uuid;
   v_req_id uuid;
   v_now timestamptz := pg_catalog.clock_timestamp();
+  v_row_count integer;
+  v_status text;
+  v_phase text;
+  v_err_code text;
+  v_err_msg text;
 BEGIN
   -- 1. Deterministic category & city
   INSERT INTO public.categories (
@@ -315,6 +320,18 @@ BEGIN
   UPDATE app_moderation_v2.requests
   SET status = 'awaiting_media', phase = 'preparation'
   WHERE id = v_req_id;
+  GET DIAGNOSTICS v_row_count = ROW_COUNT;
+  IF v_row_count <> 1 THEN
+    RAISE EXCEPTION 'Lawful status/phase update affected % rows, expected exactly 1', v_row_count;
+  END IF;
+
+  SELECT status, phase INTO v_status, v_phase
+  FROM app_moderation_v2.requests
+  WHERE id = v_req_id;
+  IF v_status <> 'awaiting_media' OR v_phase <> 'preparation' THEN
+    RAISE EXCEPTION 'Lawful status/phase update failed to persist intended values: status=%, phase=%',
+      v_status, v_phase;
+  END IF;
 
   -- Test immutability trigger: tampering with original_title must fail
   BEGIN
@@ -322,8 +339,11 @@ BEGIN
     SET original_title = 'Tampered Title'
     WHERE id = v_req_id;
     RAISE EXCEPTION 'Immutability trigger failed to block original_title update';
-  EXCEPTION WHEN check_violation THEN
-    NULL; -- expected
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_err_code = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
+    IF v_err_code <> '23514' OR v_err_msg <> 'app_moderation_v2.requests immutable fields cannot be modified' THEN
+      RAISE EXCEPTION 'Unexpected error on original_title tampering: code=%, msg=%', v_err_code, v_err_msg;
+    END IF;
   END;
 
   -- Test immutability trigger: tampering with listing_id must fail
@@ -332,8 +352,11 @@ BEGIN
     SET listing_id = gen_random_uuid()
     WHERE id = v_req_id;
     RAISE EXCEPTION 'Immutability trigger failed to block listing_id update';
-  EXCEPTION WHEN check_violation THEN
-    NULL; -- expected
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_err_code = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
+    IF v_err_code <> '23514' OR v_err_msg <> 'app_moderation_v2.requests immutable fields cannot be modified' THEN
+      RAISE EXCEPTION 'Unexpected error on listing_id tampering: code=%, msg=%', v_err_code, v_err_msg;
+    END IF;
   END;
 
   -- Test immutability trigger: tampering with listing_revision must fail
@@ -342,8 +365,11 @@ BEGIN
     SET listing_revision = 2
     WHERE id = v_req_id;
     RAISE EXCEPTION 'Immutability trigger failed to block listing_revision update';
-  EXCEPTION WHEN check_violation THEN
-    NULL; -- expected
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_err_code = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
+    IF v_err_code <> '23514' OR v_err_msg <> 'app_moderation_v2.requests immutable fields cannot be modified' THEN
+      RAISE EXCEPTION 'Unexpected error on listing_revision tampering: code=%, msg=%', v_err_code, v_err_msg;
+    END IF;
   END;
 
   -- Test immutability trigger: tampering with generation_id must fail
@@ -352,8 +378,11 @@ BEGIN
     SET generation_id = gen_random_uuid()
     WHERE id = v_req_id;
     RAISE EXCEPTION 'Immutability trigger failed to block generation_id update';
-  EXCEPTION WHEN check_violation THEN
-    NULL; -- expected
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_err_code = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
+    IF v_err_code <> '23514' OR v_err_msg <> 'app_moderation_v2.requests immutable fields cannot be modified' THEN
+      RAISE EXCEPTION 'Unexpected error on generation_id tampering: code=%, msg=%', v_err_code, v_err_msg;
+    END IF;
   END;
 
   -- Test authoritative binding: inserting mismatched title must fail
@@ -366,8 +395,11 @@ BEGIN
       'Forged Arbitrary Title', 'Authoritative DB Description text for local inspection.'
     );
     RAISE EXCEPTION 'Binding trigger failed to reject mismatched original_title';
-  EXCEPTION WHEN check_violation THEN
-    NULL; -- expected
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_err_code = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
+    IF v_err_code <> '23514' OR v_err_msg <> 'Request original_title does not match authoritative listing title' THEN
+      RAISE EXCEPTION 'Unexpected error on mismatched original_title: code=%, msg=%', v_err_code, v_err_msg;
+    END IF;
   END;
 
   -- Test authoritative binding: inserting mismatched description must fail
@@ -380,8 +412,11 @@ BEGIN
       'Authoritative DB Title', 'Forged Arbitrary Description'
     );
     RAISE EXCEPTION 'Binding trigger failed to reject mismatched original_description';
-  EXCEPTION WHEN check_violation THEN
-    NULL; -- expected
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_err_code = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
+    IF v_err_code <> '23514' OR v_err_msg <> 'Request original_description does not match authoritative listing description' THEN
+      RAISE EXCEPTION 'Unexpected error on mismatched original_description: code=%, msg=%', v_err_code, v_err_msg;
+    END IF;
   END;
 
   -- Test authoritative binding: inserting with stale revision must fail
@@ -394,8 +429,11 @@ BEGIN
       'Authoritative DB Title', 'Authoritative DB Description text for local inspection.'
     );
     RAISE EXCEPTION 'Binding trigger failed to reject stale listing_revision';
-  EXCEPTION WHEN check_violation THEN
-    NULL; -- expected
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_err_code = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
+    IF v_err_code <> '23514' OR v_err_msg NOT LIKE 'Stale listing revision:%' THEN
+      RAISE EXCEPTION 'Unexpected error on stale listing_revision: code=%, msg=%', v_err_code, v_err_msg;
+    END IF;
   END;
 END;
 $fixture$;
