@@ -23,7 +23,7 @@
     },
     {
       "file": "moderation_v2_input_lease.test.sql",
-      "sha256": "d3bd7d716252876cdb56937af483f5b8b666185900644e7d3cde12fc900c0d21",
+      "sha256": "1a9e421113eade106298f147e329770357ebd00ddd393ed9f90aa0f28b3c1263",
       "assertions": 43
     },
     {

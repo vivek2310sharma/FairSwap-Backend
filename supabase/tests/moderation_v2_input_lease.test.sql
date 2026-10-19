@@ -24,8 +24,8 @@ SELECT ok(NOT has_table_privilege('authenticated', 'app_moderation_v2.input_clai
 SELECT ok(NOT has_table_privilege('authenticated', 'app_moderation_v2.input_results', 'SELECT'), 'authenticated denied SELECT on results');
 
 -- 4. Routine existence & denial
-SELECT ok(NOT has_function_privilege('anon', 'app_moderation_v2.canonical_early_result_json(text,text,uuid,integer,uuid,text,text,text,jsonb)', 'EXECUTE'), 'anon denied canonical_json');
-SELECT ok(NOT has_function_privilege('anon', 'app_moderation_v2.canonical_early_result_digest(text,text,uuid,integer,uuid,text,text,text,jsonb)', 'EXECUTE'), 'anon denied canonical_digest');
+SELECT ok(NOT has_function_privilege('anon', 'app_moderation_v2.canonical_early_result_json(text,text,text,uuid,uuid,text,text,text,uuid,integer,uuid,text,text,jsonb)', 'EXECUTE'), 'anon denied canonical_json');
+SELECT ok(NOT has_function_privilege('anon', 'app_moderation_v2.canonical_early_result_digest(text,text,text,uuid,uuid,text,text,text,uuid,integer,uuid,text,text,jsonb)', 'EXECUTE'), 'anon denied canonical_digest');
 SELECT ok(NOT has_function_privilege('anon', 'app_moderation_v2.claim_moderation_v2_input(text,text,integer)', 'EXECUTE'), 'anon denied claim');
 SELECT ok(NOT has_function_privilege('anon', 'app_moderation_v2.heartbeat_moderation_v2_input(text,uuid,uuid,text,integer)', 'EXECUTE'), 'anon denied heartbeat');
 SELECT ok(NOT has_function_privilege('anon', 'app_moderation_v2.recover_expired_input_claims(text,integer)', 'EXECUTE'), 'anon denied recover');
