@@ -329,7 +329,7 @@ BEGIN
   -- Recheck system gates & mode under lock (fail closed on missing/NULL)
   SELECT setting_value INTO v_enabled FROM public.app_system_settings WHERE setting_key = 'moderation_v2_enabled';
   SELECT setting_value INTO v_mode FROM public.app_system_settings WHERE setting_key = 'moderation_v2_mode';
-  IF v_enabled IS DISTINCT FROM 'true' OR v_mode NOT IN ('shadow', 'enforce') THEN
+  IF v_enabled IS DISTINCT FROM 'true' OR (v_mode IS DISTINCT FROM 'shadow' AND v_mode IS DISTINCT FROM 'enforce') THEN
     RETURN jsonb_build_object('success', false, 'error', 'V2_DISABLED');
   END IF;
 
@@ -498,7 +498,14 @@ BEGIN
 
   -- Universal lock hierarchy: listings -> requests -> slots -> claims
   PERFORM 1 FROM public.listings WHERE id = v_req.listing_id FOR SHARE;
-  PERFORM 1 FROM app_moderation_v2.requests WHERE id = p_request_id FOR UPDATE;
+  SELECT id, listing_id, status, phase, attempt_count INTO v_req
+  FROM app_moderation_v2.requests WHERE id = p_request_id FOR UPDATE;
+
+  -- Terminal state & phase guard: delayed heartbeat must never reopen or alter terminal requests
+  IF v_req.status IN ('completed', 'failed', 'superseded') OR v_req.phase IS DISTINCT FROM 'input_validation' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'REQUEST_TERMINATED');
+  END IF;
+
   PERFORM 1 FROM app_moderation_v2.input_admission_slots WHERE slot_id = v_claim.slot_id FOR UPDATE;
   SELECT * INTO v_claim FROM app_moderation_v2.input_claims WHERE id = v_claim.id FOR UPDATE;
 
@@ -507,10 +514,21 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'error', 'LEASE_TOKEN_MISMATCH');
   END IF;
 
-  -- System gate & mode check under lock
+  -- Active claim status and slot ownership verification
+  IF v_claim.status IS DISTINCT FROM 'active' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'CLAIM_NOT_ACTIVE');
+  END IF;
+
+  PERFORM 1 FROM app_moderation_v2.input_admission_slots
+  WHERE slot_id = v_claim.slot_id AND active_claim_id = v_claim.id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'SLOT_OWNERSHIP_LOST');
+  END IF;
+
+  -- System gate & mode check under lock (fail closed)
   SELECT setting_value INTO v_enabled FROM public.app_system_settings WHERE setting_key = 'moderation_v2_enabled';
   SELECT setting_value INTO v_mode FROM public.app_system_settings WHERE setting_key = 'moderation_v2_mode';
-  IF v_enabled IS DISTINCT FROM 'true' OR v_mode NOT IN ('shadow', 'enforce') THEN
+  IF v_enabled IS DISTINCT FROM 'true' OR (v_mode IS DISTINCT FROM 'shadow' AND v_mode IS DISTINCT FROM 'enforce') THEN
     UPDATE app_moderation_v2.input_claims
     SET status = 'abandoned', updated_at = v_now
     WHERE id = v_claim.id;
@@ -519,25 +537,37 @@ BEGIN
     SET active_claim_id = NULL, slot_acquired_at = NULL, slot_expires_at = NULL
     WHERE slot_id = v_claim.slot_id AND active_claim_id = v_claim.id;
 
-    UPDATE app_moderation_v2.requests
-    SET status = 'retry', updated_at = v_now
-    WHERE id = p_request_id;
+    IF v_req.attempt_count >= 3 THEN
+      UPDATE app_moderation_v2.requests
+      SET status = 'failed', updated_at = v_now
+      WHERE id = p_request_id;
+    ELSE
+      UPDATE app_moderation_v2.requests
+      SET status = 'retry', updated_at = v_now
+      WHERE id = p_request_id;
+    END IF;
 
     RETURN jsonb_build_object('success', false, 'error', 'V2_DISABLED');
   END IF;
 
-  IF v_claim.status <> 'active' OR v_claim.lease_expires_at <= v_now THEN
+  IF v_claim.lease_expires_at <= v_now THEN
     UPDATE app_moderation_v2.input_claims
     SET status = 'expired', updated_at = v_now
-    WHERE id = v_claim.id AND status = 'active';
+    WHERE id = v_claim.id;
 
     UPDATE app_moderation_v2.input_admission_slots
     SET active_claim_id = NULL, slot_acquired_at = NULL, slot_expires_at = NULL
     WHERE slot_id = v_claim.slot_id AND active_claim_id = v_claim.id;
 
-    UPDATE app_moderation_v2.requests
-    SET status = 'retry', updated_at = v_now
-    WHERE id = p_request_id;
+    IF v_req.attempt_count >= 3 THEN
+      UPDATE app_moderation_v2.requests
+      SET status = 'failed', updated_at = v_now
+      WHERE id = p_request_id;
+    ELSE
+      UPDATE app_moderation_v2.requests
+      SET status = 'retry', updated_at = v_now
+      WHERE id = p_request_id;
+    END IF;
 
     RETURN jsonb_build_object('success', false, 'error', 'LEASE_EXPIRED');
   END IF;
@@ -655,6 +685,7 @@ BEGIN
      OR v_request_id IS DISTINCT FROM p_request_id
      OR v_attempt_id IS DISTINCT FROM p_attempt_id
      OR v_evaluated_at IS NULL
+     OR v_evaluated_at !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$'
      OR v_phase IS DISTINCT FROM 'input_validation'
      OR v_outcome NOT IN ('valid', 'invalid_input')
      OR v_listing_id IS NULL
@@ -775,7 +806,7 @@ BEGIN
   -- Enforce system gates and mode under lock (fail closed on missing/NULL)
   SELECT setting_value INTO v_enabled FROM public.app_system_settings WHERE setting_key = 'moderation_v2_enabled';
   SELECT setting_value INTO v_mode FROM public.app_system_settings WHERE setting_key = 'moderation_v2_mode';
-  IF v_enabled IS DISTINCT FROM 'true' OR v_mode NOT IN ('shadow', 'enforce') THEN
+  IF v_enabled IS DISTINCT FROM 'true' OR (v_mode IS DISTINCT FROM 'shadow' AND v_mode IS DISTINCT FROM 'enforce') THEN
     RETURN jsonb_build_object('success', false, 'error', 'V2_DISABLED');
   END IF;
 
@@ -857,7 +888,7 @@ BEGIN
       decision, validation_errors, recorded_response
     ) VALUES (
       v_req.id, p_attempt_id, v_claim.attempt_number,
-      pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('superseded', 'UTF8')), 'hex'),
+      v_payload_digest,
       'superseded', '[]'::jsonb, v_final_response
     );
 

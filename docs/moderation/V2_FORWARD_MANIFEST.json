@@ -12,7 +12,7 @@
     },
     {
       "file": "20261019102255_moderation_v2_input_lease.sql",
-      "sha256": "462ff92185600ba2fbc6390c72be0c4d4e56f14fda245fddbb8890f7c921a547"
+      "sha256": "c72a6bcb25f29ed8db577bbab1004ae0f3976518c0c05176d098841ec012961e"
     }
   ],
   "tests": [
@@ -23,8 +23,8 @@
     },
     {
       "file": "moderation_v2_input_lease.test.sql",
-      "sha256": "1a9e421113eade106298f147e329770357ebd00ddd393ed9f90aa0f28b3c1263",
-      "assertions": 43
+      "sha256": "82683a3d1c437c5ff223054a380b10b1c9aca8727f07ebd7322b917b2bfc822c",
+      "assertions": 50
     },
     {
       "file": "moderation_v2_input_validation.test.sql",

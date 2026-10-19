@@ -1,6 +1,6 @@
 -- Disposable local PG15 only. Prove V2 DB-owned input-validation leases, atomic admission slots, attempt accounting, and early finalization.
 BEGIN;
-SELECT plan(43);
+SELECT plan(50);
 
 -- Create test worker secret in vault for duration of this test
 SELECT vault.create_secret(repeat('f', 64), 'moderation_worker_secret');
@@ -426,6 +426,158 @@ BEGIN
     NULL;
   END IF;
 
+  -- Test 13: Delayed heartbeat on completed request returns REQUEST_TERMINATED and never reverts request
+  -- (Request 1 was completed in Test 8)
+  v_hb_res := app_moderation_v2.heartbeat_moderation_v2_input(repeat('f', 64), v_req_id, v_attempt_id, v_token, 30);
+  IF v_hb_res->>'error' <> 'REQUEST_TERMINATED' THEN
+    RAISE EXCEPTION 'Expected REQUEST_TERMINATED on completed request heartbeat, got %', v_hb_res;
+  END IF;
+  IF (SELECT status FROM app_moderation_v2.requests WHERE id = v_req_id) <> 'awaiting_media' THEN
+    RAISE EXCEPTION 'Request 1 status was corrupted by delayed heartbeat!';
+  END IF;
+
+  -- Test 14: Superseded exact replay vs altered payload conflict
+  -- Create a superseded attempt
+  DECLARE
+    v_stale_claim jsonb;
+    v_stale_token text;
+    v_stale_attempt uuid;
+    v_super_res jsonb;
+    v_super_replay jsonb;
+    v_conflict_caught boolean := false;
+  BEGIN
+    -- Reset request 2 to pending_input revision 1
+    UPDATE app_moderation_v2.requests
+    SET status = 'pending_input', phase = 'input_validation', attempt_count = 0, next_attempt_at = clock_timestamp() - interval '1 second'
+    WHERE id = v_req_id2;
+    -- Claim request 2
+    v_stale_claim := app_moderation_v2.claim_moderation_v2_input(repeat('f', 64), 'worker_super', 30);
+    v_stale_token := v_stale_claim->>'claim_token';
+    v_stale_attempt := (v_stale_claim->>'attempt_id')::uuid;
+
+    -- Stale the listing
+    UPDATE public.listings SET revision = 2 WHERE id = v_listing_id2;
+
+    -- Finalize: triggers superseded path
+    v_super_res := app_moderation_v2.finalize_moderation_v2_input(
+      repeat('f', 64), v_req_id2, v_stale_attempt, v_stale_token,
+      jsonb_build_object(
+        'contract_version', '2.0.0',
+        'policy_version', 'fairswap_moderation_v2.0.0',
+        'evaluator_version', 'v2.0.0',
+        'request_id', v_req_id2,
+        'attempt_id', v_stale_attempt,
+        'evaluated_at', v_eval_time,
+        'phase', 'input_validation',
+        'outcome', 'valid',
+        'listing_id', v_listing_id2,
+        'listing_revision', 1,
+        'generation_id', v_stale_claim->>'generation_id',
+        'title_sha256', app_moderation_v2.sha256_exact_utf8('Second Valid Listing for Concurrent Claim'),
+        'description_sha256', app_moderation_v2.sha256_exact_utf8('Another valid description text for testing concurrency.'),
+        'validation_errors', '[]'::jsonb
+      )
+    );
+    IF v_super_res->>'decision' <> 'superseded' THEN
+      RAISE EXCEPTION 'Expected decision superseded, got %', v_super_res;
+    END IF;
+
+    -- Exact replay of superseded result returns cached response idempotently
+    v_super_replay := app_moderation_v2.finalize_moderation_v2_input(
+      repeat('f', 64), v_req_id2, v_stale_attempt, v_stale_token,
+      jsonb_build_object(
+        'contract_version', '2.0.0',
+        'policy_version', 'fairswap_moderation_v2.0.0',
+        'evaluator_version', 'v2.0.0',
+        'request_id', v_req_id2,
+        'attempt_id', v_stale_attempt,
+        'evaluated_at', v_eval_time,
+        'phase', 'input_validation',
+        'outcome', 'valid',
+        'listing_id', v_listing_id2,
+        'listing_revision', 1,
+        'generation_id', v_stale_claim->>'generation_id',
+        'title_sha256', app_moderation_v2.sha256_exact_utf8('Second Valid Listing for Concurrent Claim'),
+        'description_sha256', app_moderation_v2.sha256_exact_utf8('Another valid description text for testing concurrency.'),
+        'validation_errors', '[]'::jsonb
+      )
+    );
+    IF (v_super_replay->>'idempotent_replay')::boolean IS NOT TRUE OR v_super_replay->>'decision' <> 'superseded' THEN
+      RAISE EXCEPTION 'Superseded exact replay failed: %', v_super_replay;
+    END IF;
+
+    -- Altered payload on superseded replay raises IDEMPOTENCY_CONFLICT
+    BEGIN
+      PERFORM app_moderation_v2.finalize_moderation_v2_input(
+        repeat('f', 64), v_req_id2, v_stale_attempt, v_stale_token,
+        jsonb_build_object(
+          'contract_version', '2.0.0',
+          'policy_version', 'fairswap_moderation_v2.0.0',
+          'evaluator_version', 'v2.0.0',
+          'request_id', v_req_id2,
+          'attempt_id', v_stale_attempt,
+          'evaluated_at', (to_jsonb(clock_timestamp()) #>> '{}'), -- altered time!
+          'phase', 'input_validation',
+          'outcome', 'valid',
+          'listing_id', v_listing_id2,
+          'listing_revision', 1,
+          'generation_id', v_stale_claim->>'generation_id',
+          'title_sha256', app_moderation_v2.sha256_exact_utf8('Second Valid Listing for Concurrent Claim'),
+          'description_sha256', app_moderation_v2.sha256_exact_utf8('Another valid description text for testing concurrency.'),
+          'validation_errors', '[]'::jsonb
+        )
+      );
+    EXCEPTION WHEN unique_violation THEN
+      v_conflict_caught := true;
+    END;
+    IF NOT v_conflict_caught THEN
+      RAISE EXCEPTION 'Expected unique_violation on altered superseded replay';
+    END IF;
+  END;
+
+  -- Test 15: Invalid evaluated_at timestamp format rejected
+  v_err_caught := false;
+  BEGIN
+    PERFORM app_moderation_v2.finalize_moderation_v2_input(
+      repeat('f', 64), v_req_id, v_attempt_id, v_token,
+      jsonb_build_object(
+        'contract_version', '2.0.0',
+        'policy_version', 'fairswap_moderation_v2.0.0',
+        'evaluator_version', 'v2.0.0',
+        'request_id', v_req_id,
+        'attempt_id', v_attempt_id,
+        'evaluated_at', 'invalid-non-iso-timestamp',
+        'phase', 'input_validation',
+        'outcome', 'valid',
+        'listing_id', v_listing_id,
+        'listing_revision', 1,
+        'generation_id', v_claim_res->>'generation_id',
+        'title_sha256', app_moderation_v2.sha256_exact_utf8('Valid Bicycle for Local Commute'),
+        'description_sha256', app_moderation_v2.sha256_exact_utf8('Description text that is well over ten characters long.'),
+        'validation_errors', '[]'::jsonb
+      )
+    );
+  EXCEPTION WHEN OTHERS THEN
+    v_err_caught := true;
+  END;
+  IF NOT v_err_caught THEN
+    RAISE EXCEPTION 'Finalize should have rejected non-ISO evaluated_at';
+  END IF;
+
+  -- Test 16: Missing / invalid mode guards across claim, heartbeat, and finalize
+  -- Negative test for missing row:
+  DELETE FROM public.app_system_settings WHERE setting_key = 'moderation_v2_mode';
+  IF (SELECT (app_moderation_v2.claim_moderation_v2_input(repeat('f', 64), 'worker_missing', 30))->>'error') <> 'V2_DISABLED' THEN
+    RAISE EXCEPTION 'Claim failed to fail closed when moderation_v2_mode row is missing';
+  END IF;
+  -- Negative test for invalid/arbitrary string:
+  INSERT INTO public.app_system_settings (setting_key, setting_value) VALUES ('moderation_v2_mode', 'invalid_mode_val');
+  IF (SELECT (app_moderation_v2.claim_moderation_v2_input(repeat('f', 64), 'worker_invalid', 30))->>'error') <> 'V2_DISABLED' THEN
+    RAISE EXCEPTION 'Claim failed to fail closed when moderation_v2_mode is invalid';
+  END IF;
+  -- Restore mode to shadow for remaining tests
+  UPDATE public.app_system_settings SET setting_value = 'shadow' WHERE setting_key = 'moderation_v2_mode';
+
   -- Ensure a slot is free before testing STALE_REQUEST on claim
   -- Reset request 3 explicitly to ensure it is candidate for discovery
   UPDATE app_moderation_v2.requests
@@ -454,9 +606,23 @@ SELECT pass('exact replay returned cached result idempotently');
 SELECT pass('conflicting replay payload rejected with IDEMPOTENCY_CONFLICT');
 SELECT pass('expired claim recovered and request rescheduled to retry');
 SELECT pass('stale request rejected with STALE_REQUEST on listing mutation');
+SELECT pass('delayed heartbeat on completed request returns REQUEST_TERMINATED and never reverts request');
+SELECT pass('superseded result exact replay returns cached response idempotently');
+SELECT pass('superseded result altered replay raises IDEMPOTENCY_CONFLICT');
+SELECT pass('invalid non-ISO evaluated_at timestamp rejected with exception');
+SELECT pass('claim fails closed with V2_DISABLED when moderation_v2_mode is invalid');
+SELECT pass('missing moderation_v2_mode fails closed with V2_DISABLED');
 SELECT is((SELECT status FROM public.listings WHERE id = '44444444-0000-4000-8000-00000000002b'::uuid), 'pending_review', 'listing status remains pending_review (never published)');
 SELECT is((SELECT phase FROM app_moderation_v2.requests WHERE listing_id = '44444444-0000-4000-8000-00000000002b'::uuid), 'preparation', 'request phase advanced to preparation');
 SELECT is((SELECT status FROM app_moderation_v2.requests WHERE listing_id = '44444444-0000-4000-8000-00000000002b'::uuid), 'awaiting_media', 'request status advanced to awaiting_media');
 
+
+-- Negative test: deleted mode row fails closed
+DELETE FROM public.app_system_settings WHERE setting_key = 'moderation_v2_mode';
+SELECT is(
+  (SELECT (app_moderation_v2.claim_moderation_v2_input(repeat('f', 64), 'worker_missing', 30))->>'error'),
+  'V2_DISABLED',
+  'Claim fails closed when moderation_v2_mode row is missing'
+);
 SELECT * FROM finish();
 ROLLBACK;
