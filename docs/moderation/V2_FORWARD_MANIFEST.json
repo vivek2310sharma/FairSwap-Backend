@@ -1,35 +1,35 @@
 {
-    "schemaVersion":  1,
-    "baselineSha256":  "eb2dfee779a15634927cfbf25fcd6ffc59df591a585d1ec8f5f3d40e5caaf1dd",
-    "migrations":  [
-                       {
-                           "file":  "20261018172250_moderation_v2_private_foundation.sql",
-                           "sha256":  "58c9ea477aa92a196107fb7d0b71089cf12dba9f4b2b986ad74b45d54e84d19e"
-                       },
-                       {
-                           "file":  "20261018182448_moderation_v2_input_validation.sql",
-                           "sha256":  "721a7fcd2f32bfc41dbd55ad36dfe1d8bcce8b20d93e4da61b61be08370ca284"
-                       },
-                       {
-                           "file":  "20261019102255_moderation_v2_input_lease.sql",
-                           "sha256":  "7675af171336c8c5d1891563d28e85628682c042b1deaeec4b6447b61c7ce704"
-                       }
-                   ],
-    "tests":  [
-                  {
-                      "file":  "moderation_v2_foundation.test.sql",
-                      "sha256":  "a2aa2861786a16b3c0826d99e11331fbee34af2fe1ae6dd84dbf46199ed34f2b",
-                      "assertions":  38
-                  },
-                  {
-                      "file":  "moderation_v2_input_lease.test.sql",
-                      "sha256":  "b64a3d678b109bd0876626d4a45d5dc0d90421eaf6d1e37d7aa2255d16be10bb",
-                      "assertions":  33
-                  },
-                  {
-                      "file":  "moderation_v2_input_validation.test.sql",
-                      "sha256":  "1e109816c483fc1ce25b63b13d854ec5844de11e3a39f07f0bbcb08974b89b4b",
-                      "assertions":  51
-                  }
-              ]
+  "schemaVersion": 1,
+  "baselineSha256": "eb2dfee779a15634927cfbf25fcd6ffc59df591a585d1ec8f5f3d40e5caaf1dd",
+  "migrations": [
+    {
+      "file": "20261018172250_moderation_v2_private_foundation.sql",
+      "sha256": "58c9ea477aa92a196107fb7d0b71089cf12dba9f4b2b986ad74b45d54e84d19e"
+    },
+    {
+      "file": "20261018182448_moderation_v2_input_validation.sql",
+      "sha256": "721a7fcd2f32bfc41dbd55ad36dfe1d8bcce8b20d93e4da61b61be08370ca284"
+    },
+    {
+      "file": "20261019102255_moderation_v2_input_lease.sql",
+      "sha256": "9116d4740931042be284649d32a37931a28747de503736a4a147c13ab0651080"
+    }
+  ],
+  "tests": [
+    {
+      "file": "moderation_v2_foundation.test.sql",
+      "sha256": "a2aa2861786a16b3c0826d99e11331fbee34af2fe1ae6dd84dbf46199ed34f2b",
+      "assertions": 38
+    },
+    {
+      "file": "moderation_v2_input_lease.test.sql",
+      "sha256": "95c924df9ea2a3a94e3012dcfe0fa64dc66680c97f47db07f65ab9f3a348401b",
+      "assertions": 33
+    },
+    {
+      "file": "moderation_v2_input_validation.test.sql",
+      "sha256": "1e109816c483fc1ce25b63b13d854ec5844de11e3a39f07f0bbcb08974b89b4b",
+      "assertions": 51
+    }
+  ]
 }

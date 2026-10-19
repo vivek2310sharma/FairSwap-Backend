@@ -174,9 +174,9 @@ IMMUTABLE
 SECURITY INVOKER
 SET search_path = ''
 AS $$
-  SELECT encode(
-    sha256(
-      convert_to(
+  SELECT pg_catalog.encode(
+    pg_catalog.sha256(
+      pg_catalog.convert_to(
         app_moderation_v2.canonical_early_result_json(
           p_phase, p_outcome, p_listing_id, p_listing_revision, p_generation_id,
           p_policy_version, p_title_sha256, p_description_sha256, p_validation_errors
@@ -378,8 +378,8 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'error', 'STALE_REQUEST');
   END IF;
 
-  v_claim_token := encode(gen_random_bytes(32), 'hex');
-  v_token_hash := encode(sha256(convert_to(v_claim_token, 'UTF8')), 'hex');
+  v_claim_token := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.gen_random_uuid()::text || pg_catalog.clock_timestamp()::text || pg_catalog.gen_random_uuid()::text, 'UTF8')), 'hex');
+  v_token_hash := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_claim_token, 'UTF8')), 'hex');
   v_attempt_id := gen_random_uuid();
   v_lease_expires := v_now + (interval '1 second' * v_bounded_lease);
   v_max_renewal := v_now + interval '60 seconds'; -- 60s max renewal ceiling
@@ -460,7 +460,7 @@ BEGIN
     RAISE EXCEPTION 'Worker authentication failed' USING ERRCODE = '28000';
   END IF;
 
-  v_token_hash := encode(sha256(convert_to(p_claim_token, 'UTF8')), 'hex');
+  v_token_hash := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_claim_token, 'UTF8')), 'hex');
   v_bounded_ext := GREATEST(5, LEAST(coalesce(p_extension_seconds, 30), 60));
 
   SELECT listing_id INTO v_req FROM app_moderation_v2.requests WHERE id = p_request_id;
@@ -595,7 +595,7 @@ BEGIN
     RAISE EXCEPTION 'Worker authentication failed' USING ERRCODE = '28000';
   END IF;
 
-  v_token_hash := encode(sha256(convert_to(p_claim_token, 'UTF8')), 'hex');
+  v_token_hash := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_claim_token, 'UTF8')), 'hex');
 
   -- Extract and validate incoming envelope fields
   v_contract_version := p_result->>'contract_version';
@@ -759,7 +759,7 @@ BEGIN
       decision, validation_errors, recorded_response
     ) VALUES (
       v_req.id, p_attempt_id, v_claim.attempt_number,
-      encode(sha256(convert_to('superseded', 'UTF8')), 'hex'),
+      pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('superseded', 'UTF8')), 'hex'),
       'superseded', '[]'::jsonb, v_final_response
     );
 
