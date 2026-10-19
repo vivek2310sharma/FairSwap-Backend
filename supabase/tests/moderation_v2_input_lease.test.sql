@@ -2,6 +2,9 @@
 BEGIN;
 SELECT plan(43);
 
+-- Create test worker secret in vault for duration of this test
+SELECT vault.create_secret(repeat('f', 64), 'moderation_worker_secret');
+
 -- 1. Tables exist
 SELECT has_table('app_moderation_v2', 'input_admission_slots', 'input_admission_slots exists');
 SELECT has_table('app_moderation_v2', 'input_claims', 'input_claims exists');
@@ -48,38 +51,48 @@ SELECT is(
   'Claim fails closed when V2 gate is disabled'
 );
 
--- 8. Test Vector 1 exact parity check (Title TOO_SHORT)
+-- 8. Test Vector 1 authoritative full-envelope parity check (Title TOO_SHORT)
 SELECT is(
   app_moderation_v2.canonical_early_result_digest(
+    '2.0.0',
+    'fairswap_moderation_v2.0.0',
+    'v2.0.0',
+    '55555555-0000-4000-8000-000000000001'::uuid,
+    '66666666-0000-4000-8000-000000000001'::uuid,
+    '2026-10-19T10:00:00.000Z',
     'input_validation',
     'invalid_input',
-    '44444444-0000-4000-8000-000000000099'::uuid,
+    '44444444-0000-4000-8000-00000000002b'::uuid,
     1,
     '99999999-0000-4000-8000-000000000099'::uuid,
-    'fairswap_moderation_v2.0.0',
     '1fefaaaceda5a7e199e2c612ca6716d6da8065eed5a1a50979a309f27797e01f',
     NULL,
     jsonb_build_array(jsonb_build_object('code', 'TOO_SHORT', 'field', 'title'))
   ),
-  'da0ccb13af761e55e295776abd0843d9c27549ccbc1bfa4fab8a8476f2b4e093',
-  'Vector 1 digest matches Node.js exact 286-byte SHA-256'
+  '4dbfa926236f97aa0782bb0e5cf758c5d407473721c3070b597eb9f8c7b14712',
+  'Vector 1 digest matches Node.js exact 408-byte SHA-256'
 );
 
--- 9. Test Vector 2 exact parity check (Title TYPE error, null digest)
+-- 9. Test Vector 2 authoritative full-envelope parity check (Title TYPE error, null digests)
 SELECT is(
   app_moderation_v2.canonical_early_result_digest(
+    '2.0.0',
+    'fairswap_moderation_v2.0.0',
+    'v2.0.0',
+    '55555555-0000-4000-8000-000000000001'::uuid,
+    '66666666-0000-4000-8000-000000000001'::uuid,
+    '2026-10-19T10:00:00.000Z',
     'input_validation',
     'invalid_input',
-    '44444444-0000-4000-8000-000000000099'::uuid,
+    '44444444-0000-4000-8000-00000000002b'::uuid,
     1,
     '99999999-0000-4000-8000-000000000099'::uuid,
-    'fairswap_moderation_v2.0.0',
     NULL,
     NULL,
     jsonb_build_array(jsonb_build_object('code', 'TYPE', 'field', 'title'))
   ),
-  'a6d660f81f9ed14bf2ab10cff426f37afd5d722a0c39bd6632f0853a601b0091',
-  'Vector 2 digest matches Node.js exact 219-byte SHA-256'
+  '218ad2739c24bfe3fcaa666a7c89af9747f316dea9be3ced0890678264eda124',
+  'Vector 2 digest matches Node.js exact 341-byte SHA-256'
 );
 
 -- 10. Runtime denial under SET LOCAL ROLE anon and authenticated
@@ -114,12 +127,12 @@ SELECT pass('authenticated role denied reading claims at runtime');
 -- 11. Functional fixture: Setup prerequisites, listings, requests, claims, heartbeats, recovery, finalization, retries, and errors
 DO $fixture$
 DECLARE
-  v_user_id uuid := '11111111-0000-4000-8000-000000000099'::uuid;
-  v_category_id uuid := '77777777-0000-4000-8000-000000000099'::uuid;
-  v_city_id uuid := '88888888-0000-4000-8000-000000000099'::uuid;
-  v_listing_id uuid := '44444444-0000-4000-8000-000000000099'::uuid;
-  v_listing_id2 uuid := '44444444-0000-4000-8000-000000000098'::uuid;
-  v_listing_id3 uuid := '44444444-0000-4000-8000-000000000097'::uuid;
+  v_user_id uuid := '11111111-0000-4000-8000-00000000002b'::uuid;
+  v_category_id uuid := '77777777-0000-4000-8000-00000000002b'::uuid;
+  v_city_id uuid := '88888888-0000-4000-8000-00000000002b'::uuid;
+  v_listing_id uuid := '44444444-0000-4000-8000-00000000002b'::uuid;
+  v_listing_id2 uuid := '44444444-0000-4000-8000-00000000002c'::uuid;
+  v_listing_id3 uuid := '44444444-0000-4000-8000-00000000002d'::uuid;
   v_req_id uuid;
   v_req_id2 uuid;
   v_req_id3 uuid;
@@ -133,6 +146,7 @@ DECLARE
   v_attempt_id uuid;
   v_now timestamptz := pg_catalog.clock_timestamp();
   v_err_caught boolean;
+  v_eval_time text := '2026-10-19T12:00:00.000Z';
 BEGIN
   -- Insert deterministic category & city if needed
   INSERT INTO public.categories (id, slug, name, sort_order, is_active, macro_category, new_listing_enabled)
@@ -164,14 +178,18 @@ BEGIN
   ) VALUES (v_user_id, '2026-09-18', '2026-09-18', '2026-09-18', 18)
   ON CONFLICT DO NOTHING;
 
-  -- Insert valid listings
+  -- Insert valid listings (starts as draft due to trigger, then explicitly updated to pending_review)
   INSERT INTO public.listings (
-    id, seller_id, title, description, category_id, city_id, condition, price_type, price_paise, status, revision
+    id, seller_id, title, description, category_id, city_id, condition, price_type, price_paise
   ) VALUES
-    (v_listing_id, v_user_id, 'Valid Bicycle for Local Commute', 'Description text that is well over ten characters long.', v_category_id, v_city_id, 'good', 'fixed', 10000, 'pending_review', 1),
-    (v_listing_id2, v_user_id, 'Second Valid Listing for Concurrent Claim', 'Another valid description text for testing concurrency.', v_category_id, v_city_id, 'good', 'fixed', 20000, 'pending_review', 1),
-    (v_listing_id3, v_user_id, 'Third Valid Listing for Slot Exhaustion', 'Yet another valid description text for slot exhaustion test.', v_category_id, v_city_id, 'good', 'fixed', 30000, 'pending_review', 1)
-  ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description, status = 'pending_review', revision = 1;
+    (v_listing_id, v_user_id, 'Valid Bicycle for Local Commute', 'Description text that is well over ten characters long.', v_category_id, v_city_id, 'good', 'fixed', 10000),
+    (v_listing_id2, v_user_id, 'Second Valid Listing for Concurrent Claim', 'Another valid description text for testing concurrency.', v_category_id, v_city_id, 'good', 'fixed', 20000),
+    (v_listing_id3, v_user_id, 'Third Valid Listing for Slot Exhaustion', 'Yet another valid description text for slot exhaustion test.', v_category_id, v_city_id, 'good', 'fixed', 30000)
+  ON CONFLICT (id) DO NOTHING;
+
+  UPDATE public.listings
+  SET status = 'pending_review', revision = 1
+  WHERE id IN (v_listing_id, v_listing_id2, v_listing_id3);
 
   -- Temporarily enable V2 and approve policy for fixture test
   UPDATE public.app_system_settings SET setting_value = 'true' WHERE setting_key = 'moderation_v2_enabled';
@@ -311,7 +329,7 @@ BEGIN
       'evaluator_version', 'v2.0.0',
       'request_id', v_req_id,
       'attempt_id', v_attempt_id,
-      'evaluated_at', (to_jsonb(clock_timestamp()) #>> '{}'),
+      'evaluated_at', v_eval_time,
       'phase', 'input_validation',
       'outcome', 'valid',
       'listing_id', v_listing_id,
@@ -326,7 +344,7 @@ BEGIN
     RAISE EXCEPTION 'Lawful finalize failed: %', v_fin_res;
   END IF;
 
-  -- Test 9: Exact Idempotent replay succeeds
+  -- Test 9: Exact Idempotent replay succeeds (same v_eval_time binds same canonical digest)
   v_replay_res := app_moderation_v2.finalize_moderation_v2_input(
     repeat('f', 64), v_req_id, v_attempt_id, v_token,
     jsonb_build_object(
@@ -335,7 +353,7 @@ BEGIN
       'evaluator_version', 'v2.0.0',
       'request_id', v_req_id,
       'attempt_id', v_attempt_id,
-      'evaluated_at', (to_jsonb(clock_timestamp()) #>> '{}'),
+      'evaluated_at', v_eval_time,
       'phase', 'input_validation',
       'outcome', 'valid',
       'listing_id', v_listing_id,
@@ -436,9 +454,9 @@ SELECT pass('exact replay returned cached result idempotently');
 SELECT pass('conflicting replay payload rejected with IDEMPOTENCY_CONFLICT');
 SELECT pass('expired claim recovered and request rescheduled to retry');
 SELECT pass('stale request rejected with STALE_REQUEST on listing mutation');
-SELECT is((SELECT status FROM public.listings WHERE id = '44444444-0000-4000-8000-000000000099'::uuid), 'pending_review', 'listing status remains pending_review (never published)');
-SELECT is((SELECT phase FROM app_moderation_v2.requests WHERE listing_id = '44444444-0000-4000-8000-000000000099'::uuid), 'preparation', 'request phase advanced to preparation');
-SELECT is((SELECT status FROM app_moderation_v2.requests WHERE listing_id = '44444444-0000-4000-8000-000000000099'::uuid), 'awaiting_media', 'request status advanced to awaiting_media');
+SELECT is((SELECT status FROM public.listings WHERE id = '44444444-0000-4000-8000-00000000002b'::uuid), 'pending_review', 'listing status remains pending_review (never published)');
+SELECT is((SELECT phase FROM app_moderation_v2.requests WHERE listing_id = '44444444-0000-4000-8000-00000000002b'::uuid), 'preparation', 'request phase advanced to preparation');
+SELECT is((SELECT status FROM app_moderation_v2.requests WHERE listing_id = '44444444-0000-4000-8000-00000000002b'::uuid), 'awaiting_media', 'request status advanced to awaiting_media');
 
 SELECT * FROM finish();
 ROLLBACK;

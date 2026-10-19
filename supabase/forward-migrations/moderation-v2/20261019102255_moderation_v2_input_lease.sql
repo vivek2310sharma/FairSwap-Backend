@@ -92,13 +92,19 @@ GRANT SELECT, INSERT, UPDATE ON app_moderation_v2.input_claims TO service_role;
 GRANT SELECT, INSERT ON app_moderation_v2.input_results TO service_role;
 
 -- 4. Deterministic Compact Canonical JSON Serializer & Digest Generator
+-- Authoritative full-envelope canonicalization binding all identity, attempt, timing, contract, evaluator, and payload fields.
 CREATE OR REPLACE FUNCTION app_moderation_v2.canonical_early_result_json(
+  p_contract_version text,
+  p_policy_version text,
+  p_evaluator_version text,
+  p_request_id uuid,
+  p_attempt_id uuid,
+  p_evaluated_at text,
   p_phase text,
   p_outcome text,
   p_listing_id uuid,
   p_listing_revision integer,
   p_generation_id uuid,
-  p_policy_version text,
   p_title_sha256 text,
   p_description_sha256 text,
   p_validation_errors jsonb
@@ -108,7 +114,7 @@ LANGUAGE plpgsql
 IMMUTABLE
 SECURITY INVOKER
 SET search_path = ''
-AS $$
+AS $func$
 DECLARE
   v_errs_str text := '[]';
   v_e record;
@@ -137,33 +143,43 @@ BEGIN
   END IF;
 
   RETURN '[' ||
-    to_json('fairswap:v2:early_result_v1'::text)::text || ',' ||
+    to_json('fairswap:v2:early_result_v2'::text)::text || ',' ||
+    to_json(p_contract_version)::text || ',' ||
+    to_json(p_policy_version)::text || ',' ||
+    to_json(p_evaluator_version)::text || ',' ||
+    to_json(p_request_id::text)::text || ',' ||
+    to_json(p_attempt_id::text)::text || ',' ||
+    to_json(p_evaluated_at)::text || ',' ||
     to_json(p_phase)::text || ',' ||
     to_json(p_outcome)::text || ',' ||
     to_json(p_listing_id::text)::text || ',' ||
     p_listing_revision::text || ',' ||
     to_json(p_generation_id::text)::text || ',' ||
-    to_json(p_policy_version)::text || ',' ||
     CASE WHEN p_title_sha256 IS NULL THEN 'null' ELSE to_json(p_title_sha256)::text END || ',' ||
     CASE WHEN p_description_sha256 IS NULL THEN 'null' ELSE to_json(p_description_sha256)::text END || ',' ||
     v_errs_str ||
   ']';
 END;
-$$;
+$func$;
 ;
 
-REVOKE ALL ON FUNCTION app_moderation_v2.canonical_early_result_json(text, text, uuid, integer, uuid, text, text, text, jsonb)
+REVOKE ALL ON FUNCTION app_moderation_v2.canonical_early_result_json(text, text, text, uuid, uuid, text, text, text, uuid, integer, uuid, text, text, jsonb)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION app_moderation_v2.canonical_early_result_json(text, text, uuid, integer, uuid, text, text, text, jsonb)
+GRANT EXECUTE ON FUNCTION app_moderation_v2.canonical_early_result_json(text, text, text, uuid, uuid, text, text, text, uuid, integer, uuid, text, text, jsonb)
   TO service_role;
 
 CREATE OR REPLACE FUNCTION app_moderation_v2.canonical_early_result_digest(
+  p_contract_version text,
+  p_policy_version text,
+  p_evaluator_version text,
+  p_request_id uuid,
+  p_attempt_id uuid,
+  p_evaluated_at text,
   p_phase text,
   p_outcome text,
   p_listing_id uuid,
   p_listing_revision integer,
   p_generation_id uuid,
-  p_policy_version text,
   p_title_sha256 text,
   p_description_sha256 text,
   p_validation_errors jsonb
@@ -173,24 +189,27 @@ LANGUAGE sql
 IMMUTABLE
 SECURITY INVOKER
 SET search_path = ''
-AS $$
+AS $func$
   SELECT pg_catalog.encode(
     pg_catalog.sha256(
       pg_catalog.convert_to(
         app_moderation_v2.canonical_early_result_json(
+          p_contract_version, p_policy_version, p_evaluator_version,
+          p_request_id, p_attempt_id, p_evaluated_at,
           p_phase, p_outcome, p_listing_id, p_listing_revision, p_generation_id,
-          p_policy_version, p_title_sha256, p_description_sha256, p_validation_errors
+          p_title_sha256, p_description_sha256, p_validation_errors
         ),
         'UTF8'
       )
     ),
     'hex'
   );
-$$;
+$func$;
+;
 
-REVOKE ALL ON FUNCTION app_moderation_v2.canonical_early_result_digest(text, text, uuid, integer, uuid, text, text, text, jsonb)
+REVOKE ALL ON FUNCTION app_moderation_v2.canonical_early_result_digest(text, text, text, uuid, uuid, text, text, text, uuid, integer, uuid, text, text, jsonb)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION app_moderation_v2.canonical_early_result_digest(text, text, uuid, integer, uuid, text, text, text, jsonb)
+GRANT EXECUTE ON FUNCTION app_moderation_v2.canonical_early_result_digest(text, text, text, uuid, uuid, text, text, text, uuid, integer, uuid, text, text, jsonb)
   TO service_role;
 
 -- 5. Dedicated Recovery Transaction: recover_expired_input_claims
@@ -677,12 +696,17 @@ BEGIN
 
   -- Compute incoming canonical digest for idempotent replay check
   v_payload_digest := app_moderation_v2.canonical_early_result_digest(
+    v_contract_version,
+    v_policy_version,
+    v_evaluator_version,
+    v_request_id,
+    v_attempt_id,
+    v_evaluated_at,
     v_phase,
     v_outcome,
     v_listing_id,
     v_listing_revision,
     v_generation_id,
-    v_policy_version,
     v_title_sha256,
     v_desc_sha256,
     v_validation_errors
@@ -727,7 +751,7 @@ BEGIN
   FROM public.listings WHERE id = v_req.listing_id FOR UPDATE;
 
   SELECT id, listing_id, listing_revision, generation_id, policy_version, request_lane,
-         original_title, original_description, attempt_count, status
+         original_title, original_description, attempt_count, status, phase
   INTO v_req
   FROM app_moderation_v2.requests WHERE id = p_request_id FOR UPDATE;
 
@@ -742,6 +766,34 @@ BEGIN
 
   PERFORM 1 FROM app_moderation_v2.input_admission_slots WHERE slot_id = v_claim.slot_id FOR UPDATE;
   SELECT * INTO v_claim FROM app_moderation_v2.input_claims WHERE id = v_claim.id FOR UPDATE;
+
+  -- Verify token first
+  IF v_claim.claim_token_hash <> v_token_hash THEN
+    RETURN jsonb_build_object('success', false, 'error', 'LEASE_TOKEN_MISMATCH');
+  END IF;
+
+  -- Enforce system gates and mode under lock (fail closed on missing/NULL)
+  SELECT setting_value INTO v_enabled FROM public.app_system_settings WHERE setting_key = 'moderation_v2_enabled';
+  SELECT setting_value INTO v_mode FROM public.app_system_settings WHERE setting_key = 'moderation_v2_mode';
+  IF v_enabled IS DISTINCT FROM 'true' OR v_mode NOT IN ('shadow', 'enforce') THEN
+    RETURN jsonb_build_object('success', false, 'error', 'V2_DISABLED');
+  END IF;
+
+  -- Complete claim fencing under locks
+  IF v_req.phase IS DISTINCT FROM 'input_validation' OR v_req.status IS DISTINCT FROM 'claimed' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'INVALID_REQUEST_STATE');
+  END IF;
+
+  IF v_req.request_lane IS DISTINCT FROM v_mode THEN
+    RETURN jsonb_build_object('success', false, 'error', 'INVALID_REQUEST_LANE');
+  END IF;
+
+  -- Verify active admission slot ownership
+  PERFORM 1 FROM app_moderation_v2.input_admission_slots
+  WHERE slot_id = v_claim.slot_id AND active_claim_id = v_claim.id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'SLOT_OWNERSHIP_LOST');
+  END IF;
 
   -- Re-check ledger under locks
   SELECT * INTO v_existing_res
@@ -763,20 +815,8 @@ BEGIN
     );
   END IF;
 
-  -- Verify token and lease
-  IF v_claim.claim_token_hash <> v_token_hash THEN
-    RETURN jsonb_build_object('success', false, 'error', 'LEASE_TOKEN_MISMATCH');
-  END IF;
-
   IF v_claim.status <> 'active' OR v_claim.lease_expires_at <= v_now THEN
     RETURN jsonb_build_object('success', false, 'error', 'LEASE_EXPIRED');
-  END IF;
-
-  -- Enforce system gates and mode under lock (fail closed on missing/NULL)
-  SELECT setting_value INTO v_enabled FROM public.app_system_settings WHERE setting_key = 'moderation_v2_enabled';
-  SELECT setting_value INTO v_mode FROM public.app_system_settings WHERE setting_key = 'moderation_v2_mode';
-  IF v_enabled IS DISTINCT FROM 'true' OR v_mode NOT IN ('shadow', 'enforce') THEN
-    RETURN jsonb_build_object('success', false, 'error', 'V2_DISABLED');
   END IF;
 
   SELECT is_approved, approved_evaluator_build INTO v_policy_approved, v_evaluator_build
@@ -829,6 +869,12 @@ BEGIN
   v_db_err_count := jsonb_array_length(v_db_eval->'validation_errors');
 
   -- Compare worker's incoming outcome, validation_errors, and digests with DB validation
+  -- Symmetric verification: independently verify title and description hashes for BOTH valid and invalid text
+  IF v_title_sha256 IS DISTINCT FROM (v_db_eval->>'title_sha256')
+     OR v_desc_sha256 IS DISTINCT FROM (v_db_eval->>'description_sha256') THEN
+    RAISE EXCEPTION 'VALIDATION_MISMATCH: worker text digests do not match database recomputation' USING ERRCODE = '22000';
+  END IF;
+
   IF v_db_err_count = 0 THEN
     IF v_outcome <> 'valid' OR v_err_count <> 0 THEN
       RAISE EXCEPTION 'VALIDATION_MISMATCH: worker reported invalid for valid text' USING ERRCODE = '22000';
@@ -839,10 +885,6 @@ BEGIN
     END IF;
     IF (v_db_eval->'validation_errors')::text IS DISTINCT FROM v_validation_errors::text THEN
       RAISE EXCEPTION 'VALIDATION_MISMATCH: worker validation_errors do not match database recomputation' USING ERRCODE = '22000';
-    END IF;
-    IF v_title_sha256 IS DISTINCT FROM (v_db_eval->>'title_sha256')
-       OR v_desc_sha256 IS DISTINCT FROM (v_db_eval->>'description_sha256') THEN
-      RAISE EXCEPTION 'VALIDATION_MISMATCH: worker text digests do not match database recomputation' USING ERRCODE = '22000';
     END IF;
   END IF;
 
