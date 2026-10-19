@@ -326,7 +326,7 @@ BEGIN
   FROM app_moderation_v2.requests
   WHERE phase = 'input_validation'
     AND status IN ('pending_input', 'retry')
-    AND next_attempt_at <= v_now
+    AND next_attempt_at <= pg_catalog.clock_timestamp()
     AND attempt_count < 3
   ORDER BY next_attempt_at ASC, created_at ASC
   LIMIT 1;
@@ -578,6 +578,9 @@ DECLARE
   v_contract_version text;
   v_policy_version text;
   v_evaluator_version text;
+  v_request_id uuid;
+  v_attempt_id uuid;
+  v_evaluated_at text;
   v_listing_id uuid;
   v_listing_revision integer;
   v_generation_id uuid;
@@ -590,6 +593,11 @@ DECLARE
   v_mode text;
   v_policy_approved boolean;
   v_evaluator_build text;
+  v_incoming_keys text[];
+  v_k text;
+  v_err_count integer;
+  v_db_err_count integer;
+  v_e record;
 BEGIN
   IF NOT public.verify_moderation_worker_secret(p_worker_secret) THEN
     RAISE EXCEPTION 'Worker authentication failed' USING ERRCODE = '28000';
@@ -597,24 +605,74 @@ BEGIN
 
   v_token_hash := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_claim_token, 'UTF8')), 'hex');
 
-  -- Extract and validate incoming envelope fields
+  -- Extract envelope fields
   v_contract_version := p_result->>'contract_version';
   v_policy_version := p_result->>'policy_version';
   v_evaluator_version := p_result->>'evaluator_version';
-  v_phase := coalesce(p_result->>'phase', 'input_validation');
+  v_request_id := (p_result->>'request_id')::uuid;
+  v_attempt_id := (p_result->>'attempt_id')::uuid;
+  v_evaluated_at := p_result->>'evaluated_at';
+  v_phase := p_result->>'phase';
   v_outcome := p_result->>'outcome';
   v_listing_id := (p_result->>'listing_id')::uuid;
   v_listing_revision := (p_result->>'listing_revision')::integer;
   v_generation_id := (p_result->>'generation_id')::uuid;
   v_title_sha256 := p_result->>'title_sha256';
   v_desc_sha256 := p_result->>'description_sha256';
-  v_validation_errors := coalesce(p_result->'validation_errors', '[]'::jsonb);
+  v_validation_errors := p_result->'validation_errors';
+
+  -- Strict validation of incoming envelope against EarlyInvalidResultV2Schema:
+  SELECT array_agg(k) INTO v_incoming_keys FROM jsonb_object_keys(p_result) AS k;
+  FOREACH v_k IN ARRAY v_incoming_keys LOOP
+    IF v_k NOT IN ('contract_version', 'policy_version', 'evaluator_version', 'request_id', 'attempt_id', 'evaluated_at', 'phase', 'outcome', 'listing_id', 'listing_revision', 'generation_id', 'title_sha256', 'description_sha256', 'validation_errors') THEN
+      RAISE EXCEPTION 'EarlyInvalidResultV2Schema: forbidden field %', v_k USING ERRCODE = '22000';
+    END IF;
+  END LOOP;
 
   IF v_contract_version IS DISTINCT FROM '2.0.0'
      OR v_policy_version IS DISTINCT FROM 'fairswap_moderation_v2.0.0'
      OR v_evaluator_version IS NULL
-     OR v_evaluator_version !~ '^v2\.[0-9]+\.[0-9]+$' THEN
-    RAISE EXCEPTION 'Invalid contract or policy identity' USING ERRCODE = '22000';
+     OR v_evaluator_version !~ '^v2\.[0-9]+\.[0-9]+$'
+     OR v_request_id IS DISTINCT FROM p_request_id
+     OR v_attempt_id IS DISTINCT FROM p_attempt_id
+     OR v_evaluated_at IS NULL
+     OR v_phase IS DISTINCT FROM 'input_validation'
+     OR v_outcome NOT IN ('valid', 'invalid_input')
+     OR v_listing_id IS NULL
+     OR v_listing_revision IS NULL OR v_listing_revision < 0
+     OR v_generation_id IS NULL
+     OR (v_title_sha256 IS NOT NULL AND v_title_sha256 !~ '^[0-9a-f]{64}$')
+     OR (v_desc_sha256 IS NOT NULL AND v_desc_sha256 !~ '^[0-9a-f]{64}$')
+     OR v_validation_errors IS NULL OR jsonb_typeof(v_validation_errors) <> 'array' THEN
+    RAISE EXCEPTION 'Envelope does not conform to contract identity schema' USING ERRCODE = '22000';
+  END IF;
+
+  v_err_count := jsonb_array_length(v_validation_errors);
+
+  -- Invariants for outcome
+  IF v_outcome = 'valid' THEN
+    IF v_err_count <> 0 THEN
+      RAISE EXCEPTION 'Outcome valid cannot have validation errors' USING ERRCODE = '22000';
+    END IF;
+  ELSE -- outcome = 'invalid_input'
+    IF v_err_count < 1 OR v_err_count > 2 THEN
+      RAISE EXCEPTION 'Outcome invalid_input must have 1 or 2 validation errors' USING ERRCODE = '22000';
+    END IF;
+    -- Check error fields, error codes, and digest binding
+    FOR v_e IN SELECT e->>'field' AS field, e->>'code' AS code FROM jsonb_array_elements(v_validation_errors) AS e LOOP
+      IF v_e.field NOT IN ('title', 'description') OR v_e.code NOT IN ('TYPE', 'TOO_SHORT', 'TOO_LONG') THEN
+        RAISE EXCEPTION 'Invalid validation error field or code' USING ERRCODE = '22000';
+      END IF;
+      IF v_e.field = 'title' THEN
+        IF (v_e.code = 'TYPE') <> (v_title_sha256 IS NULL) THEN
+          RAISE EXCEPTION 'VALIDATION_DIGEST_BINDING title violation' USING ERRCODE = '22000';
+        END IF;
+      ELSIF v_e.field = 'description' THEN
+        IF (v_e.code = 'TYPE') <> (v_desc_sha256 IS NULL) THEN
+          RAISE EXCEPTION 'VALIDATION_DIGEST_BINDING description violation' USING ERRCODE = '22000';
+        END IF;
+      END IF;
+    END LOOP;
   END IF;
 
   -- Compute incoming canonical digest for idempotent replay check
@@ -768,9 +826,28 @@ BEGIN
 
   -- Independent DB validation recomputation
   v_db_eval := app_moderation_v2.validate_v2_stored_text(v_req.original_title, v_req.original_description);
+  v_db_err_count := jsonb_array_length(v_db_eval->'validation_errors');
+
+  -- Compare worker's incoming outcome, validation_errors, and digests with DB validation
+  IF v_db_err_count = 0 THEN
+    IF v_outcome <> 'valid' OR v_err_count <> 0 THEN
+      RAISE EXCEPTION 'VALIDATION_MISMATCH: worker reported invalid for valid text' USING ERRCODE = '22000';
+    END IF;
+  ELSE
+    IF v_outcome <> 'invalid_input' THEN
+      RAISE EXCEPTION 'VALIDATION_MISMATCH: worker reported valid for invalid text' USING ERRCODE = '22000';
+    END IF;
+    IF (v_db_eval->'validation_errors')::text IS DISTINCT FROM v_validation_errors::text THEN
+      RAISE EXCEPTION 'VALIDATION_MISMATCH: worker validation_errors do not match database recomputation' USING ERRCODE = '22000';
+    END IF;
+    IF v_title_sha256 IS DISTINCT FROM (v_db_eval->>'title_sha256')
+       OR v_desc_sha256 IS DISTINCT FROM (v_db_eval->>'description_sha256') THEN
+      RAISE EXCEPTION 'VALIDATION_MISMATCH: worker text digests do not match database recomputation' USING ERRCODE = '22000';
+    END IF;
+  END IF;
 
   -- State Transitions
-  IF jsonb_array_length(v_db_eval->'validation_errors') = 0 THEN
+  IF v_db_err_count = 0 THEN
     v_decision := 'valid';
     UPDATE app_moderation_v2.requests
     SET phase = 'preparation',
