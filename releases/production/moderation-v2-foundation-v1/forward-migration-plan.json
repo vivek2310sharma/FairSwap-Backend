@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "moderation-v2-foundation-v1",
+  "status": "PINNED_FOR_REVIEW_NOT_APPROVED_FOR_EXECUTION",
+  "targetProjectRef": "kriuhwppxgxsyyrbjsau",
+  "postgresVersion": "17.6",
+  "rehearsalPostgresVersion": "17.11",
+  "baselineMigrationCount": 52,
+  "baselineFinalVersion": "20261017205807",
+  "executionTool": "Supabase CLI",
+  "candidateForwardMigrations": [
+    {
+      "version": "20261018172250",
+      "file": "20261018172250_moderation_v2_private_foundation.sql",
+      "source": "supabase/forward-migrations/moderation-v2/20261018172250_moderation_v2_private_foundation.sql",
+      "sha256": "58c9ea477aa92a196107fb7d0b71089cf12dba9f4b2b986ad74b45d54e84d19e"
+    },
+    {
+      "version": "20261018182448",
+      "file": "20261018182448_moderation_v2_input_validation.sql",
+      "source": "supabase/forward-migrations/moderation-v2/20261018182448_moderation_v2_input_validation.sql",
+      "sha256": "721a7fcd2f32bfc41dbd55ad36dfe1d8bcce8b20d93e4da61b61be08370ca284"
+    },
+    {
+      "version": "20261019102255",
+      "file": "20261019102255_moderation_v2_input_lease.sql",
+      "source": "supabase/forward-migrations/moderation-v2/20261019102255_moderation_v2_input_lease.sql",
+      "sha256": "47285a7f116ce4d6dc5ce671c20173cfec7a4156f41dd2c63e5ba3b78ea46f94"
+    }
+  ],
+  "steps": [
+    {
+      "order": 1,
+      "name": "preflight-inspection",
+      "type": "READ_ONLY_SQL",
+      "script": "releases/production/moderation-v2-foundation-v1/preflight.readonly.sql",
+      "command": "psql <connection-string> -v ON_ERROR_STOP=1 -f releases/production/moderation-v2-foundation-v1/preflight.readonly.sql",
+      "failClosed": true
+    },
+    {
+      "order": 2,
+      "name": "dry-run-verification",
+      "type": "CLI_DRY_RUN",
+      "command": "supabase db push --workdir <isolated-migration-workspace> --linked --dry-run",
+      "expectedOutput": "Lists exactly the 3 candidate migrations and zero others",
+      "failClosed": true
+    },
+    {
+      "order": 3,
+      "name": "apply-forward-migrations",
+      "type": "CLI_DB_PUSH",
+      "command": "supabase db push --workdir <isolated-migration-workspace> --linked --skip-vault",
+      "expectedMigrationsAdded": 3,
+      "failClosed": true
+    },
+    {
+      "order": 4,
+      "name": "postflight-verification",
+      "type": "READ_ONLY_SQL",
+      "script": "releases/production/moderation-v2-foundation-v1/postflight.readonly.sql",
+      "command": "psql <connection-string> -v ON_ERROR_STOP=1 -f releases/production/moderation-v2-foundation-v1/postflight.readonly.sql",
+      "failClosed": true
+    }
+  ],
+  "recoveryProcedure": {
+    "strategy": "FAIL_CLOSED_IMMEDIATE_STOP_AND_ESCALATE",
+    "onPreflightFailure": "Execution halts before any database state is modified. Zero database mutations occur.",
+    "onDryRunMismatch": "Execution halts immediately if --dry-run output deviates in any way from the exact 3 approved candidate migrations.",
+    "onMigrationFailure": "PostgreSQL transaction aborts per statement. Migration ledger tracks applied versions. STOP IMMEDIATELY. Do NOT attempt manual schema drops or direct ledger manipulation. Preserve all session logs and escalate to CTO for a separately approved, isolated recovery plan.",
+    "onPostflightFailure": "Postflight runs in a read-only DO block. If postflight fails, STOP IMMEDIATELY. V2 features remain disabled by default. Do NOT attempt unilateral cleanup. Preserve exact database state and escalate to CTO for formal review."
+  }
+}
