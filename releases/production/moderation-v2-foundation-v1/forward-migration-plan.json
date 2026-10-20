@@ -58,7 +58,7 @@
       "name": "postflight-verification",
       "type": "READ_ONLY_SQL",
       "script": "releases/production/moderation-v2-foundation-v1/postflight.readonly.sql",
-      "command": "psql <connection-string> -v ON_ERROR_STOP=1 -f releases/production/moderation-v2-foundation-v1/postflight.readonly.sql",
+      "command": "psql <connection-string> -v ON_ERROR_STOP=1 -v expected_v1_switch=<captured-preflight-value> -f releases/production/moderation-v2-foundation-v1/postflight.readonly.sql",
       "failClosed": true
     }
   ],

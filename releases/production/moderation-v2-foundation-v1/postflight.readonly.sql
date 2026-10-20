@@ -1,7 +1,10 @@
+\set ON_ERROR_STOP on
+SELECT set_config('app.expected_v1_moderation_switch', :'expected_v1_switch', false);
+
 -- FAIRSWAP PRODUCTION MODERATION V2 PHASE-1 POSTFLIGHT (READ-ONLY, NO DDL/DML)
 -- Validates target environment state immediately following application of the 3 V2 forward migrations.
 -- Verifies exact ledger count (55), RLS on all 5 app_moderation_v2 tables, deny on anon/auth for all routines,
--- disabled gates, unapproved policy registry, and unchanged V1 functions/triggers/switches.
+-- disabled gates, unapproved policy registry, unchanged V1 functions/triggers, and strict equality of V1 switch.
 DO $fairswap_v2_postflight$
 DECLARE
   v2_tables text[] := ARRAY[
@@ -15,6 +18,7 @@ DECLARE
   fun record;
   pub_fn text;
   v1_switch_val text;
+  expected_v1_switch text;
 BEGIN
   -- 1. Migration Ledger Count (52 baseline + 3 forward = 55)
   IF (SELECT count(*) FROM supabase_migrations.schema_migrations) <> 55 THEN
@@ -94,6 +98,16 @@ BEGIN
     RAISE EXCEPTION 'STOP: Production Goods moderation switch moderation_automation_enabled corrupted or missing: %', v1_switch_val;
   END IF;
 
+  -- 9. Enforce Strict Equality with Preflight V1 Switch Value (Fail-Closed)
+  expected_v1_switch := current_setting('app.expected_v1_moderation_switch', true);
+  IF expected_v1_switch IS NULL OR expected_v1_switch NOT IN ('true', 'false') THEN
+    RAISE EXCEPTION 'STOP: expected_v1_switch parameter is missing or invalid (got %). Must provide -v expected_v1_switch=true|false captured during preflight.', expected_v1_switch;
+  END IF;
+
+  IF v1_switch_val IS DISTINCT FROM expected_v1_switch THEN
+    RAISE EXCEPTION 'STOP: V1 moderation_automation_enabled changed during release execution! (preflight=%, postflight=%)', expected_v1_switch, v1_switch_val;
+  END IF;
+
   IF (SELECT md5(prosrc) FROM pg_proc WHERE oid=to_regprocedure(
        'app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)'))
        IS DISTINCT FROM '118d04445fdd9139d90decd2048945f1' THEN
@@ -105,6 +119,6 @@ BEGIN
     RAISE EXCEPTION 'STOP: Goods moderation enqueue trigger unexpectedly changed';
   END IF;
 
-  RAISE NOTICE 'PASS: All postflight checks passed. V2 foundation successfully verified in default-off state (V1 moderation_automation_enabled=%).', v1_switch_val;
+  RAISE NOTICE 'PASS: All postflight checks passed. V2 foundation successfully verified in default-off state (V1 moderation_automation_enabled=% matches preflight %).', v1_switch_val, expected_v1_switch;
 END;
 $fairswap_v2_postflight$;

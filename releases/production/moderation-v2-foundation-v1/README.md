@@ -67,9 +67,9 @@ supabase db push --workdir <isolated-migration-workspace> --linked --skip-vault
 
 ### Step 4: Postflight Verification (Read-Only)
 ```bash
-psql "<db-url>" -v ON_ERROR_STOP=1 -f releases/production/moderation-v2-foundation-v1/postflight.readonly.sql
+psql "<db-url>" -v ON_ERROR_STOP=1 -v expected_v1_switch=<captured-preflight-value> -f releases/production/moderation-v2-foundation-v1/postflight.readonly.sql
 ```
-*Expected Output:* `NOTICE: PASS: All postflight checks passed. V2 foundation successfully verified in default-off state (V1 moderation_automation_enabled=...).`
+*Expected Output:* `NOTICE: PASS: All postflight checks passed. V2 foundation successfully verified in default-off state (V1 moderation_automation_enabled=<val> matches preflight <val>).`
 
 ---
 
