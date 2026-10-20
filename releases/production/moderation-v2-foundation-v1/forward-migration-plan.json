@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "moderation-v2-foundation-v1",
+  "status": "PINNED_FOR_REVIEW_NOT_APPROVED_FOR_EXECUTION",
+  "targetProjectRef": "kriuhwppxgxsyyrbjsau",
+  "postgresVersion": "17.6",
+  "baselineMigrationCount": 52,
+  "baselineFinalVersion": "20261017205807",
+  "executionTool": "Supabase CLI",
+  "candidateForwardMigrations": [
+    {
+      "version": "20261018172250",
+      "file": "20261018172250_moderation_v2_private_foundation.sql",
+      "source": "supabase/forward-migrations/moderation-v2/20261018172250_moderation_v2_private_foundation.sql",
+      "sha256": "58c9ea477aa92a196107fb7d0b71089cf12dba9f4b2b986ad74b45d54e84d19e"
+    },
+    {
+      "version": "20261018182448",
+      "file": "20261018182448_moderation_v2_input_validation.sql",
+      "source": "supabase/forward-migrations/moderation-v2/20261018182448_moderation_v2_input_validation.sql",
+      "sha256": "721a7fcd2f32bfc41dbd55ad36dfe1d8bcce8b20d93e4da61b61be08370ca284"
+    },
+    {
+      "version": "20261019102255",
+      "file": "20261019102255_moderation_v2_input_lease.sql",
+      "source": "supabase/forward-migrations/moderation-v2/20261019102255_moderation_v2_input_lease.sql",
+      "sha256": "47285a7f116ce4d6dc5ce671c20173cfec7a4156f41dd2c63e5ba3b78ea46f94"
+    }
+  ],
+  "steps": [
+    {
+      "order": 1,
+      "name": "preflight-inspection",
+      "type": "READ_ONLY_SQL",
+      "script": "preflight.readonly.sql",
+      "failClosed": true
+    },
+    {
+      "order": 2,
+      "name": "apply-forward-migrations",
+      "type": "CLI_DB_PUSH",
+      "command": "supabase db push --workdir <workspace> --linked --skip-vault",
+      "expectedMigrationsAdded": 3,
+      "failClosed": true
+    },
+    {
+      "order": 3,
+      "name": "postflight-verification",
+      "type": "READ_ONLY_SQL",
+      "script": "postflight.readonly.sql",
+      "failClosed": true
+    }
+  ],
+  "recoveryProcedure": {
+    "strategy": "FAIL_CLOSED_IMMEDIATE_STOP",
+    "onPreflightFailure": "Abort immediately. Zero database mutations have occurred.",
+    "onMigrationFailure": "PostgreSQL transaction aborts per statement. Supabase migration ledger tracks applied versions. Do NOT manually edit schema_migrations table. Inspect exact error log, keep services intact, and escalate to CTO.",
+    "onPostflightFailure": "Postflight runs in a read-only transaction (or DO block). If any invariant fails, escalate to CTO immediately. If manual rollback is required, drop the unapproved app_moderation_v2 schema in a discrete, reviewed maintenance window, remove the 2 settings keys, and delete the 3 ledger records.",
+    "rollbackScriptDescription": "DROP SCHEMA app_moderation_v2 CASCADE; DELETE FROM public.app_system_settings WHERE setting_key IN ('moderation_v2_enabled', 'moderation_v2_mode'); DELETE FROM supabase_migrations.schema_migrations WHERE version IN ('20261018172250', '20261018182448', '20261019102255');"
+  }
+}
