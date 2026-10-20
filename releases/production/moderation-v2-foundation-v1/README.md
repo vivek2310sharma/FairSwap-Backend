@@ -11,13 +11,14 @@ This package prepares the **default-off database foundation** for Moderation V2 
 ### Executable Forward Migrations (Exactly 3)
 1. `20261018172250_moderation_v2_private_foundation.sql`
    - **SHA-256:** `58c9ea477aa92a196107fb7d0b71089cf12dba9f4b2b986ad74b45d54e84d19e`
-   - Creates private schema `app_moderation_v2`, system settings (`moderation_v2_enabled=false`, `moderation_v2_mode='disabled'`), `policy_registry` (0 approved policies), and pre-allocated `input_admission_slots` (2 slots).
+   - Creates private schema `app_moderation_v2`, system settings (`moderation_v2_enabled=false`, `moderation_v2_mode='disabled'`), `app_moderation_v2.policy_registry` (0 approved policies), and `app_moderation_v2.requests`.
 2. `20261018182448_moderation_v2_input_validation.sql`
    - **SHA-256:** `721a7fcd2f32bfc41dbd55ad36dfe1d8bcce8b20d93e4da61b61be08370ca284`
-   - Defines strict input boundary validation rules (`app_moderation_v2.validate_listing_inputs`).
+   - Defines strict input boundary validation routines in `app_moderation_v2`: `enforce_request_immutability`, `js_trim`, `js_utf16_length`, `sha256_exact_utf8`, `validate_text_field`, `validate_v2_text_fields`, and `validate_v2_stored_text`.
 3. `20261019102255_moderation_v2_input_lease.sql`
    - **SHA-256:** `47285a7f116ce4d6dc5ce671c20173cfec7a4156f41dd2c63e5ba3b78ea46f94`
-   - Implements worker-bound input claim leases (`app_moderation_v2.input_claims`), admission lease management, heartbeat, and finalization wrappers.
+   - Creates tables `app_moderation_v2.input_admission_slots` (pre-allocates 2 empty admission slots), `app_moderation_v2.input_claims`, and `app_moderation_v2.input_results`.
+   - Defines claim management functions: `canonical_early_result_json`, `canonical_early_result_digest`, `recover_expired_input_claims`, `claim_moderation_v2_input`, `heartbeat_moderation_v2_input`, and `finalize_moderation_v2_input`, along with corresponding `public` schema wrappers execute-denied to anon/authenticated and granted to service_role.
    - *Note:* Preserves exact 3-byte UTF-8 BOM from PR #26 git blob.
 
 ### Quarantined / Excluded Artifacts (Test-Only)
@@ -35,7 +36,7 @@ All worker runtime entrypoints and OpenAI provider integration sources are exclu
 
 - **Target Database:** FairSwapProd (`kriuhwppxgxsyyrbjsau`)
 - **Recorded Production Engine:** PostgreSQL 17.6
-- **Local Rehearsal Engine:** PostgreSQL 17.11 (Supabase CLI default; engine parity verified on 17.x, minor version deviation noted for CTO approval)
+- **Local Rehearsal Engine:** PostgreSQL 17.11 (Supabase CLI default; engine parity verified on 17.x, minor version deviation noted for explicit CTO approval)
 - **Baseline Migration Count:** Exactly 52 migrations (45 historical baseline + 7 category foundation migrations up to `20261017205807`).
 - **Post-Execution Migration Count:** Exactly 55 migrations.
 - **Platform Prerequisite:** Helper function `storage.allow_only_operation(text)` must exist.
@@ -50,7 +51,7 @@ Run the read-only preflight check against the target database:
 ```bash
 psql "<db-url>" -v ON_ERROR_STOP=1 -f releases/production/moderation-v2-foundation-v1/preflight.readonly.sql
 ```
-*Expected Output:* `NOTICE: PASS: FairSwap Production 52-migration baseline verified for V2 foundation`
+*Expected Output:* `NOTICE: PASS: FairSwap Production 52-migration baseline verified for V2 foundation (V1 moderation_automation_enabled=...)`
 
 ### Step 2: Isolated Workspace Dry-Run Verification
 From an isolated migration workspace containing exactly the 52 baseline migrations and the 3 approved forward migrations:
@@ -68,7 +69,7 @@ supabase db push --workdir <isolated-migration-workspace> --linked --skip-vault
 ```bash
 psql "<db-url>" -v ON_ERROR_STOP=1 -f releases/production/moderation-v2-foundation-v1/postflight.readonly.sql
 ```
-*Expected Output:* `NOTICE: PASS: All postflight checks passed. V2 foundation successfully verified in default-off state.`
+*Expected Output:* `NOTICE: PASS: All postflight checks passed. V2 foundation successfully verified in default-off state (V1 moderation_automation_enabled=...).`
 
 ---
 

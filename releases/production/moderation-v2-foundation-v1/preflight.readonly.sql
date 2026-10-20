@@ -57,6 +57,7 @@ DECLARE
       '20261017205805',
       '20261017205807'
     ]::text[];
+  v1_switch_val text;
 BEGIN
   -- 1. PostgreSQL Version Verification (17.x)
   IF current_setting('server_version') NOT LIKE '17.%' THEN
@@ -78,11 +79,17 @@ BEGIN
     RAISE EXCEPTION 'STOP: moderation_v2 system settings already exist';
   END IF;
 
-  -- 4. Verify V1 Baseline Invariants
-  -- Accepts either initial migration state ('false') or hosted active configuration ('true')
-  IF (SELECT setting_value FROM public.app_system_settings
-      WHERE setting_key='moderation_automation_enabled') NOT IN ('true', 'false') THEN
-    RAISE EXCEPTION 'STOP: Production Goods moderation switch is corrupted or uninitialized';
+  -- 4. Verify V1 Baseline Invariants & Capture Live Switch State
+  SELECT setting_value INTO v1_switch_val
+  FROM public.app_system_settings
+  WHERE setting_key = 'moderation_automation_enabled';
+
+  IF v1_switch_val IS NULL THEN
+    RAISE EXCEPTION 'STOP: Production Goods moderation switch moderation_automation_enabled is MISSING';
+  END IF;
+
+  IF v1_switch_val NOT IN ('true', 'false') THEN
+    RAISE EXCEPTION 'STOP: Production Goods moderation switch moderation_automation_enabled has invalid value: %', v1_switch_val;
   END IF;
 
   IF (SELECT md5(prosrc) FROM pg_proc WHERE oid=to_regprocedure(
@@ -111,6 +118,6 @@ BEGIN
     RAISE EXCEPTION 'STOP: required platform storage helper storage.allow_only_operation(text) is missing';
   END IF;
 
-  RAISE NOTICE 'PASS: FairSwap Production 52-migration baseline verified for V2 foundation';
+  RAISE NOTICE 'PASS: FairSwap Production 52-migration baseline verified for V2 foundation (V1 moderation_automation_enabled=%)', v1_switch_val;
 END;
 $fairswap_v2_preflight$;

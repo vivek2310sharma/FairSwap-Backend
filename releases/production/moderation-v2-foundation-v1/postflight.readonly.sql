@@ -1,7 +1,7 @@
 -- FAIRSWAP PRODUCTION MODERATION V2 PHASE-1 POSTFLIGHT (READ-ONLY, NO DDL/DML)
 -- Validates target environment state immediately following application of the 3 V2 forward migrations.
 -- Verifies exact ledger count (55), RLS on all 5 app_moderation_v2 tables, deny on anon/auth for all routines,
--- disabled gates, unapproved policy registry, and unchanged V1 functions.
+-- disabled gates, unapproved policy registry, and unchanged V1 functions/triggers/switches.
 DO $fairswap_v2_postflight$
 DECLARE
   v2_tables text[] := ARRAY[
@@ -14,6 +14,7 @@ DECLARE
   tbl text;
   fun record;
   pub_fn text;
+  v1_switch_val text;
 BEGIN
   -- 1. Migration Ledger Count (52 baseline + 3 forward = 55)
   IF (SELECT count(*) FROM supabase_migrations.schema_migrations) <> 55 THEN
@@ -84,7 +85,15 @@ BEGIN
     RAISE EXCEPTION 'STOP: admission slots are unexpectedly active';
   END IF;
 
-  -- 8. Verify V1 Functions & Enqueue Triggers Remain Unchanged
+  -- 8. Verify V1 Baseline Invariants Remain Unchanged
+  SELECT setting_value INTO v1_switch_val
+  FROM public.app_system_settings
+  WHERE setting_key = 'moderation_automation_enabled';
+
+  IF v1_switch_val IS NULL OR v1_switch_val NOT IN ('true', 'false') THEN
+    RAISE EXCEPTION 'STOP: Production Goods moderation switch moderation_automation_enabled corrupted or missing: %', v1_switch_val;
+  END IF;
+
   IF (SELECT md5(prosrc) FROM pg_proc WHERE oid=to_regprocedure(
        'app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)'))
        IS DISTINCT FROM '118d04445fdd9139d90decd2048945f1' THEN
@@ -96,6 +105,6 @@ BEGIN
     RAISE EXCEPTION 'STOP: Goods moderation enqueue trigger unexpectedly changed';
   END IF;
 
-  RAISE NOTICE 'PASS: All postflight checks passed. V2 foundation successfully verified in default-off state.';
+  RAISE NOTICE 'PASS: All postflight checks passed. V2 foundation successfully verified in default-off state (V1 moderation_automation_enabled=%).', v1_switch_val;
 END;
 $fairswap_v2_postflight$;
