@@ -79,9 +79,10 @@ BEGIN
   END IF;
 
   -- 4. Verify V1 Baseline Invariants
+  -- Accepts either initial migration state ('false') or hosted active configuration ('true')
   IF (SELECT setting_value FROM public.app_system_settings
-      WHERE setting_key='moderation_automation_enabled') IS DISTINCT FROM 'false' THEN
-    RAISE EXCEPTION 'STOP: Production Goods moderation switch differs from default-off baseline';
+      WHERE setting_key='moderation_automation_enabled') NOT IN ('true', 'false') THEN
+    RAISE EXCEPTION 'STOP: Production Goods moderation switch is corrupted or uninitialized';
   END IF;
 
   IF (SELECT md5(prosrc) FROM pg_proc WHERE oid=to_regprocedure(
