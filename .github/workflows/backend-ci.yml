@@ -74,7 +74,7 @@ jobs:
         timeout-minutes: 1
         run: node --test scripts/ci/verification.test.mjs
 
-      - name: Run the five unit files with network-blocking setup
+      - name: Run approved unit files with network-blocking setup
         id: unit
         timeout-minutes: 3
         run: |
