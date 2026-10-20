@@ -1,0 +1,13 @@
+{
+  "imports": {
+    "postgres": "npm:postgres@3.4.3",
+    "zod": "npm:zod@3.24.2",
+    "../../../src/lib/moderation/contract": "../../../src/lib/moderation/contract.ts",
+    "../../../src/lib/moderation/rules": "../../../src/lib/moderation/rules.ts",
+    "../../../src/lib/moderation/v2/contract": "../../../src/lib/moderation/v2/contract.ts",
+    "../../../src/lib/moderation/v2/openai": "../../../src/lib/moderation/v2/openai.ts",
+    "../../../src/lib/moderation/v2/evaluate": "../../../src/lib/moderation/v2/evaluate.ts"
+  },
+  "compilerOptions": { "strict": true },
+  "lock": true
+}
