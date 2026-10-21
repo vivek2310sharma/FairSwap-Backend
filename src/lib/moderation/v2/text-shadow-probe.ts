@@ -149,7 +149,7 @@ export async function runTextShadowProbe(
   }
 
   const hasProviderFailure = isFailed(title) ||
-    description === null || isFailed(description);
+    (description !== null && isFailed(description));
   const flagged = title.state === "flagged" ||
     description?.state === "flagged" || signals.length > 0;
 
