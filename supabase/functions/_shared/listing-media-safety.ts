@@ -246,7 +246,7 @@ export async function reviewListingContentSafety(
       }
     }
 
-    const textPolicy = await classifyMarketplacePolicy(text, apiKey: providerKey, fetcher);
+    const textPolicy = await classifyMarketplacePolicy(text, providerKey, fetcher);
     if (textPolicy !== "clear") {
       return {
         state: "review", source: "text",
@@ -281,7 +281,7 @@ export async function reviewListingContentSafety(
       if (imageSafety.state === "flagged") {
         return { state: "review", source: "image", reason: "OPENAI_HARM" };
       }
-      const imagePolicy = await classifyMarketplacePolicy(bytes, apiKey: providerKey, fetcher);
+      const imagePolicy = await classifyMarketplacePolicy(bytes, providerKey, fetcher);
       if (imagePolicy !== "clear") {
         return {
           state: "review", source: "image",
