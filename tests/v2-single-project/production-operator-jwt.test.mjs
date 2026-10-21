@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { hasProductionServiceRoleClaims } from "../../src/lib/moderation/v2/production-operator-jwt.ts";
+import { hasExactManagedServiceRoleBearer, hasProductionServiceRoleClaims } from "../../src/lib/moderation/v2/production-operator-jwt.ts";
 import { handleTextShadowProbeRequest } from "../../supabase/functions/moderation-v2-text-shadow-probe/index.ts";
 import { handleImageShadowRequest } from "../../supabase/functions/moderation-v2-image-shadow-probe/index.ts";
 
@@ -113,6 +113,36 @@ test("invalid role, wrong project or expired JWT is denied before provider/DB/st
   }
 });
 
+
+test("real listing and media reads retain the exact managed-service-role bearer", async () => {
+  const jwt = makeToken();
+  const requestReal = (path, body) => new Request(PROD + "/functions/v1/" + path, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + jwt,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const testCases = [
+    [handleTextShadowProbeRequest, "moderation-v2-text-shadow-probe", { listingId: "00000000-0000-4000-8000-000000000001" }],
+    [handleImageShadowRequest, "moderation-v2-image-shadow-probe", {
+      listingId: "00000000-0000-4000-8000-000000000001",
+      mediaId: "00000000-0000-4000-8000-000000000002",
+    }],
+  ];
+  for (const [handler, slug, body] of testCases) {
+    const { deps, calls } = offlineRuntime();
+    const output = await handler(requestReal(slug, body), deps);
+    assert.equal(output.status, 401);
+    assert.equal((await output.json()).code, "UNAUTHORIZED");
+    assert.deepEqual(calls, { text: 0, image: 0, db: 0, storage: 0 });
+  }
+  assert.equal(hasExactManagedServiceRoleBearer(request(jwt), jwt), true);
+  assert.equal(hasExactManagedServiceRoleBearer(request(jwt), "different-managed-key-value".repeat(4)), false);
+  assert.equal(hasExactManagedServiceRoleBearer(request(jwt), undefined), false);
+});
+
 test("gateway JWT verification cannot be disabled for either deployed probe", () => {
   const config = readFileSync(new URL("../../supabase/config.toml", import.meta.url), "utf8");
   for (const slug of ["moderation-v2-text-shadow-probe","moderation-v2-image-shadow-probe"]) {
@@ -133,6 +163,7 @@ test("gateway JWT verification cannot be disabled for either deployed probe", ()
     "../../supabase/functions/moderation-v2-image-shadow-probe/index.ts", import.meta.url), "utf8");
   for (const source of [textSource, imageSource]) {
     assert.match(source, /hasProductionServiceRoleClaims/);
+    assert.match(source, /hasExactManagedServiceRoleBearer/);
     assert.doesNotMatch(source, /constantTimeEqual\(bearer/);
   }
 });
