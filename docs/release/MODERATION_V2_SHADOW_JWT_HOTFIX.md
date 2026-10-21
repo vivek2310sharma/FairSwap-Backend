@@ -25,9 +25,12 @@ MUST NEVER be treated as an independent cryptographic JWT verifier.
 
 **Behaviour:** The read-only synthetic text + image probes remain unable to
 publish, approve, write DB rows, read customer data for synthetic checks, or
-turn on Moderation V2. The existing service-role runtime credential is still
-used for any separately requested, read-only listing or media shadow access;
-the hotfix does not rotate or replace Supabase managed secrets.
+turn on Moderation V2. The existing service-role runtime credential is still used for the separate,
+read-only REAL listing or media shadow path; those requests continue to require
+the original exact managed-key bearer match in addition to the signed JWT.
+Only fixed benign synthetic connectivity may use verified role/ref JWT claims
+without exact managed-key equality. The hotfix does not rotate or replace
+Supabase managed secrets.
 
 ## Release gate and execution (owner only)
 
