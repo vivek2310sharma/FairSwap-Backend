@@ -15,7 +15,7 @@ import { z } from "zod";
 import {
   moderateText,
   moderateCanonicalWebp,
-} from "../../../src/lib/moderation/v2/free-moderation.ts";
+} from "../../../src/lib/moderation/v2/free-moderation";
 
 const UUID = z.string().uuid();
 const MAX_MEDIA = 8;
