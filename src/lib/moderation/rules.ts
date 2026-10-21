@@ -20,6 +20,8 @@ import {
  */
 const PROHIBITED_ITEM_REGEXES: readonly RegExp[] = [
   /\bfirearms?\b/i,
+  /\b(?:gun|guns|pistol|pistols|rifle|rifles)\b/i,
+  /\b(?:nude|nudity|pornographic|pornography)\b/i,
   /\bhand\s*guns?\b/i,
   /\bammunition\b/i,
   /\bheroin\b/i, // Does not match "heroine" due to word boundary
