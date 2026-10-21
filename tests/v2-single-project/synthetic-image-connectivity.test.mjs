@@ -7,7 +7,18 @@ import {
   runSyntheticImageConnectivity,
 } from "../../src/lib/moderation/v2/synthetic-image-connectivity.ts";
 
-const secret = "s".repeat(96);
+// Unit tests simulate the already JWT-verified Supabase gateway; signature
+// authenticity is enforced separately by deployed verify_jwt=true.
+const secret = [
+  Buffer.from('{"alg":"HS256","typ":"JWT"}').toString("base64url"),
+  Buffer.from(JSON.stringify({
+    role: "service_role",
+    ref: "kriuhwppxgxsyyrbjsau",
+    iat: 1700000000,
+    exp: 1950000000,
+  })).toString("base64url"),
+  "s".repeat(43),
+].join(".");
 const env = Object.freeze({
   SUPABASE_URL: "https://kriuhwppxgxsyyrbjsau.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: secret,
