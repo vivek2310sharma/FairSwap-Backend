@@ -18,6 +18,10 @@ test("Branch pruning cannot run on PR code, other repos or unconfirmed manual ru
   assert.match(workflow, /backend-prune-merged-branches-once\.yml/);
   assert.match(workflow, /contents: write/);
   assert.match(workflow, /secrets\.GITHUB_TOKEN/);
+  // Repo root must NOT append a trailing slash: GitHub REST returns 404.
+  assert.match(workflow, /const root = 'https:\/\/api\.github\.com\/repos\/' \+ repo;/);
+  assert.match(workflow, /fetch\(root \+ \(path \? '\/' \+ path : ''\)/);
+  assert.match(workflow, /housekeepingBranches\.some/);
   assert.doesNotMatch(workflow, /SUPABASE_|OPENAI_|FAIRSWAP_PROD_/);
 });
 
