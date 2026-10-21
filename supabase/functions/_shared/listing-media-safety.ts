@@ -231,12 +231,17 @@ export async function reviewListingContentSafety(
 
     // The Moderations endpoint explicitly scans TEXT, not only images.
     const text = "Title: " + job.data.title + "\nDescription: " + job.data.description;
-    const textSafety = await moderateText(text, { apiKey, fetcher, timeoutMs: 15_000 });
-    if (textSafety.state === "failed") {
-      return { state: "incomplete", reason: "PROVIDER_FAILED" };
-    }
-    if (textSafety.state === "flagged") {
-      return { state: "review", source: "text", reason: "OPENAI_HARM" };
+    const textParts = text.length <= 5000
+      ? [text]
+      : ["Title: " + job.data.title, job.data.description];
+    for (const part of textParts) {
+      const textSafety = await moderateText(part, { apiKey, fetcher, timeoutMs: 15_000 });
+      if (textSafety.state === "failed") {
+        return { state: "incomplete", reason: "PROVIDER_FAILED" };
+      }
+      if (textSafety.state === "flagged") {
+        return { state: "review", source: "text", reason: "OPENAI_HARM" };
+      }
     }
 
     const textPolicy = await classifyMarketplacePolicy(text, apiKey, fetcher);
@@ -247,9 +252,10 @@ export async function reviewListingContentSafety(
       };
     }
 
-    // Every image must pass BOTH OpenAI Moderations and OpenAI marketplace
-    // classification. Short circuit on review; never approve partial scans.
-    for (const media of snapshot.media) {
+    // Every image must pass BOTH OpenAI Moderations and OpenAI
+    // marketplace classification. Bounded parallel batches respect Edge
+    // Function latency/memory limits; any incomplete result fails closed.
+    async function inspect(media: z.infer<typeof Media>): Promise<ContentSafetyResult> {
       const expected = job.data.listingId + "/" + media.id + "/medium.webp";
       if (media.medium_storage_path !== expected) {
         return { state: "incomplete", reason: "MEDIA_MANIFEST_INVALID" };
@@ -273,7 +279,6 @@ export async function reviewListingContentSafety(
       if (imageSafety.state === "flagged") {
         return { state: "review", source: "image", reason: "OPENAI_HARM" };
       }
-
       const imagePolicy = await classifyMarketplacePolicy(bytes, apiKey, fetcher);
       if (imagePolicy !== "clear") {
         return {
@@ -281,6 +286,17 @@ export async function reviewListingContentSafety(
           reason: imagePolicy === "review" ? "OPENAI_MARKETPLACE_POLICY" : "OPENAI_UNCERTAIN",
         };
       }
+      return { state: "clear", reviewedImages: 1 };
+    }
+
+    for (let start = 0; start < snapshot.media.length; start += 4) {
+      const outcomes = await Promise.all(
+        snapshot.media.slice(start, start + 4).map(inspect),
+      );
+      const review = outcomes.find(x => x.state === "review");
+      if (review) return review;
+      const incomplete = outcomes.find(x => x.state === "incomplete");
+      if (incomplete) return incomplete;
     }
 
     // A revision change during external provider calls must not clear the
