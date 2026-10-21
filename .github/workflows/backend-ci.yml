@@ -86,7 +86,7 @@ jobs:
           env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
             node --experimental-strip-types --test tests/v2-single-project/*.test.mjs
 
-      - name: Run the five unit files with network-blocking setup
+      - name: Run the six unit files with network-blocking setup
         id: unit
         timeout-minutes: 3
         run: |
