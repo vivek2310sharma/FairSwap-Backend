@@ -7,6 +7,8 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { evaluateListingText } from "../../../src/lib/moderation/checker";
 import { reviewListingMediaSafety } from "./listing-media-safety";
+
+declare const Deno: { env: { get(name: string): string | undefined } };
 import {
   MODERATION_RULESET_VERSION,
   MODERATION_EVALUATION_SCOPE,
