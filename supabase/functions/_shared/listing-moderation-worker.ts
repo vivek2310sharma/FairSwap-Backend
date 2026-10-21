@@ -12,7 +12,6 @@ declare const Deno: { env: { get(name: string): string | undefined } };
 import {
   MODERATION_RULESET_VERSION,
   MODERATION_EVALUATION_SCOPE,
-  type ModerationEvaluationResult,
 } from "../../../src/lib/moderation/contract";
 
 export const WorkerConfigSchema = z.object({
