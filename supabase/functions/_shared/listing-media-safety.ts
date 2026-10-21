@@ -218,9 +218,11 @@ export async function reviewListingContentSafety(
   if (!apiKey || apiKey.length < 20) {
     return { state: "incomplete", reason: "PROVIDER_UNCONFIGURED" };
   }
+  const providerKey = apiKey;
+  const listingJob = job.data;
 
   try {
-    const snapshot = await loadSnapshot(job.data, db);
+    const snapshot = await loadSnapshot(listingJob, db);
     if (!snapshot) return { state: "incomplete", reason: "LISTING_STALE" };
     if (snapshot.media.length === 0) {
       return { state: "incomplete", reason: "MEDIA_MANIFEST_INVALID" };
@@ -230,12 +232,12 @@ export async function reviewListingContentSafety(
     }
 
     // The Moderations endpoint explicitly scans TEXT, not only images.
-    const text = "Title: " + job.data.title + "\nDescription: " + job.data.description;
+    const text = "Title: " + listingJob.title + "\nDescription: " + listingJob.description;
     const textParts = text.length <= 5000
       ? [text]
-      : ["Title: " + job.data.title, job.data.description];
+      : ["Title: " + listingJob.title, listingJob.description];
     for (const part of textParts) {
-      const textSafety = await moderateText(part, { apiKey, fetcher, timeoutMs: 15_000 });
+      const textSafety = await moderateText(part, { apiKey: providerKey, fetcher, timeoutMs: 15_000 });
       if (textSafety.state === "failed") {
         return { state: "incomplete", reason: "PROVIDER_FAILED" };
       }
@@ -244,7 +246,7 @@ export async function reviewListingContentSafety(
       }
     }
 
-    const textPolicy = await classifyMarketplacePolicy(text, apiKey, fetcher);
+    const textPolicy = await classifyMarketplacePolicy(text, apiKey: providerKey, fetcher);
     if (textPolicy !== "clear") {
       return {
         state: "review", source: "text",
@@ -256,7 +258,7 @@ export async function reviewListingContentSafety(
     // marketplace classification. Bounded parallel batches respect Edge
     // Function latency/memory limits; any incomplete result fails closed.
     async function inspect(media: z.infer<typeof Media>): Promise<ContentSafetyResult> {
-      const expected = job.data.listingId + "/" + media.id + "/medium.webp";
+      const expected = listingJob.listingId + "/" + media.id + "/medium.webp";
       if (media.medium_storage_path !== expected) {
         return { state: "incomplete", reason: "MEDIA_MANIFEST_INVALID" };
       }
@@ -271,7 +273,7 @@ export async function reviewListingContentSafety(
       }
       const hash = await sha256(bytes);
       const imageSafety = await moderateCanonicalWebp(bytes, hash, {
-        apiKey, fetcher, timeoutMs: 15_000,
+        apiKey: providerKey, fetcher, timeoutMs: 15_000,
       });
       if (imageSafety.state === "failed") {
         return { state: "incomplete", reason: "PROVIDER_FAILED" };
@@ -279,7 +281,7 @@ export async function reviewListingContentSafety(
       if (imageSafety.state === "flagged") {
         return { state: "review", source: "image", reason: "OPENAI_HARM" };
       }
-      const imagePolicy = await classifyMarketplacePolicy(bytes, apiKey, fetcher);
+      const imagePolicy = await classifyMarketplacePolicy(bytes, apiKey: providerKey, fetcher);
       if (imagePolicy !== "clear") {
         return {
           state: "review", source: "image",
@@ -301,7 +303,7 @@ export async function reviewListingContentSafety(
 
     // A revision change during external provider calls must not clear the
     // current listing. The SQL finalizer independently checks its row lock.
-    const after = await loadSnapshot(job.data, db);
+    const after = await loadSnapshot(listingJob, db);
     if (!after || JSON.stringify(after) !== JSON.stringify(snapshot)) {
       return { state: "incomplete", reason: "MANIFEST_CHANGED" };
     }
