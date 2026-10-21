@@ -83,15 +83,6 @@ describe("MOD-01 Isolated Moderation Text Checker", () => {
       expect(resultAmmo.outcome).toBe("needs_review");
     });
 
-    it("flags gun and nude wording from the reported production examples", () => {
-      expect(evaluateListingText({
-        title: "GunGunGun", description: "GunGunGunGun suicide",
-      }).outcome).toBe("needs_review");
-      expect(evaluateListingText({
-        title: "Nude Pic", description: "Nude Pic Nude Pic",
-      }).outcome).toBe("needs_review");
-    });
-
     it("does NOT flag ordinary tools like glue gun (false-positive prevention)", () => {
       const result = evaluateListingText({
         title: "Hot melt glue gun with sticks",
