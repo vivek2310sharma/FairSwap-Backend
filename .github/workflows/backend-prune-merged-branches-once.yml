@@ -1,0 +1,131 @@
+# One-shot cleanup with explicit pinned merged-PR heads and independent live checks.
+# No checkout, third-party actions, secrets or Production Supabase access required.
+name: "[ONCE] Prune reviewed merged Backend branches"
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/backend-prune-merged-branches-once.yml
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type PRUNE_REVIEWED_MERGED_BRANCHES to retry the reviewed cleanup"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fairswap-backend-merged-branch-prune
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    if: >-
+      github.repository == 'vivek2310sharma/FairSwap-Backend' &&
+      github.ref == 'refs/heads/main' &&
+      (
+        (github.event_name == 'push' &&
+          startsWith(github.event.head_commit.message, 'chore(repo): prune reviewed merged Backend PR branches')) ||
+        (github.event_name == 'workflow_dispatch' &&
+          github.actor == 'vivek2310sharma' &&
+          inputs.confirm == 'PRUNE_REVIEWED_MERGED_BRANCHES')
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Revalidate merged PRs and delete only pinned, unreferenced branch tips
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          const repo = 'vivek2310sharma/FairSwap-Backend';
+          const cleanupBranch = 'chore/prune-merged-backend-branches-20261021';
+          const pins = [{"pr":39,"branch":"hotfix/prod-v2-shadow-jwt-20261021","sha":"96905f34fe1775b840215b9ae6c4bdbdac15188c"},{"pr":38,"branch":"release/v2-prod-diagnostic-handoff-20261021","sha":"fb9e667c6461d6e1f50bba80a71528e93439aae4"},{"pr":37,"branch":"moderation-v2-readiness-2026-10-21","sha":"defe9d6094115e9e6488ecbff6c5230b73b301d5"},{"pr":36,"branch":"ops/modv2-safe-provider-connectivity-20261021","sha":"f6f183c6bdd69070e3b9552652b951686b3ca990"},{"pr":35,"branch":"feature/modv2-free-image-shadow-probe-20261021","sha":"4e7304270df8ce22e0acabf09557da16aab5719a"},{"pr":34,"branch":"feature/modv2-text-shadow-probe-20261021","sha":"afa0e8c5d71e9f4480ac50ef2bf2e5441c5ccd69"},{"pr":33,"branch":"feat/moderation-v2-free-provider-integration","sha":"7bdadac9d24db7873a7f03f36409fdf99e708478"},{"pr":31,"branch":"candidate/moderation-v2-foundation-v1","sha":"09d2282658ce23cd0c982799ddd7d0dab939b024"},{"pr":19,"branch":"docs/point1-record-legacy-pat-revocation-20261018","sha":"639ea2e4e082bdd2af08f51a4f26bc1a02b9fb30"},{"pr":18,"branch":"docs/point1-legacy-token-freeze-attestation-20261018","sha":"aef944873b22d6529e037218e042700ec2408d9a"},{"pr":17,"branch":"docs/point1-final-source-boundary-20261018","sha":"b827c0861c67e02e54c138b1260384b1fc24a136"},{"pr":13,"branch":"docs/point1-backend-source-ownership-20261018","sha":"53e87e63791e31fdc6cf99cc078d789c780ccca7"},{"pr":12,"branch":"docs/record-backend-token-scope-passes-20261018","sha":"92d37ac4ed796a54a8414c8cfa4a9152b8dcf5f0"},{"pr":11,"branch":"chore/manual-scoped-token-readonly-check-20261018","sha":"6389653be2ce4bd6df300235c8596ba00384e320"},{"pr":10,"branch":"chore/backend-exclusive-release-guard-20261018","sha":"24e07f43573d159b6bb5937ca9348e5ed2e5a556"},{"pr":6,"branch":"release/prod-hidden-category-foundation-20261017","sha":"0852ce77021742135c3f6f98caff65889e2f06f8"},{"pr":4,"branch":"release/staging-moderation-handoff-20261017","sha":"1fde734185c667cc446730e9415c1118809374e6"}];
+          const token = process.env.GITHUB_TOKEN;
+          if (!token || process.env.GITHUB_REPOSITORY !== repo) throw Error('Missing repo-scoped GITHUB_TOKEN');
+          const root = 'https://api.github.com/repos/' + repo + '/';
+          async function api(path, method='GET', allow404=false) {
+            const res = await fetch(root + path, {
+              method,
+              redirect: 'error',
+              headers: {
+                Authorization: 'Bearer ' + token,
+                Accept: 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28',
+              },
+            });
+            if (allow404 && res.status===404) return null;
+            if (!res.ok) throw Error(method + ' rejected (' + res.status + ') for ' + path);
+            return res.status===204 ? null : res.json();
+          }
+          const repoInfo = await api('');
+          if (repoInfo.default_branch !== 'main' || repoInfo.full_name !== repo) {
+            throw Error('Unexpected target repository or default branch');
+          }
+          // Get ALL open PR heads and bases. Never delete a stacked PR's parent branch.
+          const opened = [];
+          for (let page=1; page<=10; page++) {
+            const rows = await api('pulls?state=open&per_page=100&page='+page);
+            if (!Array.isArray(rows)) throw Error('Invalid open-PR result');
+            opened.push(...rows);
+            if (rows.length < 100) break;
+            if (page === 10) throw Error('Open-PR inventory exceeds safe bound');
+          }
+          const reserved = new Set(opened.flatMap(p=>[p.head?.ref,p.base?.ref]));
+          // Prune this one-time housekeeping PR branch only after it is itself merged.
+          const closed = await api('pulls?state=closed&per_page=100');
+          const selfPR = closed.find(p =>
+            p.head?.ref === cleanupBranch &&
+            p.head?.repo?.full_name === repo &&
+            p.base?.ref === 'main' && p.merged_at &&
+            p.title === 'chore(repo): prune reviewed merged Backend PR branches');
+          if (selfPR && !pins.some(x=>x.branch===cleanupBranch)) {
+            pins.push({pr:selfPR.number,branch:cleanupBranch,sha:selfPR.head.sha});
+          }
+          const approved = [], alreadyGone = [];
+          for (const t of pins) {
+            if (t.branch === 'main' || !/^[a-f0-9]{40}$/.test(t.sha) ||
+                reserved.has(t.branch)) {
+              throw Error('Ref is main, changed or needed by an open PR: '+t.branch);
+            }
+            const pr = await api('pulls/'+t.pr);
+            if (pr.state !== 'closed' || !pr.merged_at ||
+                pr.head?.ref !== t.branch || pr.head?.sha !== t.sha ||
+                pr.head?.repo?.full_name !== repo || pr.base?.ref !== 'main') {
+              throw Error('PR is not merged or head/base SHA mismatched: #'+t.pr);
+            }
+            const live = await api('branches/'+encodeURIComponent(t.branch), 'GET', true);
+            if (!live) {alreadyGone.push(t); continue;}
+            if (live.protected || live.commit?.sha !== t.sha) {
+              throw Error('Branch is protected or changed since audit: '+t.branch);
+            }
+            approved.push(t);
+          }
+          let deleted = 0;
+          for (const t of approved) {
+            // Recheck immediately before DELETE to avoid deleting a changed branch.
+            const live = await api('branches/'+encodeURIComponent(t.branch), 'GET', true);
+            if (!live) { alreadyGone.push(t); continue; }
+            if (live.protected || live.commit?.sha !== t.sha) {
+              throw Error('Branch changed after preflight: '+t.branch);
+            }
+            const ref = 'git/refs/heads/' + t.branch.split('/').map(encodeURIComponent).join('/');
+            await api(ref, 'DELETE');
+            deleted++;
+            console.log('Deleted merged PR #' + t.pr + ' branch ' + t.branch);
+          }
+          const summary = '### Guarded Backend branch cleanup\n' +
+            '- Deleted merged PR branches: **' + deleted + '**\n' +
+            '- Already absent: **' + alreadyGone.length + '**\n' +
+            '- Open PRs preserved: **' + opened.length + '**\n' +
+            '- Protected: all open PR heads/bases and unmerged/unreviewed branches\n' +
+            '- Default branch and Supabase environments untouched\n';
+          console.log(summary);
+          if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY,summary);
+          
+          NODE
