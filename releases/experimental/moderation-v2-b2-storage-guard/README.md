@@ -54,3 +54,21 @@ A privileged **read-only** query on FairSwapProd reported:
 `preflight.readonly.sql` reproduces the relevant catalog/settings checks from the **actual intended operator connection**. It runs inside an explicitly READ ONLY transaction.
 
 **Critical:** grant visibility alone does not prove that a custom Storage trigger is a supported hosted feature or that it protects physical object bytes across S3/TUS/other protocols. It grants no permission to run `guard.candidate.sql`; the trusted retirement and re-publication design is still incomplete. No Production DDL was executed in this observation.
+
+
+## CTO safety decision — 2026-10-21 (PRODUCTION TRIGGER NO-GO)
+
+Supabase's official [Storage Schema guidance](https://supabase.com/docs/guides/storage/schema/design) says the managed `storage` schema should be treated as read-only, warns against alterations that may conflict with future updates and cause downtime, and requires object operations through Storage APIs. A custom trigger on `storage.objects` is an alteration to this provider-managed schema.
+
+**Decision:** the local trigger experiment proves feasibility in one disposable version but **does not prove vendor support**. Do not promote or execute `guard.candidate.sql` as a hosted migration. A hosted `postgres` TRIGGER grant is not vendor compatibility approval. The source remains in `releases/experimental/` strictly for research.
+
+### Preferred supported isolation path (requires infrastructure approval and integration)
+
+- Use an **independently credentialed Storage security boundary**, preferably a dedicated, India-region Supabase project for V2 sealed objects (or a separately approved immutable object store). Ordinary FairSwapProd Web, Admin, native APIs and V2 provider workers must **not possess** its service-role or S3 full-access credentials.
+- The sealer runs in a separate trusted Node runtime and receives a short-lived, independently issued restricted Storage identity that can INSERT/read in dedicated sealed buckets but cannot UPDATE/DELETE/move. Use official Storage RLS/custom-role policies, *not* SQL mutations of Storage metadata. Supabase [Custom Roles](https://supabase.com/docs/guides/storage/schema/custom-roles) and [S3 Authentication](https://supabase.com/docs/guides/storage/s3/authentication) document the relevant mechanisms and the danger of full-access keys bypassing RLS.
+- Publishing SQL stays in FairSwapProd and accepts registration only from an independently credentialed sealer principal after all five create-only uploads/readback hashes and a listing-locked complete manifest check. A prepared-only JS object or caller-provided JSON is never sufficient.
+- The provider worker gets at most read-only canonical-image access through a private gateway; user-visible Web/Android/iOS routes keep their JSON/redirect shape. Do not expose secondary-project secrets in Web/clients.
+- Separately privileged retirement reconciles private evidence only AFTER atomic visibility withdrawal and evidence invalidation under the parent listing lock, with India DPDP erasure/retention review. Never give sealer delete/overwrite authority.
+- Test that ordinary shared `service_role` credentials cannot mutate the isolated project, that the constrained sealer identity cannot upsert/update/delete/move via supported REST/S3/TUS channels, and that legacy V1 upload/deletion still work.
+
+**Stop:** do not provision a paid project, generate roots/JWT signing keys, alter hosted Storage policies, or apply Production migrations solely based on this ADR. Obtain a concrete environment, India region, cost/identity confirmation and adversarial hosted non-Production proof first.
