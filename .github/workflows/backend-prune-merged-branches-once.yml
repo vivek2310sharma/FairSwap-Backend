@@ -44,13 +44,16 @@ jobs:
           node --input-type=module <<'NODE'
           import { appendFileSync } from 'node:fs';
           const repo = 'vivek2310sharma/FairSwap-Backend';
-          const cleanupBranch = 'chore/prune-merged-backend-branches-20261021';
+          const housekeepingBranches = [
+            {ref:'chore/prune-merged-backend-branches-20261021', title:'chore(repo): prune reviewed merged Backend PR branches'},
+            {ref:'fix/prune-merged-backend-api-root-20261021', title:'fix(ops): correct merged branch prune API root'},
+          ];
           const pins = [{"pr":39,"branch":"hotfix/prod-v2-shadow-jwt-20261021","sha":"96905f34fe1775b840215b9ae6c4bdbdac15188c"},{"pr":38,"branch":"release/v2-prod-diagnostic-handoff-20261021","sha":"fb9e667c6461d6e1f50bba80a71528e93439aae4"},{"pr":37,"branch":"moderation-v2-readiness-2026-10-21","sha":"defe9d6094115e9e6488ecbff6c5230b73b301d5"},{"pr":36,"branch":"ops/modv2-safe-provider-connectivity-20261021","sha":"f6f183c6bdd69070e3b9552652b951686b3ca990"},{"pr":35,"branch":"feature/modv2-free-image-shadow-probe-20261021","sha":"4e7304270df8ce22e0acabf09557da16aab5719a"},{"pr":34,"branch":"feature/modv2-text-shadow-probe-20261021","sha":"afa0e8c5d71e9f4480ac50ef2bf2e5441c5ccd69"},{"pr":33,"branch":"feat/moderation-v2-free-provider-integration","sha":"7bdadac9d24db7873a7f03f36409fdf99e708478"},{"pr":31,"branch":"candidate/moderation-v2-foundation-v1","sha":"09d2282658ce23cd0c982799ddd7d0dab939b024"},{"pr":19,"branch":"docs/point1-record-legacy-pat-revocation-20261018","sha":"639ea2e4e082bdd2af08f51a4f26bc1a02b9fb30"},{"pr":18,"branch":"docs/point1-legacy-token-freeze-attestation-20261018","sha":"aef944873b22d6529e037218e042700ec2408d9a"},{"pr":17,"branch":"docs/point1-final-source-boundary-20261018","sha":"b827c0861c67e02e54c138b1260384b1fc24a136"},{"pr":13,"branch":"docs/point1-backend-source-ownership-20261018","sha":"53e87e63791e31fdc6cf99cc078d789c780ccca7"},{"pr":12,"branch":"docs/record-backend-token-scope-passes-20261018","sha":"92d37ac4ed796a54a8414c8cfa4a9152b8dcf5f0"},{"pr":11,"branch":"chore/manual-scoped-token-readonly-check-20261018","sha":"6389653be2ce4bd6df300235c8596ba00384e320"},{"pr":10,"branch":"chore/backend-exclusive-release-guard-20261018","sha":"24e07f43573d159b6bb5937ca9348e5ed2e5a556"},{"pr":6,"branch":"release/prod-hidden-category-foundation-20261017","sha":"0852ce77021742135c3f6f98caff65889e2f06f8"},{"pr":4,"branch":"release/staging-moderation-handoff-20261017","sha":"1fde734185c667cc446730e9415c1118809374e6"}];
           const token = process.env.GITHUB_TOKEN;
           if (!token || process.env.GITHUB_REPOSITORY !== repo) throw Error('Missing repo-scoped GITHUB_TOKEN');
-          const root = 'https://api.github.com/repos/' + repo + '/';
+          const root = 'https://api.github.com/repos/' + repo;
           async function api(path, method='GET', allow404=false) {
-            const res = await fetch(root + path, {
+            const res = await fetch(root + (path ? '/' + path : ''), {
               method,
               redirect: 'error',
               headers: {
@@ -79,13 +82,12 @@ jobs:
           const reserved = new Set(opened.flatMap(p=>[p.head?.ref,p.base?.ref]));
           // Prune this one-time housekeeping PR branch only after it is itself merged.
           const closed = await api('pulls?state=closed&per_page=100');
-          const selfPR = closed.find(p =>
-            p.head?.ref === cleanupBranch &&
-            p.head?.repo?.full_name === repo &&
-            p.base?.ref === 'main' && p.merged_at &&
-            p.title === 'chore(repo): prune reviewed merged Backend PR branches');
-          if (selfPR && !pins.some(x=>x.branch===cleanupBranch)) {
-            pins.push({pr:selfPR.number,branch:cleanupBranch,sha:selfPR.head.sha});
+          for (const p of closed) {
+            if (!p.merged_at || p.base?.ref !== 'main' || p.head?.repo?.full_name !== repo) continue;
+            if (housekeepingBranches.some(x=>x.ref===p.head?.ref && x.title===p.title) &&
+                !pins.some(x=>x.branch===p.head.ref)) {
+              pins.push({pr:p.number,branch:p.head.ref,sha:p.head.sha});
+            }
           }
           const approved = [], alreadyGone = [];
           for (const t of pins) {
