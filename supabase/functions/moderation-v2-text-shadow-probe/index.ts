@@ -1,4 +1,4 @@
-import { hasProductionServiceRoleClaims } from "../../../src/lib/moderation/v2/production-operator-jwt.ts";
+import { hasExactManagedServiceRoleBearer, hasProductionServiceRoleClaims } from "../../../src/lib/moderation/v2/production-operator-jwt.ts";
 import { createClient } from "@supabase/supabase-js";
 import {
   runTextShadowProbe,
@@ -144,6 +144,12 @@ export async function handleTextShadowProbeRequest(
     });
   }
 
+  // Existing private listing/media shadow reads retain the original exact
+  // managed service-key check. The JWT-claims fallback applies ONLY to
+  // the fixed benign synthetic connectivity fixture.
+  if (!hasExactManagedServiceRoleBearer(request, runtime.getEnv("SUPABASE_SERVICE_ROLE_KEY"))) {
+    return respond(401, "UNAUTHORIZED");
+  }
   const result = await runTextShadowProbe(input, runtime);
   if (!result.ok) {
     return respond(
