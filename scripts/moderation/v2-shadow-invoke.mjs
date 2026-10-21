@@ -86,7 +86,14 @@ export async function invokeShadow(
   if (!r || json.code !== (cmd.mode === "text" ? "SHADOW_TEXT_ONLY" : "SHADOW_IMAGE_ONLY") ||
       r.authority !== correctAuthority || r.listingId !== cmd.body.listingId ||
       (cmd.mode === "image" && r.mediaId !== cmd.body.mediaId) ||
-      !allowedRoutes.includes(r.route)) {
+      !allowedRoutes.includes(r.route) || typeof r.stale !== "boolean" ||
+      (cmd.mode === "text" && r.imageModeration !== "NOT_PERFORMED") ||
+      (cmd.mode === "image" && (
+        r.source !== "LEGACY_MEDIUM_WEBP_UNSEALED" ||
+        r.scope !== "ONE_MEDIA_ONLY_NOT_FULL_COVERAGE" ||
+        r.imageReview !== "HARM_CATEGORIES_ONLY_NOT_MARKETPLACE_FRAUD" ||
+        !/^[0-9a-f]{64}$/.test(r.sampleSha256 ?? "")
+      ))) {
     return { ok: false, code: "INVALID_RESPONSE" };
   }
   return {
