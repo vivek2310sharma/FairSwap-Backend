@@ -1,4 +1,4 @@
-import { hasProductionServiceRoleClaims } from "../../../src/lib/moderation/v2/production-operator-jwt.ts";
+import { hasExactManagedServiceRoleBearer, hasProductionServiceRoleClaims } from "../../../src/lib/moderation/v2/production-operator-jwt.ts";
 import { createClient } from "@supabase/supabase-js";
 import {
   runImageShadowProbe,
@@ -111,6 +111,12 @@ export async function handleImageShadowRequest(
     const check = await runSyntheticImageConnectivity(runtime.moderateImage);
     if (!check.ok) return respond(503, "OPENAI_IMAGE_MODERATION_CHECK_FAILED", { authority: "SYNTHETIC_CONNECTIVITY_ONLY", reason: check.reason });
     return respond(200, "OPENAI_IMAGE_MODERATION_CONNECTED", { authority: "SYNTHETIC_CONNECTIVITY_ONLY", scope: "BENIGN_SYNTHETIC_IMAGE_NOT_LISTING_REVIEW", model: check.model, provider: check.provider });
+  }
+  // Existing private listing/media shadow reads retain the original exact
+  // managed service-key check. The JWT-claims fallback applies ONLY to
+  // the fixed benign synthetic connectivity fixture.
+  if (!hasExactManagedServiceRoleBearer(req, runtime.getEnv("SUPABASE_SERVICE_ROLE_KEY"))) {
+    return respond(401, "UNAUTHORIZED");
   }
   const result = await runImageShadowProbe(body, runtime);
   if (!result.ok) {
