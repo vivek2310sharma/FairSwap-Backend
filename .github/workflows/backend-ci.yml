@@ -74,13 +74,15 @@ jobs:
         timeout-minutes: 1
         run: node --test scripts/ci/verification.test.mjs
 
-      - name: Require all 26 free Moderation V2 shadow and image-integrity tests
+      - name: Require all free Moderation V2 shadow and image-integrity tests
         timeout-minutes: 3
         run: |
           test -f tests/v2-single-project/free-moderation.test.mjs
           test -f tests/v2-single-project/india-fraud.test.mjs
           test -f tests/v2-single-project/shadow-evaluator.test.mjs
           test -f tests/v2-single-project/verified-media.test.mjs
+          test -f tests/v2-single-project/text-shadow-probe.test.mjs
+          test -f tests/v2-single-project/image-shadow-probe.test.mjs
           env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
             node --experimental-strip-types --test tests/v2-single-project/*.test.mjs
 
