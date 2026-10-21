@@ -138,3 +138,92 @@ test("provider/API failures never surface raw HTTP body or secrets", async () =>
   });
   assert.deepEqual(broken, { ok: false, code: "NETWORK_OR_TIMEOUT" });
 });
+
+test("no-listing synthetic connectivity command checks only the free Moderation endpoint", async () => {
+  assert.deepEqual(parseShadowCommand(["check"]), {
+    mode: "check", body: { probe: "synthetic_connectivity" },
+  });
+  assert.equal(parseShadowCommand(["check", listingId]), null);
+  const calls = [];
+  const out = await invokeShadow(["check"], {
+    getEnv,
+    fetcher: fakeFetcher({
+      code: "OPENAI_MODERATION_CONNECTED",
+      authority: "SYNTHETIC_CONNECTIVITY_ONLY",
+      scope: "BENIGN_SYNTHETIC_TEXT_NOT_LISTING_REVIEW",
+      model: "omni-moderation-2024-09-26",
+      provider: "clear",
+      rawProviderData: "must never be returned by the CLI",
+    }, 200, calls),
+  });
+  assert.deepEqual(out, {
+    ok: true,
+    mode: "check",
+    connected: true,
+    authority: "SYNTHETIC_CONNECTIVITY_ONLY",
+    model: "omni-moderation-2024-09-26",
+    provider: "clear",
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url,
+    "https://kriuhwppxgxsyyrbjsau.supabase.co/functions/v1/moderation-v2-text-shadow-probe");
+  assert.deepEqual(JSON.parse(calls[0].options.body), { probe: "synthetic_connectivity" });
+  assert.equal(calls[0].options.headers.Authorization, "Bearer " + secretJwt);
+  assert.ok(!JSON.stringify(out).includes(secretJwt));
+  assert.ok(!JSON.stringify(out).includes("rawProviderData"));
+});
+
+test("synthetic operator check shows only approved, non-sensitive auth failure reasons", async () => {
+  const result = await invokeShadow(["check"], {
+    getEnv,
+    fetcher: fakeFetcher({
+      code: "OPENAI_MODERATION_CHECK_FAILED",
+      authority: "SYNTHETIC_CONNECTIVITY_ONLY",
+      reason: "PROVIDER_AUTH",
+      providerRawError: "forbidden to echo",
+    }, 503),
+  });
+  assert.deepEqual(result, {
+    ok: false,
+    code: "PROVIDER_CHECK_FAILED",
+    reason: "PROVIDER_AUTH",
+  });
+  assert.ok(!JSON.stringify(result).includes("forbidden"));
+  const missing = await invokeShadow(["check"], {
+    getEnv,
+    fetcher: fakeFetcher({ code: "OPENAI_NOT_CONFIGURED" }, 503),
+  });
+  assert.deepEqual(missing, { ok: false, code: "OPENAI_NOT_CONFIGURED" });
+  const invalid = await invokeShadow(["check"], {
+    getEnv,
+    fetcher: fakeFetcher({
+      code: "OPENAI_MODERATION_CHECK_FAILED",
+      authority: "SYNTHETIC_CONNECTIVITY_ONLY",
+      reason: "private_server_token",
+    }, 503),
+  });
+  assert.deepEqual(invalid, { ok: false, code: "SHADOW_UNAVAILABLE", status: 503 });
+});
+
+test("synthetic operator check rejects forged model, authority or provider state", async () => {
+  const base = {
+    code: "OPENAI_MODERATION_CONNECTED",
+    authority: "SYNTHETIC_CONNECTIVITY_ONLY",
+    scope: "BENIGN_SYNTHETIC_TEXT_NOT_LISTING_REVIEW",
+    model: "omni-moderation-2024-09-26",
+    provider: "clear",
+  };
+  for (const forged of [
+    { ...base, authority: "APPROVED" },
+    { ...base, scope: "FULL_LISTING_APPROVAL" },
+    { ...base, model: "gpt-paid-model" },
+    { ...base, provider: "approved" },
+    { ...base, code: "OTHER_SUCCESS" },
+  ]) {
+    const result = await invokeShadow(["check"], {
+      getEnv,
+      fetcher: fakeFetcher(forged),
+    });
+    assert.deepEqual(result, { ok: false, code: "INVALID_RESPONSE" });
+  }
+});

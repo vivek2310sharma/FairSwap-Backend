@@ -7,6 +7,7 @@
  * This tool does NOT publish, approve, write to Storage, or trigger V1 jobs.
  *
  * Usage:
+ *   node scripts/moderation/v2-shadow-invoke.mjs check
  *   node scripts/moderation/v2-shadow-invoke.mjs text <listing-uuid>
  *   node scripts/moderation/v2-shadow-invoke.mjs image <listing-uuid> <media-uuid>
  *
@@ -18,6 +19,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 
 export function parseShadowCommand(args) {
   if (!Array.isArray(args)) return null;
+  // No real listing/photo is used to verify the free provider credentials.
+  if (args.length === 1 && args[0] === "check") {
+    return { mode: "check", body: { probe: "synthetic_connectivity" } };
+  }
   const [mode, listingId, mediaId, ...rest] = args;
   if (rest.length || !UUID.test(listingId ?? "") ||
       !["text", "image"].includes(mode) ||
@@ -43,9 +48,9 @@ export async function invokeShadow(
   if (!key || key.length < 40 || key.split(".").length !== 3) {
     return { ok: false, code: "SERVICE_ROLE_JWT_NOT_CONFIGURED" };
   }
-  const slug = cmd.mode === "text"
-    ? "moderation-v2-text-shadow-probe"
-    : "moderation-v2-image-shadow-probe";
+  const slug = cmd.mode === "image"
+    ? "moderation-v2-image-shadow-probe"
+    : "moderation-v2-text-shadow-probe";
   let response;
   try {
     response = await deps.fetcher(
@@ -67,7 +72,25 @@ export async function invokeShadow(
     return { ok: false, code: "NETWORK_OR_TIMEOUT" };
   }
   // Do not echo untrusted/provider error bodies; they may contain PII.
+  // On synthetic connectivity only, allowlisted reason codes contain no PII.
   if (!response.ok) {
+    if (cmd.mode === "check" && response.status === 503) {
+      try {
+        const error = await response.json();
+        const permitted = [
+          "PROVIDER_AUTH", "PROVIDER_LIMIT", "PROVIDER_UNAVAILABLE",
+          "PROVIDER_SCHEMA", "PROVIDER_INPUT", "TIMEOUT",
+        ];
+        if (error?.code === "OPENAI_MODERATION_CHECK_FAILED" &&
+          error?.authority === "SYNTHETIC_CONNECTIVITY_ONLY" &&
+          permitted.includes(error.reason)) {
+          return { ok: false, code: "PROVIDER_CHECK_FAILED", reason: error.reason };
+        }
+        if (error?.code === "OPENAI_NOT_CONFIGURED") {
+          return { ok: false, code: "OPENAI_NOT_CONFIGURED" };
+        }
+      } catch { /* Never expose provider or gateway error bodies. */ }
+    }
     return { ok: false, code: "SHADOW_UNAVAILABLE", status: response.status };
   }
   let json;
@@ -75,6 +98,23 @@ export async function invokeShadow(
     json = await response.json();
   } catch {
     return { ok: false, code: "INVALID_RESPONSE" };
+  }
+  if (cmd.mode === "check") {
+    if (json?.code !== "OPENAI_MODERATION_CONNECTED" ||
+      json?.authority !== "SYNTHETIC_CONNECTIVITY_ONLY" ||
+      json?.scope !== "BENIGN_SYNTHETIC_TEXT_NOT_LISTING_REVIEW" ||
+      json?.model !== "omni-moderation-2024-09-26" ||
+      !["clear", "flagged"].includes(json?.provider)) {
+      return { ok: false, code: "INVALID_RESPONSE" };
+    }
+    return {
+      ok: true,
+      mode: "check",
+      connected: true,
+      authority: "SYNTHETIC_CONNECTIVITY_ONLY",
+      model: json.model,
+      provider: json.provider,
+    };
   }
   const r = json?.result;
   const correctAuthority = cmd.mode === "text"

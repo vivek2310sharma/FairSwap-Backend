@@ -246,3 +246,84 @@ test("GET, invalid content type and invalid JSON never access the database", asy
   assert.equal(state.calls.read, 0);
   assert.equal(state.calls.moderate.length, 0);
 });
+
+test("synthetic-only check reaches free moderation exactly once without reading a listing", async () => {
+  const { state, runtime: deps } = runtime();
+  const response = await handleTextShadowProbeRequest(
+    request({ probe: "synthetic_connectivity" }),
+    deps,
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  const json = await response.json();
+  assert.deepEqual(json, {
+    code: "OPENAI_MODERATION_CONNECTED",
+    authority: "SYNTHETIC_CONNECTIVITY_ONLY",
+    scope: "BENIGN_SYNTHETIC_TEXT_NOT_LISTING_REVIEW",
+    model: "omni-moderation-2024-09-26",
+    provider: "clear",
+  });
+  assert.equal(state.calls.read, 0);
+  assert.equal(state.calls.moderate.length, 1);
+  assert.match(state.calls.moderate[0], /used bicycle/i);
+  assert.doesNotMatch(JSON.stringify(json), /listingId|seller|description|approved|published/);
+});
+
+test("synthetic OpenAI auth failure returns redacted 503, with zero database operations", async () => {
+  const { state, runtime: deps } = runtime({
+    moderateText: async () => ({ state: "failed", reason: "PROVIDER_AUTH" }),
+  });
+  const response = await handleTextShadowProbeRequest(
+    request({ probe: "synthetic_connectivity" }),
+    deps,
+  );
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    code: "OPENAI_MODERATION_CHECK_FAILED",
+    authority: "SYNTHETIC_CONNECTIVITY_ONLY",
+    reason: "PROVIDER_AUTH",
+  });
+  assert.equal(state.calls.read, 0);
+});
+
+test("synthetic probe cannot masquerade as user data or bypass service-role security", async () => {
+  const { state, runtime: deps } = runtime();
+  const unauthorized = await handleTextShadowProbeRequest(
+    request({ probe: "synthetic_connectivity" }, {
+      headers: { Authorization: "Bearer untrusted" },
+    }),
+    deps,
+  );
+  assert.equal(unauthorized.status, 401);
+  const extra = await handleTextShadowProbeRequest(
+    request({ probe: "synthetic_connectivity", listingId: id }),
+    deps,
+  );
+  assert.equal(extra.status, 400);
+  const unknown = await handleTextShadowProbeRequest(
+    request({ probe: "dangerous_api" }),
+    deps,
+  );
+  assert.equal(unknown.status, 400);
+  assert.equal(state.calls.read, 0);
+  assert.equal(state.calls.moderate.length, 0);
+});
+
+test("synthetic probe refuses wrong model and missing OpenAI secret without reading DB", async () => {
+  const { state, runtime: deps } = runtime({
+    moderateText: async () => ({ state: "clear", model: "unexpected-model", categoryFlags: {} }),
+  });
+  const wrongModel = await handleTextShadowProbeRequest(
+    request({ probe: "synthetic_connectivity" }),
+    deps,
+  );
+  assert.equal(wrongModel.status, 503);
+  assert.equal((await wrongModel.json()).reason, "PROVIDER_SCHEMA");
+  const missing = await handleTextShadowProbeRequest(
+    request({ probe: "synthetic_connectivity" }),
+    { ...deps, getEnv: key => key === "OPENAI_API_KEY" ? undefined : env[key] },
+  );
+  assert.equal(missing.status, 503);
+  assert.equal((await missing.json()).code, "OPENAI_NOT_CONFIGURED");
+  assert.equal(state.calls.read, 0);
+});

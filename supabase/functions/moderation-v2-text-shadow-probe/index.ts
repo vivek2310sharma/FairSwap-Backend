@@ -14,6 +14,8 @@ import {
  * exact service-role bearer comparison. Never call from Web, Admin UI,
  * Android, iOS or public clients. Operator invocation only.
  *
+ * Supports an independently authenticated synthetic connectivity check
+ * without reading any real listing or photo.
  * Reads a single DB listing, calls free OpenAI Moderation for title/description,
  * reads DB again, and returns only sanitized results. NEVER writes to DB or
  * Storage, never claims a queue job, never invokes finalization/publication.
@@ -113,6 +115,45 @@ export async function handleTextShadowProbeRequest(
   } catch {
     return respond(400, "INVALID_REQUEST");
   }
+  // Operator-only, synthetic-only OpenAI connectivity proof.
+  // No seller text, photo, listing lookup or publication is involved.
+  // The strict service-role+JWT and Production-project checks above
+  // MUST complete before this branch is reachable.
+  if (
+    input !== null &&
+    typeof input === "object" &&
+    !Array.isArray(input) &&
+    Object.keys(input).length === 1 &&
+    (input as Record<string, unknown>).probe === "synthetic_connectivity"
+  ) {
+    let provider: ModerationOutcome;
+    try {
+      provider = await runtime.moderateText(
+        "A used bicycle is available for inspection in Pune. No advance payment required.",
+      );
+    } catch {
+      provider = { state: "failed", reason: "PROVIDER_UNAVAILABLE" };
+    }
+    if (provider.state === "failed") {
+      return respond(503, "OPENAI_MODERATION_CHECK_FAILED", {
+        authority: "SYNTHETIC_CONNECTIVITY_ONLY",
+        reason: provider.reason,
+      });
+    }
+    if (provider.model !== "omni-moderation-2024-09-26") {
+      return respond(503, "OPENAI_MODERATION_CHECK_FAILED", {
+        authority: "SYNTHETIC_CONNECTIVITY_ONLY",
+        reason: "PROVIDER_SCHEMA",
+      });
+    }
+    return respond(200, "OPENAI_MODERATION_CONNECTED", {
+      authority: "SYNTHETIC_CONNECTIVITY_ONLY",
+      scope: "BENIGN_SYNTHETIC_TEXT_NOT_LISTING_REVIEW",
+      model: provider.model,
+      provider: provider.state,
+    });
+  }
+
   const result = await runTextShadowProbe(input, runtime);
   if (!result.ok) {
     return respond(
