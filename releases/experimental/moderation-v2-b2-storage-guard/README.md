@@ -40,3 +40,17 @@ This proposal **does not** authenticate the sealer on creation, grant trusted re
 ### FairSwap India outcome
 
 This is needed to prevent a listing's photos from being replaced *after* an AI anti-fraud decision, a weakness that can undermine buyer trust even if payment-link and fake-courier detection are implemented.
+
+
+## Read-only hosted compatibility observation (2026-10-21)
+
+A privileged **read-only** query on FairSwapProd reported:
+
+- Project still has 55 applied migrations; V1 on and V2 off/disabled.
+- `storage.objects` is owned by `supabase_storage_admin`, not `postgres`.
+- In the connected `postgres` query session, `has_table_privilege(..., 'TRIGGER')` returned true despite the ownership difference.
+- Two non-system Storage triggers already exist; do not drop or replace them.
+
+`preflight.readonly.sql` reproduces the relevant catalog/settings checks from the **actual intended operator connection**. It runs inside an explicitly READ ONLY transaction.
+
+**Critical:** grant visibility alone does not prove that a custom Storage trigger is a supported hosted feature or that it protects physical object bytes across S3/TUS/other protocols. It grants no permission to run `guard.candidate.sql`; the trusted retirement and re-publication design is still incomplete. No Production DDL was executed in this observation.
