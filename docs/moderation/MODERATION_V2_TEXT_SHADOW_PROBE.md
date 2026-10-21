@@ -40,3 +40,32 @@ No autonomous polling, scheduled task, paid GPT or Responses calls.
 The independent Backend CI already requires the full V2 test glob. New tests cover invalid requests, stale listing revision/content, scam signals, failed provider calls, missing key, wrong project, Bearer misuse, changed images not reviewed, and no text leakage.
 
 This probe does **not** grant moderation-policy approval or open a new provider billing category. OpenAI Moderation remains free, although standard Supabase resource limits and network usage still apply.
+
+
+## Synthetic OpenAI connectivity check (no customer data)
+
+When an operator has just configured `OPENAI_API_KEY` in **FairSwapProd → Edge Functions → Secrets**, first verify the key against OpenAI without selecting a real listing or image:
+
+```sh
+node scripts/moderation/v2-shadow-invoke.mjs check
+```
+
+Run this only from the **trusted Backend operator terminal** that already has the legacy FairSwapProd `SUPABASE_SERVICE_ROLE_KEY` JWT in its protected process environment. Do not paste that JWT or the OpenAI API key into the command line, CI logs, Antigravity chat, GitHub, mobile applications, or support channels. The command has no listing or media argument and uses the pinned FairSwapProd endpoint; do not change the URL.
+
+The live Supabase Edge Function verifies **JWT + service-role authorization** before parsing the strict `{"probe":"synthetic_connectivity"}` request. It sends only this predetermined harmless sentence to the **free** OpenAI Moderation API:
+
+> A used bicycle is available for inspection in Pune. No advance payment required.
+
+On success the result is `connected: true`, `authority: SYNTHETIC_CONNECTIVITY_ONLY`, and model `omni-moderation-2024-09-26`. It proves this particular function invoked the provider successfully with the configured key. It does **not** verify a listing, photo, scam or publication decision.
+
+On failure the command prints only a safe code, for example:
+- `SERVICE_ROLE_JWT_NOT_CONFIGURED`: operator-side legacy service-role JWT missing; the Supabase browser/dashboard key is not the same as the OpenAI API key.
+- `OPENAI_NOT_CONFIGURED`: `OPENAI_API_KEY` was not available to the Edge function.
+- `PROVIDER_CHECK_FAILED` with `PROVIDER_AUTH`: OpenAI rejected the key or moderation permission; inspect **only** permissions/project, never print the token.
+- `PROVIDER_CHECK_FAILED` with `PROVIDER_LIMIT`: provider rate or quota limit.
+- `PROVIDER_CHECK_FAILED` with `PROVIDER_SCHEMA`: model or provider contract changed.
+- `SHADOW_UNAVAILABLE` or `NETWORK_OR_TIMEOUT`: investigate gateway/region/network without logging secrets.
+
+For Production user-data checks, use `text <test-listing-uuid>` or the separate image shadow probe only on an **operator-authorized** test listing. A synthetic success cannot enable V2 automatically, and the endpoint performs **zero** DB reads, Storage operations or finalization calls.
+
+**Required states remain:** V1 ON, V2 OFF, no V2 queue worker active; no new Supabase project or paid OpenAI models.
