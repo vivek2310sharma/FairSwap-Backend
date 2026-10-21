@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "releaseId": "moderation-v2-foundation-v1",
+  "status": "PREPARATION_ONLY_NOT_APPROVED_FOR_EXECUTION",
+  "targetProjectRef": "kriuhwppxgxsyyrbjsau",
+  "targetEnvironment": "FairSwapProd",
+  "postgresVersion": "17.6",
+  "rehearsalPostgresVersion": "17.11",
+  "postgresVersionDeviationNote": "Production is PostgreSQL 17.6; local rehearsal used PostgreSQL 17.11. Engine compatibility is verified for 17.x, but exact 17.6 minor-version rehearsal requires explicit CTO risk approval prior to production execution.",
+  "productionBaseline": {
+    "migrationCount": 52,
+    "appliedVersions": [
+      "20260914000001",
+      "20260914000002",
+      "20260914000003",
+      "20260914000004",
+      "20260914000005",
+      "20260914000006",
+      "20260914000007",
+      "20260914000008",
+      "20260914000009",
+      "20260914000010",
+      "20260914000011",
+      "20260914000012",
+      "20260914000013",
+      "20260914000014",
+      "20260914000015",
+      "20260914000016",
+      "20260914000017",
+      "20260916000018",
+      "20260916000019",
+      "20260918000020",
+      "20260918000021",
+      "20260926000022",
+      "20260926000023",
+      "20260926000024",
+      "20260929000025",
+      "20260930000026",
+      "20260930000027",
+      "20260930000028",
+      "20261001000029",
+      "20261001000030",
+      "20261001000031",
+      "20261001000032",
+      "20261002000033",
+      "20261007153735",
+      "20261007153744",
+      "20261007161425",
+      "20261008210921",
+      "20261009163210",
+      "20261010071050",
+      "20261010080000",
+      "20261010090000",
+      "20261011000038",
+      "20261011000039",
+      "20261013192336",
+      "20261013235311",
+      "20261017205755",
+      "20261017205757",
+      "20261017205759",
+      "20261017205801",
+      "20261017205803",
+      "20261017205805",
+      "20261017205807"
+    ]
+  },
+  "candidateForwardMigrations": [
+    {
+      "version": "20261018172250",
+      "file": "20261018172250_moderation_v2_private_foundation.sql",
+      "source": "supabase/forward-migrations/moderation-v2/20261018172250_moderation_v2_private_foundation.sql",
+      "sha256": "58c9ea477aa92a196107fb7d0b71089cf12dba9f4b2b986ad74b45d54e84d19e"
+    },
+    {
+      "version": "20261018182448",
+      "file": "20261018182448_moderation_v2_input_validation.sql",
+      "source": "supabase/forward-migrations/moderation-v2/20261018182448_moderation_v2_input_validation.sql",
+      "sha256": "721a7fcd2f32bfc41dbd55ad36dfe1d8bcce8b20d93e4da61b61be08370ca284"
+    },
+    {
+      "version": "20261019102255",
+      "file": "20261019102255_moderation_v2_input_lease.sql",
+      "source": "supabase/forward-migrations/moderation-v2/20261019102255_moderation_v2_input_lease.sql",
+      "sha256": "47285a7f116ce4d6dc5ce671c20173cfec7a4156f41dd2c63e5ba3b78ea46f94",
+      "note": "Preserves 3-byte UTF-8 BOM from PR #26 git blob"
+    }
+  ],
+  "excludedTestOrQuarantinedMigrations": [
+    {
+      "file": "20261019215421_moderation_v2_point3_c2_media_registry_test.sql",
+      "sha256": "9efb9d3489c8f5825f029d5d4bf6626a6abea50c843c03744467d201c7e81cbd",
+      "reason": "FairSwapTest specific; asserts 67 baseline migrations incompatible with Production 52"
+    },
+    {
+      "file": "20261019215550_moderation_v2_point3_c2_registry_owner_usage_test.sql",
+      "sha256": "81a8db1b6f76f1668145415e094f6a54d965389bb2b1b2517147fbeafe39d067",
+      "reason": "FairSwapTest specific; test-only role/registry fixture"
+    },
+    {
+      "file": "20261020082513_moderation_v2_point3_c2_guarded_finalizer.sql",
+      "sha256": "a8c46444e2f7870f821acd38b5048a80a815c2071114f962c96937830df5c46d",
+      "reason": "FairSwapTest specific; asserts 69 baseline migrations incompatible with Production 52"
+    },
+    {
+      "file": "20261020103242_moderation_v2_worker_bound_reads.sql",
+      "sha256": "7684d5a6e42b89e7b2ece49248b3c8900fd981deb1039854556ff2fc8ac51b07",
+      "reason": "FairSwapTest specific; test-only read helper"
+    }
+  ],
+  "v1Preservation": {
+    "moderation_automation_enabled": "PRESERVED_UNCHANGED",
+    "goodsFinalizerBodyHash": "118d04445fdd9139d90decd2048945f1",
+    "goodsEnqueueTrigger": "trg_listing_moderation_enqueue (ENABLED 'O')",
+    "enforcement": "Preflight and postflight enforce identical V1 invariants before and after migration application"
+  },
+  "configuration": {
+    "moderation_v2_enabled": "false",
+    "moderation_v2_mode": "disabled",
+    "policy_registry_is_approved": false,
+    "anon_auth_execute": false,
+    "service_role_execute": true
+  }
+}
