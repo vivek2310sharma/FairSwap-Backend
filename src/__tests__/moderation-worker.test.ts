@@ -1,3 +1,7 @@
+import { reviewListingMediaSafety } from "../../supabase/functions/_shared/listing-media-safety";
+vi.mock("../../supabase/functions/_shared/listing-media-safety", () => ({
+  reviewListingMediaSafety: vi.fn().mockResolvedValue({ state: "clear", reviewedCount: 1 }),
+}));
 import { describe, it, expect, vi } from "vitest";
 import {
   processClaimedJob,
@@ -96,6 +100,56 @@ describe("Listing Moderation Worker Unit Tests", () => {
         ]),
       })
     );
+  });
+
+  it("routes unsafe images to admin and does not auto-approve clean text", async () => {
+    vi.mocked(reviewListingMediaSafety).mockResolvedValueOnce({
+      state: "review",
+      mediaId: "55555555-5555-4555-8555-555555555555",
+      reason: "RESTRICTED_ITEM",
+    });
+    const mockRpc = vi.fn().mockResolvedValue({
+      data: { success: true, decision: "routed_to_admin" },
+      error: null,
+    });
+    const job: ClaimedModerationJob = {
+      request_id: "11111111-1111-4111-8111-111111111111",
+      listing_id: "22222222-2222-4222-8222-222222222222",
+      listing_revision: 1,
+      generation_id: "33333333-3333-4333-8333-333333333333",
+      claim_token: "44444444-4444-4444-8444-444444444444",
+      attempt_count: 1,
+      title: "Classic wooden table",
+      description: "A used wooden dining table in good condition.",
+    };
+    const result = await processClaimedJob(job, { rpc: mockRpc } as unknown as import("@supabase/supabase-js").SupabaseClient);
+    expect(result.decision).toBe("routed_to_admin");
+    expect(mockRpc).toHaveBeenCalledWith("impl_finalize_moderation_result",
+      expect.objectContaining({ p_outcome: "needs_review", p_flags: expect.any(Array) }));
+  });
+
+  it("never sends a clean verdict if image review is unavailable", async () => {
+    vi.mocked(reviewListingMediaSafety).mockResolvedValueOnce({
+      state: "incomplete",
+      reason: "MEDIA_OR_PROVIDER_FAILURE",
+    });
+    const mockRpc = vi.fn().mockResolvedValue({
+      data: { success: true, decision: "awaiting_retry" },
+      error: null,
+    });
+    const job: ClaimedModerationJob = {
+      request_id: "11111111-1111-4111-8111-111111111111",
+      listing_id: "22222222-2222-4222-8222-222222222222",
+      listing_revision: 1,
+      generation_id: "33333333-3333-4333-8333-333333333333",
+      claim_token: "44444444-4444-4444-8444-444444444444",
+      attempt_count: 1,
+      title: "Classic wooden table",
+      description: "A used wooden dining table in good condition.",
+    };
+    await processClaimedJob(job, { rpc: mockRpc } as unknown as import("@supabase/supabase-js").SupabaseClient);
+    expect(mockRpc).toHaveBeenCalledWith("impl_finalize_moderation_result",
+      expect.objectContaining({ p_outcome: "checks_incomplete" }));
   });
 
   it("processes invalid short input and maps to invalid_input outcome", async () => {
