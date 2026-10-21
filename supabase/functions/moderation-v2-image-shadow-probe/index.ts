@@ -6,6 +6,7 @@ import {
 import {
   moderateCanonicalWebp,
 } from "../../../src/lib/moderation/v2/free-moderation.ts";
+import { isSyntheticImageConnectivityRequest, runSyntheticImageConnectivity } from "../../../src/lib/moderation/v2/synthetic-image-connectivity.ts";
 
 /**
  * FairSwapProd operator-only one-image V2 shadow probe.
@@ -116,6 +117,11 @@ export async function handleImageShadowRequest(
     body = await boundedJson(req);
   } catch {
     return respond(400, "INVALID_REQUEST");
+  }
+  if (isSyntheticImageConnectivityRequest(body)) {
+    const check = await runSyntheticImageConnectivity(runtime.moderateImage);
+    if (!check.ok) return respond(503, "OPENAI_IMAGE_MODERATION_CHECK_FAILED", { authority: "SYNTHETIC_CONNECTIVITY_ONLY", reason: check.reason });
+    return respond(200, "OPENAI_IMAGE_MODERATION_CONNECTED", { authority: "SYNTHETIC_CONNECTIVITY_ONLY", scope: "BENIGN_SYNTHETIC_IMAGE_NOT_LISTING_REVIEW", model: check.model, provider: check.provider });
   }
   const result = await runImageShadowProbe(body, runtime);
   if (!result.ok) {
