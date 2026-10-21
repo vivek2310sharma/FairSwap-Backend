@@ -1,0 +1,106 @@
+# Manual, operator-gated diagnostic deployment. Does not run on push or PR.
+# Deploys ONLY the read-only image shadow probe; never a V2 worker or DB migration.
+name: "[MANUAL] Deploy FairSwapProd V2 image diagnostics"
+
+run-name: "Production image shadow diagnostic — ${{ github.actor }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_project_ref:
+        description: "Type Production project ref exactly (never paste a secret)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fairswap-prod-v2-image-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  deploy-image-diagnostics:
+    # Never execute an unreviewed feature branch or accept another actor.
+    if: ${{ github.ref == 'refs/heads/main' && github.actor == 'vivek2310sharma' }}
+    environment: FairSwapProd-moderation-diagnostics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Confirm exact Production target (no project discovery)
+        env:
+          EXPECTED_REF: kriuhwppxgxsyyrbjsau
+          ENTERED_REF: ${{ inputs.confirm_project_ref }}
+        run: |
+          [[ "$ENTERED_REF" == "$EXPECTED_REF" ]] || {
+            echo "::error::Production target confirmation mismatch"
+            exit 1
+          }
+          echo "PASS: exact FairSwapProd target confirmed"
+
+      - name: Checkout reviewed main without persisted GitHub token
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Verify deployment is diagnostic-only and JWT-gated
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const config = readFileSync('supabase/config.toml', 'utf8');
+          const match = config.match(/\[functions\.moderation-v2-image-shadow-probe\]\s*\n([^\[]*)/);
+          if (!match || !/^\s*verify_jwt\s*=\s*true\s*$/m.test(match[1])) {
+            throw Error('Image probe must keep Supabase JWT verification');
+          }
+          const source = readFileSync('supabase/functions/moderation-v2-image-shadow-probe/index.ts','utf8');
+          if (!source.includes('https://kriuhwppxgxsyyrbjsau.supabase.co') ||
+              !source.includes('runSyntheticImageConnectivity') ||
+              !source.includes('SUPABASE_SERVICE_ROLE_KEY') ||
+              !source.includes('OPENAI_IMAGE_MODERATION_CONNECTED')) {
+            throw Error('Missing exact Production guard or synthetic-only check');
+          }
+          const worker = readFileSync('supabase/config.toml','utf8');
+          if (/\[functions\.process-listing-moderation-v2\]/.test(worker)) {
+            throw Error('Do not add V2 worker deployment here');
+          }
+          console.log('PASS: only approved image-shadow diagnostic source is eligible');
+          NODE
+
+      - name: Download and verify pinned Supabase CLI without executing install scripts
+        run: |
+          mapfile -t pins < <(node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const p = JSON.parse(readFileSync('scripts/ci/toolchain.json','utf8')).database;
+          console.log(p.cliArchive);
+          console.log(p.cliArchiveSha256);
+          console.log(p.cliVersion);
+          NODE
+          )
+          [[ "${pins[0]}" == "https://github.com/supabase/cli/releases/download/v2.117.0/supabase_linux_amd64.tar.gz" ]]
+          [[ "${pins[1]}" =~ ^[a-f0-9]{64}$ && "${pins[2]}" == '2.117.0' ]]
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            --connect-timeout 10 --max-time 120 "${pins[0]}" -o "$RUNNER_TEMP/supabase.tar.gz"
+          printf '%s  %s\n' "${pins[1]}" "$RUNNER_TEMP/supabase.tar.gz" | sha256sum -c --status
+          tar -xzf "$RUNNER_TEMP/supabase.tar.gz" -C "$RUNNER_TEMP" supabase
+          chmod 700 "$RUNNER_TEMP/supabase"
+          [[ "$("$RUNNER_TEMP/supabase" --version)" == '2.117.0' ]]
+          echo "PASS: exact pinned Supabase CLI authenticated by SHA-256"
+
+      - name: Deploy image probe only, never enable moderation V2
+        env:
+          # Configure ONLY as an environment-scoped secret with least-privilege
+          # Functions write permission for the single FairSwapProd project.
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_PROD_SHADOW_DEPLOY_TOKEN }}
+        run: |
+          [[ -n "${SUPABASE_ACCESS_TOKEN:-}" ]] || {
+            echo "::error::Missing environment-scoped Production deployment token"
+            exit 1
+          }
+          # NO --no-verify-jwt, NO db push, NO worker deploy, NO settings update.
+          "$RUNNER_TEMP/supabase" functions deploy moderation-v2-image-shadow-probe \
+            --project-ref kriuhwppxgxsyyrbjsau
+          echo "DEPLOYED: image shadow diagnostic only. No listing or policy authority."
+          echo "NEXT: operator must run explicit synthetic text + image checks."
