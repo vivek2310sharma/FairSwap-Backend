@@ -25,8 +25,8 @@ describe("synthetic image provider connectivity", () => {
   });
 });
 
-describe("shadow text optional description", () => {
-  it("does not retry just because description is absent", async () => {
+describe("shadow text incomplete description", () => {
+  it("fails closed when description is missing", async () => {
     const listingId="bb2a48d6-f41c-4f50-ac29-c833586a2fe3";
     const listing={id:listingId,title:"Used bicycle for sale in Pune",description:null,status:"pending_review",revision:2,updated_at:"2026-10-21T10:00:00.000Z"};
     const result=await runTextShadowProbe({listingId},{
@@ -36,7 +36,7 @@ describe("shadow text optional description", () => {
     expect(result.ok).toBe(true);
     if(result.ok) {
       expect(result.provider.description).toBe("missing");
-      expect(result.route).toBe("text_no_flags");
+      expect(result.route).toBe("retry");
     }
   });
 });
