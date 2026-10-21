@@ -1,3 +1,4 @@
+import { hasProductionServiceRoleClaims } from "../../../src/lib/moderation/v2/production-operator-jwt.ts";
 import { createClient } from "@supabase/supabase-js";
 import {
   runTextShadowProbe,
@@ -45,17 +46,6 @@ function respond(status: number, code: string, extra?: Record<string, unknown>):
   );
 }
 
-function constantTimeEqual(a: string, b: string): boolean {
-  const encoder = new TextEncoder();
-  const left = encoder.encode(a), right = encoder.encode(b);
-  const n = Math.max(left.length, right.length);
-  let difference = left.length ^ right.length;
-  for (let i = 0; i < n; i++) {
-    difference |= (left[i] ?? 0) ^ (right[i] ?? 0);
-  }
-  return difference === 0;
-}
-
 async function boundedJson(request: Request): Promise<unknown> {
   const length = request.headers.get("content-length");
   if (length !== null && (!/^\d+$/.test(length) || Number(length) > MAX_BODY_BYTES)) {
@@ -92,10 +82,10 @@ export async function handleTextShadowProbeRequest(
 ): Promise<Response> {
   if (request.method !== "POST") return respond(405, "METHOD_NOT_ALLOWED");
 
-  const serviceRole = runtime.getEnv("SUPABASE_SERVICE_ROLE_KEY");
-  const bearer = request.headers.get("authorization");
-  if (!serviceRole || serviceRole.length < 40 || !bearer ||
-      !constantTimeEqual(bearer, "Bearer " + serviceRole)) {
+  // The JWT signature is already verified by Supabase's JWT-enabled
+  // gateway. Independently restrict its signed claims to the exact
+  // FairSwapProd service_role (never a user or anon JWT).
+  if (!hasProductionServiceRoleClaims(request)) {
     return respond(401, "UNAUTHORIZED");
   }
   // Enforce existing Production project only; never accidentally evaluate
