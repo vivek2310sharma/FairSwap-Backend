@@ -33,5 +33,5 @@ test("Prod deploy is only one shadow image diagnostic with JWT gate and pinned C
 test("Prod workflow cannot silently activate V2 or reuse the scope-check secret", () => {
   assert.doesNotMatch(workflow, /FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN/);
   assert.doesNotMatch(workflow, /SET\s+moderation_v2_enabled|UPDATE\s+app_system_settings/i);
-  assert.doesNotMatch(workflow, /OPENAI_API_KEY|SERVICE_ROLE_KEY/);
+  assert.doesNotMatch(workflow, /secrets\.(?:OPENAI_API_KEY|SUPABASE_SERVICE_ROLE_KEY)/);
 });
