@@ -6,6 +6,7 @@
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { evaluateListingText } from "../../../src/lib/moderation/checker";
+import { reviewListingMediaSafety } from "./listing-media-safety";
 import {
   MODERATION_RULESET_VERSION,
   MODERATION_EVALUATION_SCOPE,
@@ -62,10 +63,37 @@ export async function processClaimedJob(
   const job = parsedJob.data;
 
   // 1. Run canonical MOD-01A evaluator on claimed listing text
-  const evalResult: ModerationEvaluationResult = evaluateListingText({
+  let evalResult: ModerationEvaluationResult = evaluateListingText({
     title: job.title,
     description: job.description,
   });
+
+
+  // An image may be unsafe even if its listing text is clean.
+  // Only a complete, current, clear inspection may enter the auto-approval branch.
+  if (evalResult.outcome === "no_review_flags") {
+    const media = await reviewListingMediaSafety(
+      job.listing_id, job.listing_revision, supabase,
+      typeof Deno !== "undefined" ? Deno.env.get("OPENAI_API_KEY") : process.env.OPENAI_API_KEY,
+    );
+    if (media.state === "review") {
+      evalResult = {
+        ...evalResult,
+        outcome: "needs_review",
+        flags: [{
+          ruleId: "rule_prohibited_item_wording",
+          field: "description",
+          reason: "Uploaded media requires moderation review.",
+        }],
+      } as ModerationEvaluationResult;
+    } else if (media.state !== "clear") {
+      evalResult = {
+        ...evalResult,
+        outcome: "checks_incomplete",
+        failedRules: ["rule_prohibited_item_wording"],
+      } as ModerationEvaluationResult;
+    }
+  }
 
   // 2. Prepare payload for atomic publication gate RPC
   let completedRules: string[] = [];
