@@ -83,3 +83,7 @@ verify_jwt = false
 [functions.moderation-v2-text-shadow-probe]
 verify_jwt = true
 
+# Operator-only free OpenAI one-image shadow check; never grants approval.
+[functions.moderation-v2-image-shadow-probe]
+verify_jwt = true
+
