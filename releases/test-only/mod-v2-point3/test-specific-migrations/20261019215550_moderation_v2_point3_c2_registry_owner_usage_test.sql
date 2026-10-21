@@ -1,0 +1,1 @@
+GRANT USAGE ON SCHEMA app_moderation_v2 TO mv2_p3_registry_owner;
