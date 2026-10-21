@@ -8,6 +8,7 @@
  *
  * Usage:
  *   node scripts/moderation/v2-shadow-invoke.mjs check
+ *   node scripts/moderation/v2-shadow-invoke.mjs image-check
  *   node scripts/moderation/v2-shadow-invoke.mjs text <listing-uuid>
  *   node scripts/moderation/v2-shadow-invoke.mjs image <listing-uuid> <media-uuid>
  *
@@ -20,8 +21,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 export function parseShadowCommand(args) {
   if (!Array.isArray(args)) return null;
   // No real listing/photo is used to verify the free provider credentials.
-  if (args.length === 1 && args[0] === "check") {
-    return { mode: "check", body: { probe: "synthetic_connectivity" } };
+  if (args.length === 1 && (args[0] === "check" || args[0] === "image-check")) {
+    return { mode: args[0], body: { probe: "synthetic_connectivity" } };
   }
   const [mode, listingId, mediaId, ...rest] = args;
   if (rest.length || !UUID.test(listingId ?? "") ||
@@ -48,7 +49,8 @@ export async function invokeShadow(
   if (!key || key.length < 40 || key.split(".").length !== 3) {
     return { ok: false, code: "SERVICE_ROLE_JWT_NOT_CONFIGURED" };
   }
-  const slug = cmd.mode === "image"
+  const syntheticCheck = cmd.mode === "check" || cmd.mode === "image-check";
+  const slug = cmd.mode === "image" || cmd.mode === "image-check"
     ? "moderation-v2-image-shadow-probe"
     : "moderation-v2-text-shadow-probe";
   let response;
@@ -74,14 +76,17 @@ export async function invokeShadow(
   // Do not echo untrusted/provider error bodies; they may contain PII.
   // On synthetic connectivity only, allowlisted reason codes contain no PII.
   if (!response.ok) {
-    if (cmd.mode === "check" && response.status === 503) {
+    if (syntheticCheck && response.status === 503) {
       try {
         const error = await response.json();
         const permitted = [
           "PROVIDER_AUTH", "PROVIDER_LIMIT", "PROVIDER_UNAVAILABLE",
           "PROVIDER_SCHEMA", "PROVIDER_INPUT", "TIMEOUT",
         ];
-        if (error?.code === "OPENAI_MODERATION_CHECK_FAILED" &&
+        const expectedFailureCode = cmd.mode === "image-check"
+          ? "OPENAI_IMAGE_MODERATION_CHECK_FAILED"
+          : "OPENAI_MODERATION_CHECK_FAILED";
+        if (error?.code === expectedFailureCode &&
           error?.authority === "SYNTHETIC_CONNECTIVITY_ONLY" &&
           permitted.includes(error.reason)) {
           return { ok: false, code: "PROVIDER_CHECK_FAILED", reason: error.reason };
@@ -99,17 +104,22 @@ export async function invokeShadow(
   } catch {
     return { ok: false, code: "INVALID_RESPONSE" };
   }
-  if (cmd.mode === "check") {
-    if (json?.code !== "OPENAI_MODERATION_CONNECTED" ||
+  if (syntheticCheck) {
+    const expectedSuccessCode = cmd.mode === "image-check"
+      ? "OPENAI_IMAGE_MODERATION_CONNECTED" : "OPENAI_MODERATION_CONNECTED";
+    const expectedScope = cmd.mode === "image-check"
+      ? "BENIGN_SYNTHETIC_IMAGE_NOT_LISTING_REVIEW"
+      : "BENIGN_SYNTHETIC_TEXT_NOT_LISTING_REVIEW";
+    if (json?.code !== expectedSuccessCode ||
       json?.authority !== "SYNTHETIC_CONNECTIVITY_ONLY" ||
-      json?.scope !== "BENIGN_SYNTHETIC_TEXT_NOT_LISTING_REVIEW" ||
+      json?.scope !== expectedScope ||
       json?.model !== "omni-moderation-2024-09-26" ||
       !["clear", "flagged"].includes(json?.provider)) {
       return { ok: false, code: "INVALID_RESPONSE" };
     }
     return {
       ok: true,
-      mode: "check",
+      mode: cmd.mode,
       connected: true,
       authority: "SYNTHETIC_CONNECTIVITY_ONLY",
       model: json.model,
