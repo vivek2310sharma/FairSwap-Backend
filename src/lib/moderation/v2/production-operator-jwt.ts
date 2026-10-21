@@ -57,3 +57,24 @@ export function hasProductionServiceRoleClaims(
     (claims.iat === undefined ||
       (typeof claims.iat === "number" && claims.iat <= nowSeconds));
 }
+
+/**
+ * Preserve the pre-hotfix, exact legacy-key gate for the separately available
+ * REAL listing/media shadow paths. Only synthetic connectivity may rely on
+ * gateway-verified service_role JWT claims when the runtime-managed legacy
+ * service key differs. This avoids broadening read access to private ads.
+ */
+export function hasExactManagedServiceRoleBearer(
+  request: Request,
+  managedKey: string | undefined,
+): boolean {
+  if (!managedKey || managedKey.length < 40) return false;
+  const received = request.headers.get("authorization") ?? "";
+  const expected = "Bearer " + managedKey;
+  const a = new TextEncoder().encode(received);
+  const b = new TextEncoder().encode(expected);
+  const n = Math.max(a.length, b.length);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < n; i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  return diff === 0;
+}
