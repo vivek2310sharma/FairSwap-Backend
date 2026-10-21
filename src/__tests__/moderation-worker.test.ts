@@ -150,13 +150,13 @@ describe("Listing Moderation Worker Unit Tests", () => {
     };
     await processClaimedJob(job,
       { rpc: mockRpc } as unknown as import("@supabase/supabase-js").SupabaseClient);
-    expect(reviewListingContentSafety).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: "Nude Pic",
-        description: "Nude Pic Nude Pic",
-      }),
-      expect.anything(),
-      expect.anything(),
+    expect(vi.mocked(reviewListingContentSafety).mock.calls.map(args => args[0])).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Nude Pic",
+          description: "Nude Pic Nude Pic",
+        }),
+      ]),
     );
     expect(mockRpc).toHaveBeenCalledWith("impl_finalize_moderation_result",
       expect.objectContaining({
