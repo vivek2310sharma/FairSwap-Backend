@@ -60,8 +60,10 @@ jobs:
             ['moderation-v2-image-shadow-probe', 'OPENAI_IMAGE_MODERATION_CONNECTED'],
           ]) {
             const entry = readFileSync('supabase/functions/' + slug + '/index.ts', 'utf8');
-            const gate = config.match(new RegExp('\\\\[functions\\\\.' + slug + '\\\\]\\\\s*\\\\n([^\\\\[]*)'));
-            if (!gate || !/^\\s*verify_jwt\\s*=\\s*true\\s*$/m.test(gate[1])) {
+            const configLines = config.split(String.fromCharCode(10)).map(line => line.trim());
+            const header = '[functions.' + slug + ']';
+            const at = configLines.indexOf(header);
+            if (at < 0 || configLines[at + 1] !== 'verify_jwt = true') {
               throw Error('JWT gateway disabled for ' + slug);
             }
             if (!entry.includes('https://kriuhwppxgxsyyrbjsau.supabase.co') ||
