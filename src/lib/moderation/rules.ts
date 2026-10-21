@@ -21,6 +21,7 @@ import {
 const PROHIBITED_ITEM_REGEXES: readonly RegExp[] = [
   /\bfirearms?\b/i,
   /(?<!\bglue\s)(?<!\bheat\s)\b(?:gun|guns|pistol|pistols|rifle|rifles)\b/i,
+  /\b(?:gun){2,}\b/i,
   /\b(?:nude|nudity|pornographic|pornography)\b/i,
   /\bhand\s*guns?\b/i,
   /\bammunition\b/i,
