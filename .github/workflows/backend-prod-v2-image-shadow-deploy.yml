@@ -1,8 +1,8 @@
 # Manual, operator-gated diagnostic deployment. Does not run on push or PR.
-# Deploys ONLY the read-only image shadow probe; never a V2 worker or DB migration.
-name: "[MANUAL] Deploy FairSwapProd V2 image diagnostics"
+# Deploys ONLY the two JWT-gated read-only shadow probes; never a V2 worker or DB migration.
+name: "[MANUAL] Deploy FairSwapProd V2 shadow diagnostics"
 
-run-name: "Production image shadow diagnostic — ${{ github.actor }}"
+run-name: "Production text + image shadow diagnostic — ${{ github.actor }}"
 
 on:
   workflow_dispatch:
@@ -16,11 +16,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: fairswap-prod-v2-image-diagnostics
+  group: fairswap-prod-v2-shadow-diagnostics
   cancel-in-progress: false
 
 jobs:
-  deploy-image-diagnostics:
+  deploy-shadow-diagnostics:
     # Never execute an unreviewed feature branch or accept another actor.
     if: ${{ github.ref == 'refs/heads/main' && github.actor == 'vivek2310sharma' }}
     environment: FairSwapProd-moderation-diagnostics
@@ -46,7 +46,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify deployment is diagnostic-only and JWT-gated
+      - name: Verify both diagnostic deployments are JWT-gated
         run: |
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
@@ -55,18 +55,31 @@ jobs:
           if (!match || !/^\s*verify_jwt\s*=\s*true\s*$/m.test(match[1])) {
             throw Error('Image probe must keep Supabase JWT verification');
           }
-          const source = readFileSync('supabase/functions/moderation-v2-image-shadow-probe/index.ts','utf8');
-          if (!source.includes('https://kriuhwppxgxsyyrbjsau.supabase.co') ||
-              !source.includes('runSyntheticImageConnectivity') ||
-              !source.includes('SUPABASE_SERVICE_ROLE_KEY') ||
-              !source.includes('OPENAI_IMAGE_MODERATION_CONNECTED')) {
-            throw Error('Missing exact Production guard or synthetic-only check');
+          for (const [slug, syntheticCode] of [
+            ['moderation-v2-text-shadow-probe', 'OPENAI_MODERATION_CONNECTED'],
+            ['moderation-v2-image-shadow-probe', 'OPENAI_IMAGE_MODERATION_CONNECTED'],
+          ]) {
+            const entry = readFileSync('supabase/functions/' + slug + '/index.ts', 'utf8');
+            const gate = config.match(new RegExp('\\\\[functions\\\\.' + slug + '\\\\]\\\\s*\\\\n([^\\\\[]*)'));
+            if (!gate || !/^\\s*verify_jwt\\s*=\\s*true\\s*$/m.test(gate[1])) {
+              throw Error('JWT gateway disabled for ' + slug);
+            }
+            if (!entry.includes('https://kriuhwppxgxsyyrbjsau.supabase.co') ||
+                !entry.includes('hasProductionServiceRoleClaims') ||
+                !entry.includes(syntheticCode)) {
+              throw Error('Missing Production role gate or synthetic check in ' + slug);
+            }
+          }
+          const jwtGate = readFileSync('src/lib/moderation/v2/production-operator-jwt.ts', 'utf8');
+          if (!jwtGate.includes('role === "service_role"') ||
+              !jwtGate.includes('claims.ref === PROD_REF')) {
+            throw Error('Expected service_role and Production ref validation');
           }
           const worker = readFileSync('supabase/config.toml','utf8');
           if (/\[functions\.process-listing-moderation-v2\]/.test(worker)) {
             throw Error('Do not add V2 worker deployment here');
           }
-          console.log('PASS: only approved image-shadow diagnostic source is eligible');
+          console.log('PASS: only two approved JWT-gated shadow diagnostic functions are eligible');
           NODE
 
       - name: Download and verify pinned Supabase CLI without executing install scripts
@@ -89,7 +102,7 @@ jobs:
           [[ "$("$RUNNER_TEMP/supabase" --version)" == '2.117.0' ]]
           echo "PASS: exact pinned Supabase CLI authenticated by SHA-256"
 
-      - name: Deploy image probe only, never enable moderation V2
+      - name: Deploy text and image shadow probes only; never enable moderation V2
         env:
           # Configure ONLY as an environment-scoped secret with least-privilege
           # Functions write permission for the single FairSwapProd project.
@@ -100,7 +113,9 @@ jobs:
             exit 1
           }
           # NO --no-verify-jwt, NO db push, NO worker deploy, NO settings update.
+          "$RUNNER_TEMP/supabase" functions deploy moderation-v2-text-shadow-probe \
+            --project-ref kriuhwppxgxsyyrbjsau
           "$RUNNER_TEMP/supabase" functions deploy moderation-v2-image-shadow-probe \
             --project-ref kriuhwppxgxsyyrbjsau
-          echo "DEPLOYED: image shadow diagnostic only. No listing or policy authority."
+          echo "DEPLOYED: text + image shadow diagnostics only. No listing or policy authority."
           echo "NEXT: operator must run explicit synthetic text + image checks."
