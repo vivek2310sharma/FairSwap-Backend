@@ -1,3 +1,4 @@
+import { hasExactManagedServiceRoleBearer, hasProductionServiceRoleClaims } from "../../../src/lib/moderation/v2/production-operator-jwt.ts";
 import { createClient } from "@supabase/supabase-js";
 import {
   runImageShadowProbe,
@@ -46,17 +47,6 @@ function respond(
   });
 }
 
-function constantTimeEqual(first: string, second: string): boolean {
-  const encoder = new TextEncoder();
-  const a = encoder.encode(first), b = encoder.encode(second);
-  const max = Math.max(a.length, b.length);
-  let difference = a.length ^ b.length;
-  for (let i = 0; i < max; i++) {
-    difference |= (a[i] ?? 0) ^ (b[i] ?? 0);
-  }
-  return difference === 0;
-}
-
 async function boundedJson(request: Request): Promise<unknown> {
   const declared = request.headers.get("content-length");
   if (declared !== null &&
@@ -96,10 +86,9 @@ export async function handleImageShadowRequest(
 ): Promise<Response> {
   if (req.method !== "POST") return respond(405, "METHOD_NOT_ALLOWED");
 
-  const serviceRole = runtime.getEnv("SUPABASE_SERVICE_ROLE_KEY");
-  const bearer = req.headers.get("authorization");
-  if (!serviceRole || serviceRole.length < 40 || !bearer ||
-      !constantTimeEqual(bearer, "Bearer " + serviceRole)) {
+  // Supabase's JWT-enabled gateway verifies the signature. Never
+  // authorize a user JWT, an anon JWT or a non-Production role claim.
+  if (!hasProductionServiceRoleClaims(req)) {
     return respond(401, "UNAUTHORIZED");
   }
   if (runtime.getEnv("SUPABASE_URL") !== PROD_URL) {
@@ -122,6 +111,12 @@ export async function handleImageShadowRequest(
     const check = await runSyntheticImageConnectivity(runtime.moderateImage);
     if (!check.ok) return respond(503, "OPENAI_IMAGE_MODERATION_CHECK_FAILED", { authority: "SYNTHETIC_CONNECTIVITY_ONLY", reason: check.reason });
     return respond(200, "OPENAI_IMAGE_MODERATION_CONNECTED", { authority: "SYNTHETIC_CONNECTIVITY_ONLY", scope: "BENIGN_SYNTHETIC_IMAGE_NOT_LISTING_REVIEW", model: check.model, provider: check.provider });
+  }
+  // Existing private listing/media shadow reads retain the original exact
+  // managed service-key check. The JWT-claims fallback applies ONLY to
+  // the fixed benign synthetic connectivity fixture.
+  if (!hasExactManagedServiceRoleBearer(req, runtime.getEnv("SUPABASE_SERVICE_ROLE_KEY"))) {
+    return respond(401, "UNAUTHORIZED");
   }
   const result = await runImageShadowProbe(body, runtime);
   if (!result.ok) {
