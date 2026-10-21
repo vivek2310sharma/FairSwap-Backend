@@ -1,6 +1,6 @@
-import { reviewListingMediaSafety } from "../../supabase/functions/_shared/listing-media-safety";
+import { reviewListingContentSafety } from "../../supabase/functions/_shared/listing-media-safety";
 vi.mock("../../supabase/functions/_shared/listing-media-safety", () => ({
-  reviewListingMediaSafety: vi.fn().mockResolvedValue({ state: "clear", reviewedCount: 1 }),
+  reviewListingContentSafety: vi.fn().mockResolvedValue({ state: "clear", reviewedImages: 1 }),
 }));
 import { describe, it, expect, vi } from "vitest";
 import {
@@ -103,10 +103,10 @@ describe("Listing Moderation Worker Unit Tests", () => {
   });
 
   it("routes unsafe images to admin and does not auto-approve clean text", async () => {
-    vi.mocked(reviewListingMediaSafety).mockResolvedValueOnce({
+    vi.mocked(reviewListingContentSafety).mockResolvedValueOnce({
       state: "review",
-      mediaId: "55555555-5555-4555-8555-555555555555",
-      reason: "RESTRICTED_ITEM",
+      source: "image",
+      reason: "OPENAI_MARKETPLACE_POLICY",
     });
     const mockRpc = vi.fn().mockResolvedValue({
       data: { success: true, decision: "routed_to_admin" },
@@ -128,10 +128,52 @@ describe("Listing Moderation Worker Unit Tests", () => {
       expect.objectContaining({ p_outcome: "needs_review", p_flags: expect.any(Array) }));
   });
 
+  it("routes OpenAI text-policy flags without adding regex rules", async () => {
+    vi.mocked(reviewListingContentSafety).mockResolvedValueOnce({
+      state: "review",
+      source: "text",
+      reason: "OPENAI_MARKETPLACE_POLICY",
+    });
+    const mockRpc = vi.fn().mockResolvedValue({
+      data: { success: true, decision: "routed_to_admin" },
+      error: null,
+    });
+    const job: ClaimedModerationJob = {
+      request_id: "11111111-1111-4111-8111-111111111111",
+      listing_id: "22222222-2222-4222-8222-222222222222",
+      listing_revision: 1,
+      generation_id: "33333333-3333-4333-8333-333333333333",
+      claim_token: "44444444-4444-4444-8444-444444444444",
+      attempt_count: 1,
+      title: "Nude Pic",
+      description: "Nude Pic Nude Pic",
+    };
+    await processClaimedJob(job,
+      { rpc: mockRpc } as unknown as import("@supabase/supabase-js").SupabaseClient);
+    expect(reviewListingContentSafety).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Nude Pic",
+        description: "Nude Pic Nude Pic",
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(mockRpc).toHaveBeenCalledWith("impl_finalize_moderation_result",
+      expect.objectContaining({
+        p_outcome: "needs_review",
+        p_flags: expect.arrayContaining([
+          expect.objectContaining({
+            ruleId: "openai_content_review",
+            source: "text",
+          }),
+        ]),
+      }));
+  });
+
   it("never sends a clean verdict if image review is unavailable", async () => {
-    vi.mocked(reviewListingMediaSafety).mockResolvedValueOnce({
+    vi.mocked(reviewListingContentSafety).mockResolvedValueOnce({
       state: "incomplete",
-      reason: "MEDIA_OR_PROVIDER_FAILURE",
+      reason: "PROVIDER_FAILED",
     });
     const mockRpc = vi.fn().mockResolvedValue({
       data: { success: true, decision: "awaiting_retry" },
