@@ -136,7 +136,13 @@ describe("OpenAI listing text + image moderation preflight", () => {
     const { db, download } = mockDatabase([MEDIA_A, MEDIA_B]);
     const { fetcher, calls } = provider();
     const result = await reviewListingContentSafety(job(), db, KEY, fetcher);
-    expect(result).toEqual({ state: "clear", reviewedImages: 2 });
+    expect(result).toEqual(expect.objectContaining({
+      state: "clear", reviewedImages: 2,
+      mediaDigests: expect.arrayContaining([
+        expect.objectContaining({ id: MEDIA_A, sha256: expect.stringMatching(/^[0-9a-f]{64}$/) }),
+        expect.objectContaining({ id: MEDIA_B, sha256: expect.stringMatching(/^[0-9a-f]{64}$/) }),
+      ]),
+    }));
     expect(download).toHaveBeenCalledTimes(2);
     const moderationCalls = calls.filter(x => x.url.endsWith("/moderations"));
     const policyCalls = calls.filter(x => x.url.endsWith("/chat/completions"));
