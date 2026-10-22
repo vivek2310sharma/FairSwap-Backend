@@ -1,6 +1,6 @@
 import { reviewListingContentSafety } from "../../supabase/functions/_shared/listing-media-safety";
 vi.mock("../../supabase/functions/_shared/listing-media-safety", () => ({
-  reviewListingContentSafety: vi.fn().mockResolvedValue({ state: "clear", reviewedImages: 1 }),
+  reviewListingContentSafety: vi.fn().mockResolvedValue({ state: "clear", reviewedImages: 1, mediaDigests: [{ id: "55555555-5555-4555-8555-555555555555", medium_storage_path: "22222222-2222-4222-8222-222222222222/55555555-5555-4555-8555-555555555555/medium.webp", sha256: "a".repeat(64) }] }),
 }));
 import { describe, it, expect, vi } from "vitest";
 import {
