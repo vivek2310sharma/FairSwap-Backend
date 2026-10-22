@@ -185,7 +185,7 @@ export function calculateBackoffSeconds(attemptCount: number): number {
  * The public logo is deliberately served from FairSwap.in, not a third-party pixel.
  */
 export function brandListingEmail(innerEmailHtml: string): string {
-  const match = innerEmailHtml.match(/<body\\b[^>]*>([\\s\\S]*?)<\\/body>/i);
+  const match = innerEmailHtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i);
   if (!match) throw new Error("Missing email body");
   const body = match[1]
     .replace(/#065f46/gi, "#0b438e")
