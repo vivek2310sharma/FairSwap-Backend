@@ -53,8 +53,10 @@ const PolicyResult = z.object({
   reason: z.enum(["none", "weapons", "sexual_content", "regulated_goods", "fraud", "other"]),
 }).strict();
 
+export type MediaEvidenceDigest = Readonly<{ id: string; medium_storage_path: string; sha256: string }>;
+
 export type ContentSafetyResult =
-  | Readonly<{ state: "clear"; reviewedImages: number }>
+  | Readonly<{ state: "clear"; reviewedImages: number; mediaDigests: readonly MediaEvidenceDigest[] }>
   | Readonly<{
       state: "review";
       source: "text" | "image";
@@ -288,9 +290,10 @@ export async function reviewListingContentSafety(
           reason: imagePolicy === "review" ? "OPENAI_MARKETPLACE_POLICY" : "OPENAI_UNCERTAIN",
         };
       }
-      return { state: "clear", reviewedImages: 1 };
+      return { state: "clear", reviewedImages: 1, mediaDigests: [{ id: media.id, medium_storage_path: expected, sha256: hash }] };
     }
 
+    const mediaDigests: MediaEvidenceDigest[] = [];
     for (let start = 0; start < snapshot.media.length; start += 4) {
       const outcomes = await Promise.all(
         snapshot.media.slice(start, start + 4).map(inspect),
@@ -299,6 +302,7 @@ export async function reviewListingContentSafety(
       if (review) return review;
       const incomplete = outcomes.find(x => x.state === "incomplete");
       if (incomplete) return incomplete;
+      for (const checked of outcomes) if (checked.state === "clear") mediaDigests.push(...checked.mediaDigests);
     }
 
     // A revision change during external provider calls must not clear the
@@ -307,7 +311,7 @@ export async function reviewListingContentSafety(
     if (!after || JSON.stringify(after) !== JSON.stringify(snapshot)) {
       return { state: "incomplete", reason: "MANIFEST_CHANGED" };
     }
-    return { state: "clear", reviewedImages: snapshot.media.length };
+    return { state: "clear", reviewedImages: snapshot.media.length, mediaDigests };
   } catch {
     // Do not log private text, media, keys, URLs, or provider bodies.
     return { state: "incomplete", reason: "PROVIDER_FAILED" };
