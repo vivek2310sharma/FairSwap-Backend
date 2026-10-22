@@ -7,6 +7,8 @@
     "../../../src/lib/moderation/contract": "../../../src/lib/moderation/contract.ts",
     "../../../src/lib/moderation/rules": "../../../src/lib/moderation/rules.ts",
     "../_shared/listing-media-safety": "../_shared/listing-media-safety.ts",
-    "../../../src/lib/moderation/v2/free-moderation": "../../../src/lib/moderation/v2/free-moderation.ts"
+    "../../../src/lib/moderation/v2/free-moderation": "../../../src/lib/moderation/v2/free-moderation.ts",
+    "../../../src/lib/moderation/v2/free-marketplace-policy": "../../../src/lib/moderation/v2/free-marketplace-policy.ts",
+    "../../../src/lib/moderation/v2/india-fraud": "../../../src/lib/moderation/v2/india-fraud.ts"
   }
 }
