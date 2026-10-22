@@ -65,6 +65,7 @@ jobs:
         run: |
           node scripts/ci/verify-production-category-release.mjs
           node --test scripts/ci/verify-production-category-release.test.mjs
+          node --test scripts/ci/verify-prod-family-candidate.test.mjs
 
       - name: Verify FairSwap branding templates and protected auth placeholders (offline)
         timeout-minutes: 1
