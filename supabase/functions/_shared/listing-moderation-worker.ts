@@ -76,10 +76,11 @@ export async function processClaimedJob(
   const flags: unknown[] = "flags" in legacy ? [...legacy.flags] : [];
   const errors: unknown[] = "errors" in legacy ? [...legacy.errors] : [];
 
-  // OpenAI Moderation runs for both text and ALL attached images before
-  // otherwise clean listings can be automatically approved. The separate
-  // OpenAI marketplace-policy check handles firearm sales and fraud, which
-  // the harm-oriented moderation categories do not guarantee to detect.
+  // FREE OpenAI Moderations run for text and every attached image.
+  // India-specific text rules send suspicious listings to human review.
+  // The free harm model does not reliably classify a visually depicted
+  // firearm; no paid vision classifier is called. Preserve fail-closed
+  // publication and the SQL evidence gate.
   if (legacy.outcome !== "invalid_input") {
     const key = typeof Deno !== "undefined"
       ? Deno.env.get("OPENAI_API_KEY")
