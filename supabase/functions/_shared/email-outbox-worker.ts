@@ -180,6 +180,35 @@ export function calculateBackoffSeconds(attemptCount: number): number {
 }
 
 /**
+ * Apply the shared FairSwap branding to listing-event HTML without changing
+ * subjects, plaintext fallbacks, recipients, idempotency or RLS/worker behavior.
+ * The public logo is deliberately served from FairSwap.in, not a third-party pixel.
+ */
+export function brandListingEmail(innerEmailHtml: string): string {
+  const match = innerEmailHtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i);
+  if (!match) throw new Error("Missing email body");
+  const body = match[1]
+    .replace(/#065f46/gi, "#0b438e")
+    .replace(/#059669/gi, "#0b58b6");
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="x-apple-disable-message-reformatting">
+<title>FairSwap notification</title>
+<style>@media only screen and (max-width:600px){.mail-header{padding:24px !important}.mail-main{padding:26px 24px !important}.mail-footer{padding:22px 24px !important}}</style></head>
+<body style="margin:0; padding:0; background-color:#f5f8fd; color:#182c48; font-family:Arial,Helvetica,sans-serif; -webkit-text-size-adjust:100%;">
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100%; border-collapse:collapse; background-color:#f5f8fd;"><tr><td align="center" style="padding:32px 14px;">
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100%; max-width:600px; background-color:#ffffff; border:1px solid #dfe8f4; border-radius:14px; border-collapse:separate;">
+<tr><td class="mail-header" style="padding:28px 40px 22px; border-bottom:1px solid #dfe8f4;">
+<img src="https://fairswap.in/brand/FairSwap_Web_Logo_Transparent.png" alt="FairSwap" width="236" height="72" style="display:block; width:236px; max-width:100%; height:auto; border:0;">
+<p style="margin:5px 0 0; color:#28466d; font-size:12px; font-weight:600;">Give. Get. Grow Together.</p></td></tr>
+<tr><td class="mail-main" style="padding:30px 40px 34px;">${body}</td></tr>
+<tr><td class="mail-footer" style="padding:24px 40px; background-color:#f8fbff; border-top:1px solid #dfe8f4;">
+<p style="margin:0; color:#415775; font-size:13px;">FairSwap.in &middot; Give. Get. Grow Together.</p>
+<p style="margin:8px 0 0; color:#65758c; font-size:12px; line-height:19px;">Safety: Never share OTPs or pay an advance to verify a transaction. OTP किसी को न बताएं।</p>
+<p style="margin:8px 0 0; color:#65758c; font-size:12px;">Help: https://help.fairswap.in</p>
+</td></tr></table></td></tr></table></body></html>`;
+}
+
+/**
  * Renders the email subject, HTML, and text content for supported listing events.
  */
 export function renderEmailTemplate(
@@ -191,6 +220,7 @@ export function renderEmailTemplate(
   const listingTitle = typeof payload.listing_title === "string" ? payload.listing_title : "FairSwap Listing";
   const safeTitle = escapeHtml(listingTitle);
 
+  const rendered = (() => {
   switch (eventType) {
     case "listing_submitted_for_review": {
       const linkPath = sanitizeLinkPath(payload.link_path, "/admin/listings");
@@ -276,6 +306,8 @@ export function renderEmailTemplate(
     default:
       throw new Error(`Unsupported email outbox event type: ${eventType}`);
   }
+  })();
+  return { ...rendered, html: brandListingEmail(rendered.html) };
 }
 
 /**

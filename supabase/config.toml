@@ -63,6 +63,46 @@ content_path = "./supabase/templates/recovery_email.html"
 subject = "Your FairSwap sign-in code"
 content_path = "./supabase/templates/magic_link.html"
 
+[auth.email.template.invite]
+subject = "You're invited to FairSwap"
+content_path = "./supabase/templates/invite_email.html"
+
+[auth.email.template.email_change]
+subject = "Confirm your FairSwap email change"
+content_path = "./supabase/templates/email_change.html"
+
+[auth.email.template.reauthentication]
+subject = "Your FairSwap verification code"
+content_path = "./supabase/templates/reauthentication.html"
+
+[auth.email.notification.password_changed]
+subject = "FairSwap security alert: password changed"
+content_path = "./supabase/templates/password_changed_notification.html"
+
+[auth.email.notification.email_changed]
+subject = "FairSwap security alert: email changed"
+content_path = "./supabase/templates/email_changed_notification.html"
+
+[auth.email.notification.phone_changed]
+subject = "FairSwap security alert: phone changed"
+content_path = "./supabase/templates/phone_changed_notification.html"
+
+[auth.email.notification.identity_linked]
+subject = "FairSwap security alert: sign-in method linked"
+content_path = "./supabase/templates/identity_linked_notification.html"
+
+[auth.email.notification.identity_unlinked]
+subject = "FairSwap security alert: sign-in method removed"
+content_path = "./supabase/templates/identity_unlinked_notification.html"
+
+[auth.email.notification.mfa_factor_enrolled]
+subject = "FairSwap security alert: verification method added"
+content_path = "./supabase/templates/mfa_factor_enrolled_notification.html"
+
+[auth.email.notification.mfa_factor_unenrolled]
+subject = "FairSwap security alert: verification method removed"
+content_path = "./supabase/templates/mfa_factor_unenrolled_notification.html"
+
 [auth.mfa.totp]
 enroll_enabled = true
 verify_enabled = true
