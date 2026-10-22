@@ -66,6 +66,10 @@ jobs:
           node scripts/ci/verify-production-category-release.mjs
           node --test scripts/ci/verify-production-category-release.test.mjs
 
+      - name: Verify FairSwap branding templates and protected auth placeholders (offline)
+        timeout-minutes: 1
+        run: node scripts/verify-email-branding.mjs
+
       - name: Typecheck
         timeout-minutes: 2
         run: corepack pnpm typecheck
