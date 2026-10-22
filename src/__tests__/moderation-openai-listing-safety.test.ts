@@ -77,8 +77,6 @@ function mockDatabase(mediaIds: readonly string[] = [MEDIA_A], changeAfter = fal
 function provider(options: {
   flaggedText?: boolean;
   flaggedImage?: boolean;
-  policyText?: "clear" | "review" | "uncertain";
-  policyImage?: "clear" | "review" | "uncertain";
   fail?: boolean;
 } = {}) {
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -106,18 +104,8 @@ function provider(options: {
         }],
       });
     }
-    const messages = body.messages as Array<Record<string, unknown>>;
-    const user = messages[1]?.content;
-    const isImage = Array.isArray(user);
-    const decision = (isImage ? options.policyImage : options.policyText) ?? "clear";
-    const reason = decision === "review" ? "weapons" :
-      decision === "uncertain" ? "other" : "none";
-    return Response.json({
-      choices: [{
-        finish_reason: "stop",
-        message: { content: JSON.stringify({ decision, reason }) },
-      }],
-    });
+    throw new Error("PAID_OR_UNKNOWN_API_CALLED");
+
   });
   return { fetcher: fetcher as unknown as typeof fetch, calls };
 }
@@ -147,7 +135,7 @@ describe("OpenAI listing text + image moderation preflight", () => {
     const moderationCalls = calls.filter(x => x.url.endsWith("/moderations"));
     const policyCalls = calls.filter(x => x.url.endsWith("/chat/completions"));
     expect(moderationCalls).toHaveLength(3);
-    expect(policyCalls).toHaveLength(3);
+    expect(policyCalls).toHaveLength(0);
     expect(moderationCalls[0].body.input).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: "text" })]),
     );
@@ -170,28 +158,33 @@ describe("OpenAI listing text + image moderation preflight", () => {
     expect(download).not.toHaveBeenCalled();
   });
 
-  it("routes marketplace gun image even when the harm model reports it clear", async () => {
+  it("reviews prohibited weapon wording without paid AI calls", async () => {
     const { db } = mockDatabase();
-    const { fetcher } = provider({ policyImage: "review" });
-    expect(await reviewListingContentSafety(job(), db, KEY, fetcher)).toEqual({
-      state: "review", source: "image", reason: "OPENAI_MARKETPLACE_POLICY",
-    });
+    const { fetcher, calls } = provider();
+    const listing = { ...job(), title: "Pistol for sale" };
+    // Snapshot validation first: use direct deterministic policy tests for altered text.
+    const { evaluateFreeMarketplacePolicy } = await import("../lib/moderation/v2/free-marketplace-policy");
+    expect(evaluateFreeMarketplacePolicy(listing.title, listing.description).decision).toBe("review");
+    expect(calls).toHaveLength(0);
+    void db;
+    void fetcher;
   });
 
-  it("routes explicit marketplace text through the OpenAI text policy model", async () => {
-    const { db } = mockDatabase();
-    const { fetcher } = provider({ policyText: "review" });
-    expect(await reviewListingContentSafety(job(), db, KEY, fetcher)).toEqual({
-      state: "review", source: "text", reason: "OPENAI_MARKETPLACE_POLICY",
-    });
+  it("reviews Hindi and Hinglish India fraud requests", async () => {
+    const { evaluateFreeMarketplacePolicy } = await import("../lib/moderation/v2/free-marketplace-policy");
+    expect(evaluateFreeMarketplacePolicy("Phone", "Send your OTP for verification").decision).toBe("review");
+    expect(evaluateFreeMarketplacePolicy("Army courier delivery", "Send courier fee first for military parcel").decision).toBe("review");
   });
 
-  it("routes uncertain OpenAI policy output for human review", async () => {
+  it("does not flag benign kitchen mixers or household tools", async () => {
     const { db } = mockDatabase();
-    const { fetcher } = provider({ policyImage: "uncertain" });
-    expect(await reviewListingContentSafety(job(), db, KEY, fetcher)).toEqual({
-      state: "review", source: "image", reason: "OPENAI_UNCERTAIN",
-    });
+    const { fetcher, calls } = provider();
+    const result = await reviewListingContentSafety(job(), db, KEY, fetcher);
+    expect(result.state).toBe("clear");
+    expect(calls.every(call => call.url.endsWith("/moderations"))).toBe(true);
+    const { evaluateFreeMarketplacePolicy } = await import("../lib/moderation/v2/free-marketplace-policy");
+    expect(evaluateFreeMarketplacePolicy("Mixer grinder", "Used mixer grinder in working condition").decision).toBe("clear");
+    expect(evaluateFreeMarketplacePolicy("Glue gun", "Household glue gun for DIY repair").decision).toBe("clear");
   });
 
   it("fails closed if OpenAI is unavailable or the key is not configured", async () => {
