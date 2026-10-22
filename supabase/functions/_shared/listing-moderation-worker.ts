@@ -91,6 +91,22 @@ export async function processClaimedJob(
       description: job.description,
     }, supabase, key);
 
+    if (ai.state === "clear" && outcome === "no_review_flags") {
+      // The authoritative SQL finalizer refuses auto-publication without this
+      // request-bound, revision-bound, full-photo OpenAI clearance record.
+      const { data: proof, error: proofError } = await supabase.rpc(
+        "record_listing_openai_clear_evidence", {
+          p_request_id: job.request_id,
+          p_claim_token: job.claim_token,
+          p_media_digests: ai.mediaDigests,
+        },
+      );
+      if (proofError || !proof || proof.success !== true) {
+        outcome = "checks_incomplete";
+        errors.push({ source: "openai", code: "CLEAR_EVIDENCE_RECORDING_FAILED" });
+      }
+    }
+
     if (ai.state === "review") {
       outcome = "needs_review";
       flags.push({
