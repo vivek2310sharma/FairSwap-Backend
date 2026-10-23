@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "project": "FairSwapProd",
+  "projectRef": "kriuhwppxgxsyyrbjsau",
+  "observedDate": "2026-10-23",
+  "appliedBy": "Supabase MCP apply_migration, owner-authorized Production installation with explicit backup waiver",
+  "source": {
+    "repository": "vivek2310sharma/FairSwap-Backend",
+    "codingCommit": "a30255b10b72ddab15a89162ab78e48369aa8674",
+    "reviewedCommit": "6e06603e68dfc8de00644768b41aab3933c0e37d",
+    "path": "releases/candidates/support-ticket-state-v1/supabase/migrations/20261023162940_support_ticket_state_v1.sql",
+    "sourceVersion": "20261023162940",
+    "gitBlobSha": "ae8f2dd6d249e19df64d16504d68dd83337b6da5",
+    "sha256": "e8ce62aa1bf997ae0a1b9de2f98e05f3adb3f44d3e5b852ea7c6ac6d3986febd"
+  },
+  "hosted": {
+    "migrationVersion": "20261023193856",
+    "migrationName": "support_ticket_state_v1",
+    "ledgerBefore": 58,
+    "ledgerAfter": 59,
+    "previousLatestVersion": "20261023160752",
+    "postgresVersion": "17.6",
+    "region": "ap-south-1",
+    "beforeProjectStatus": "ACTIVE_HEALTHY",
+    "afterProjectStatus": "ACTIVE_HEALTHY"
+  },
+  "observedCatalog": {
+    "newPrivateFunction": true,
+    "newPublicFunction": true,
+    "publicIsSecurityInvoker": true,
+    "privateIsSecurityDefiner": true,
+    "emptySearchPath": true,
+    "authenticatedExecute": true,
+    "anonExecute": false,
+    "serviceRoleExecute": false,
+    "publicExecute": false,
+    "functionsMentionAssignedTo": false,
+    "functionDefinitionsEqualTest": true,
+    "privateFunctionDefinitionMd5": "1190491683ff73ec7a7542c47f945cf9",
+    "publicFunctionDefinitionMd5": "e2ebd5ab28a60384845083c714d76c13"
+  },
+  "securityAdvisors": {
+    "totalFindingsBefore": 50,
+    "totalFindingsAfter": 50,
+    "criticalOrErrorFindingsAfter": 0
+  },
+  "ownerWaiver": {
+    "productionBackupOrPitRValidationRequired": false,
+    "userExplicitlyAcceptedUnverifiedRecoveryRisk": true,
+    "actualRecoverableBackupPoint": "NOT_VERIFIED",
+    "rollbackRehearsal": "NOT_RUN",
+    "waiverScope": "Only this additive support_ticket_state_v1 Production migration; no standing release bypass"
+  },
+  "acceptance": {
+    "testAuthenticatedAAL2TicketState": "NOT_RUN",
+    "productionAuthenticatedAAL2TicketState": "NOT_RUN",
+    "nonStaffAndAAL1RuntimeNegatives": "NOT_RUN",
+    "adminClientCutover": "NOT_STARTED",
+    "stateUpdateUserFlowFullyRemediated": false
+  }
+}
