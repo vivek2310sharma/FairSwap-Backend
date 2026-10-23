@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "project": "FairSwapTest",
+  "projectRef": "wpppxlnbzqynvhpeuavd",
+  "observedDate": "2026-10-23",
+  "appliedBy": "Supabase MCP apply_migration, owner-authorized Test-only",
+  "source": {
+    "repository": "vivek2310sharma/FairSwap-Backend",
+    "reviewedCommit": "a30255b10b72ddab15a89162ab78e48369aa8674",
+    "path": "releases/candidates/support-ticket-state-v1/supabase/migrations/20261023162940_support_ticket_state_v1.sql",
+    "sourceVersion": "20261023162940",
+    "gitBlobSha": "ae8f2dd6d249e19df64d16504d68dd83337b6da5",
+    "sha256": "e8ce62aa1bf997ae0a1b9de2f98e05f3adb3f44d3e5b852ea7c6ac6d3986febd"
+  },
+  "hosted": {
+    "migrationVersion": "20261023184548",
+    "migrationName": "support_ticket_state_v1",
+    "ledgerBefore": 74,
+    "ledgerAfter": 75,
+    "previousLatestVersion": "20261023151653",
+    "postgresVersion": "17.6"
+  },
+  "observedCatalog": {
+    "newPrivateFunction": true,
+    "newPublicFunction": true,
+    "publicIsSecurityInvoker": true,
+    "privateIsSecurityDefiner": true,
+    "emptySearchPath": true,
+    "authenticatedExecute": true,
+    "anonExecute": false,
+    "serviceRoleExecute": false,
+    "publicExecute": false,
+    "functionsMentionAssignedTo": false
+  },
+  "securityAdvisors": {
+    "totalFindingsBefore": 49,
+    "totalFindingsAfter": 49,
+    "criticalOrErrorFindingsAfter": 0
+  },
+  "acceptance": {
+    "testAuthenticatedAAL2TicketState": "NOT_RUN",
+    "testAnonymousAndAAL1BehaviorAtRuntime": "NOT_RUN",
+    "adminClientCutover": "NOT_STARTED"
+  },
+  "production": {
+    "projectRef": "kriuhwppxgxsyyrbjsau",
+    "lastObservedLedgerCount": 58,
+    "lastObservedVersion": "20261023160752",
+    "candidateApplied": false,
+    "verifiedRestorePoint": false
+  }
+}
