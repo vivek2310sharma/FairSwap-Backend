@@ -1,0 +1,47 @@
+name: HDR-03 Production package (offline)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/hdr-03-production-package.yml'
+      - 'releases/production/hdr-03/**'
+      - 'releases/production/category-foundation-v1/production-deployment-20261018.json'
+      - 'releases/candidates/hdr-03/**'
+      - 'tests/hdr-03/**'
+      - 'supabase/migrations/20260914000010_create_notifications.sql'
+      - 'supabase/migrations/20260914000011_create_communication.sql'
+
+permissions:
+  contents: read
+
+jobs:
+  hdr03-production-package:
+    name: HDR-03 Production hashes and disposable PostgreSQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+      - name: Verify migration, ledger hashes and reviewed SQL parity
+        run: node releases/production/hdr-03/verify-package.mjs
+      - name: Prepare pinned disposable PostgreSQL runtime
+        # Dependency acquisition only; no repo dependencies or hosted clients.
+        run: |
+          npm install --prefix "$RUNNER_TEMP/hdr03-runtime" --ignore-scripts --no-audit --no-fund --package-lock=false --save-exact @electric-sql/pglite@0.5.8
+      - name: Verify Production-forward contract with network disabled
+        # Fresh in-memory PostgreSQL only. No inherited credentials, DB URL,
+        # Supabase CLI or hosted connection. Fail if network isolation fails.
+        run: |
+          sudo unshare --net -- env -i PATH="$PATH" HOME="$RUNNER_TEMP" \
+            node releases/production/hdr-03/verify-package.mjs \
+            --pglite-module "$RUNNER_TEMP/hdr03-runtime/node_modules/@electric-sql/pglite/dist/index.js"
