@@ -171,7 +171,32 @@ recovery point, validate security/compatibility and seek explicit cutover approv
 A full Production restore can lose unrelated user writes and is not an automatic
 rollback for this additive feature.
 
-## Exact changed files
+## Review follow-up: offline CI gate
+
+The path-filtered `.github/workflows/hdr-03-production-package.yml` runs on PR
+updates to this package, its reviewed candidate, SQL fixtures, source migrations
+10/11 or prior Production receipt. It runs this package's verifier for migration
+and ledger hashes/parity, wrong-ledger atomic refusal, successful install,
+repeat-install refusal, postflight and the existing security/count assertions.
+Actions are commit-pinned, token permission is Contents read, checkout credentials
+are not persisted, and no hosted secrets or deployment mechanism are used.
+
+The setup step acquires exact PGlite 0.5.8 into runner temporary storage with
+lifecycle scripts disabled. The PostgreSQL test then runs in a fresh network
+namespace with an empty credential environment and an in-memory database.
+Network-isolation failure fails the job. No repository dependency, migration,
+manifest, ledger or hosted database is changed by this follow-up.
+
+Local package and disposable PostgreSQL checks pass on Windows, including with
+credentials removed from the child environment; YAML/permission/trigger checks
+also pass. The Linux namespace step and GitHub job outcome must be verified in
+Actions on the pushed commit. This adds no proof of hosted Auth/Realtime acceptance,
+the full Production-clone rehearsal or backup/restore readiness.
+
+This follow-up changes only this README and
+`.github/workflows/hdr-03-production-package.yml`.
+
+## Initial release package changed files
 
 - `README.md`
 - `releases/production/hdr-03/README.md`
