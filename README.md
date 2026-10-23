@@ -85,3 +85,8 @@ validated by these unit checks. See the baseline document for exact scope/result
 
 No deployment authority or credentials are provisioned here. Stop after Stage 2A;
 the next stage requires explicit CTO approval.
+
+
+## HDR-03 Production preparation — 23 October 2026
+
+Read-only live inspection now records 57 Production versions (ending 20261022110410). The older 52-version snapshot above is historical. The [isolated HDR-03 release package](releases/production/hdr-03/README.md) pins this exact ledger and contains one forward-only migration, verification and recovery preflight. It is prepared for review, not installed or approved; Test acceptance, backup/restore proof and complete Production-clone rehearsal remain open. Never deploy the mixed historical source bundle.

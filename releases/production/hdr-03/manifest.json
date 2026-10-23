@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "projectRef": "kriuhwppxgxsyyrbjsau",
+  "status": "PREPARED_NOT_AUTHORIZED_FOR_INSTALLATION",
+  "baseCommit": "54869940042feafd8ea37b1e7390704c316d1872",
+  "source": "releases/candidates/hdr-03/supabase/migrations/20261023105600_hdr03_unread_counts.sql",
+  "sourceSha256": "6673765bd66f1e260ed6397bd9b40b5e543e5d86282eb188a64759eb471258ed",
+  "generatedBy": "Supabase CLI 2.117.0 migration new",
+  "hashEncoding": "UTF-8 with LF line endings",
+  "ledgerEntriesSha256": "b1c188cdd1e94e2364e855aee4d3cf5e5e4b6f3afcd6227da6ff062129b4a941",
+  "migration": {
+    "file": "20261023160752_hdr03_production_unread_counts.sql",
+    "version": "20261023160752",
+    "expectedBefore": 57,
+    "expectedAfter": 58
+  },
+  "files": {
+    "production-ledger-20261023.json": "c210173f48ebc425172423f45c51dc17fd4564ce530f1b1bb105a10a6e7afd9d",
+    "preflight.readonly.sql": "6ce88f2a72b73b5dd68d04f705fb94c695cbf071c99068f0a53af25b40c34eef",
+    "postflight.readonly.sql": "2e878d52cbdcaee9348b793c1f336953731b16314cde0f56b262e15373c90499",
+    "supabase/migrations/20261023160752_hdr03_production_unread_counts.sql": "818da324fdf625a25732bf8f70a297450e654aa4cb91fe5a34316777490f0a3f"
+  }
+}
