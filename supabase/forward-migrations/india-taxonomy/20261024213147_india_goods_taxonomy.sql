@@ -1,7 +1,7 @@
 -- Forward-only candidate for Test and Production; never add to the immutable 58.
 -- Disabled seed only. Deploy compatible Web before the separate activation.
 -- No family release gates, existing category IDs, attributes or listings change.
-begin;
+-- The migration runner owns the transaction; SET LOCAL/locks require that scope.
 set local lock_timeout='5s';
 set local statement_timeout='30s';
 
@@ -92,4 +92,3 @@ create trigger india_goods_listing_guard after insert or update on public.listin
 -- No Other, car-seat, exempt-EV or commercial-property identities are enabled:
 -- their authoritative safety/reclassification/form contracts are not ready.
 -- Existing categories/attributes SELECT RLS and denied client DML remain intact.
-commit;
