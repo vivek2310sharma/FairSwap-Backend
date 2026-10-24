@@ -1,12 +1,14 @@
-# India taxonomy candidate — 24 October 2026
+# India taxonomy candidate — release correction, 25 October 2026
 
 Local source preparation only. No hosted migration, activation or release is authorized by this document. This directory is outside the immutable 58 migrations.
 
-`20261024213147_india_goods_taxonomy.sql` adds 15 Goods categories and two attributes per category, using the existing categories/attributes tables. Existing category UUIDs, historical listing references, family contracts, RPC signatures, moderation states, RLS policies and grants are preserved. Client category/attribute DML remains denied. The new private trigger function has no client EXECUTE grant.
+`20261024213147_india_goods_taxonomy.sql` adds 15 Goods categories and two attributes per category, using the existing categories/attributes tables. Both `is_active` and `new_listing_enabled` start **false**, hiding the seeds even from older active-category clients. Existing category UUIDs, historical listing references, family contracts, RPC signatures, moderation states, RLS policies and grants are preserved. Client category/attribute DML remains denied. The new private trigger function has no client EXECUTE grant.
 
-The database trigger validates new-category answers on every listing INSERT/UPDATE, including privileged worker and staff writes. Only string `item_type` and `brand` answers of at most 100 characters are accepted. Drafts can be incomplete; review/publication requires a nonblank item type. Disabled or inactive categories cannot receive new assignments or be submitted/published. Existing drafts remain editable. Existing publication completeness, prohibited-item checks, moderation worker, staff authorization and release gates still apply.
+The database trigger runs **AFTER ROW INSERT/UPDATE**, so it validates the final `NEW` row after every BEFORE trigger on Test and Production. It does not depend on alphabetical trigger names, rewrite the row, or disable any existing lifecycle/moderation guard. This fixes premature rejection when INSERT forces a draft and closes missed validation when a material edit forces pending review. Errors roll back the entire statement and its transactional transition/queue writes. Category row share locks serialize eligibility checks with deactivation. No external worker dispatch behavior is changed.
 
-The `india_goods_v1` marker on attribute validation rules selects the matching Web Zod contract. This is validation metadata in the existing attribute table, not another category store. Web validation is complementary; database validation is effective immediately upon migration, including requests from older clients.
+Only string `item_type` and `brand` answers of at most 100 characters are accepted, including direct seller, staff and worker writes. Drafts can be incomplete; final review/publication states require a nonblank item type. Disabled or inactive categories cannot receive new assignments or be submitted/published. Existing drafts remain editable. Existing publication completeness, prohibited-item checks, moderation worker, staff authorization and release gates still apply.
+
+The `india_goods_v1` marker on attribute validation rules selects the matching Web Zod contract. This is validation metadata in the existing attribute table, not another category store. The guard is installed with disabled seeds. Compatible Web must be deployed before the separately gated activation below; old/stale clients cannot bypass database validation after activation.
 
 ## Included and deferred
 
@@ -35,9 +37,27 @@ Proposed scope: Shop Counters & Display Units; Restaurant & Catering Equipment; 
 
 ## Release and verification
 
-Owner/ChatGPT deployment order: staging database (FairSwapTest `wpppxlnbzqynvhpeuavd`) → staging applications → production database (FairSwapProd `kriuhwppxgxsyyrbjsau`) → production applications. Backend has no standing staging branch; Web/Admin use staging integration and focused main releases. New environment variables: **None** in either environment. Existing family gates stay unchanged.
+Owner/ChatGPT deployment order:
 
-Use an isolated, ledger-matched release workspace and the existing release authority/backup process, never the raw 58-file migration directory. The migration aborts on matching names/slugs rather than silently duplicating or overwriting an existing identity; reconcile equivalent pre-existing categories before applying. Full Supabase/RLS/worker compatibility rehearsal remains required release evidence; the in-memory fixture test does not replace it. No owner manual testing before deployment is requested.
+1. **Staging database:** apply only the disabled seed `20261024213147_india_goods_taxonomy.sql` to FairSwapTest `wpppxlnbzqynvhpeuavd`.
+2. **Staging application:** deploy the compatible reviewed Web source with `india_goods_v1` Zod validation and eligibility filtering. Record the actual deployed Web commit and automated deployment/compatibility evidence. Do not ask the owner for manual predeployment testing.
+3. **Staging activation:** separately apply `activation/20261024221855_activate_india_goods_taxonomy.sql` with that environment's release attestations. Save the receipt and execute automated postactivation checks.
+4. **Production database:** apply only the disabled seed to FairSwapProd `kriuhwppxgxsyyrbjsau` in its isolated ledger-matched workspace.
+5. **Production application:** deploy the focused compatible Web release; record its actual deployed commit/evidence separately from staging.
+6. **Production activation:** separately apply the activation migration with the Production attestations and record postactivation evidence.
+
+**Never put seed and activation in one automatic migration batch.** The activation file is intentionally in a separate subdirectory. It refuses missing/malformed release attestations, unknown project references, partially enabled/missing seeds, incompatible attributes, or missing/disabled/BEFORE-only validation. It updates the original 15 UUIDs atomically, verifies all 15 became eligible and clears its session acknowledgements. Unsupported categories and family release gates are untouched.
+
+In the **same operator database session** that runs the activation file, supply these nonsecret acknowledgements using the actual compatible deployed Web commit (40 lowercase hexadecimal characters):
+
+```sql
+select pg_catalog.set_config('app.india_taxonomy_target_project', '<target project ref above>', false);
+select pg_catalog.set_config('app.india_taxonomy_verified_web_release', '<actual compatible deployed Web commit>', false);
+```
+
+These are operator attestations, not proof the SQL can independently obtain from Vercel, not authorization for application users, and not environment variables. The approved release runner must verify its connection/project and the actual deployed artifact before setting them, execute activation on that connection, and record the migration ledger/receipt. Client grants/RLS still prevent clients from activating categories even if they supply these settings. **New staging/production environment variables: None.** Backend has no standing staging branch; existing source/release ownership stays unchanged. Admin requires no application change for ordinary Goods.
+
+Use an isolated, ledger-matched release workspace and the existing release authority/backup process, never the raw 58-file migration directory. These are unapplied candidate revisions: verify neither candidate version has already been recorded before admission; if an earlier candidate was applied, stop and prepare a separately versioned forward correction rather than rewriting/replaying ledger history. The seed aborts on matching names/slugs rather than duplicating or overwriting an existing identity. Full isolated Supabase/RLS/worker compatibility rehearsal remains required release evidence; source-function fixtures do not replace it. Hosted operation/CI reruns remain ChatGPT-owned.
 
 Cross-repository automated candidate checks from FairSwap-Web:
 
@@ -45,8 +65,8 @@ Cross-repository automated candidate checks from FairSwap-Web:
 corepack pnpm vitest run tests/unit/india-taxonomy.test.ts tests/security/india-taxonomy-migration.test.ts tests/unit/post-ad-selector.test.tsx tests/unit/post-ad-goods-server.test.ts
 ```
 
-The SQL rehearsal reads this sibling Backend migration; an isolated CI job must check out both reviewed sources. ChatGPT owns any Actions change needed to add that command; no CI configuration was changed here.
+The SQL rehearsal reads this sibling Backend candidate and actual trusted-field/material-edit/family guard source functions. It exercises Test and Production foundation fixtures, late BEFORE-trigger rewrites, direct writes, privileged publication, disabled assignment, activation prerequisites and rollback preservation. Fixture staff/worker roles demonstrate trigger enforcement with privileged writes; they do not certify live staff AAL2/RPC authorization. The user-reported failure in Web Actions run `40137431482` motivates the regression; that run was not retrieved or rerun here. An isolated CI job must check out both reviewed sources. ChatGPT owns any Actions changes/reruns; no CI configuration was changed here.
 
 After deployment, the owner should inspect ordinary production behavior/telemetry: enabled Goods choices reflect database eligibility; Hindi/English aliases find the intended entries; old drafts still open; existing Property/vehicle gates remain unchanged; unsupported choices remain unavailable; UPI and property fraud advice remains visible; no publication/validation failures increase. These are postdeployment checks, not a predeployment testing request.
 
-Rollback: disable new assignments for the 15 added slugs, return affected pending/public listings to an existing nonpublic state through authorized moderation, and restore the prior Web artifact; retain all category IDs, saved drafts and the validation trigger. Do not delete categories or replay/down-migrate history.
+Rollback before activation: leave the seed hidden/disabled and restore the prior Web artifact if needed. Rollback after activation: the approved operator runs `deactivate.readwrite.sql` in the affected environment to set both flags false for only the 15 slugs. Use existing authorized moderation to pause/quarantine affected pending/public listings where needed; retain compatible edit handling while any such work remains, then restore the retained same-environment Web artifact. Deactivation does not delete or rewrite listings, attributes, IDs, drafts or guards, and prevents staff/worker republication. Existing draft edits still work through the saved-category context. Record rollback evidence; never disable guards, delete identities or down-migrate history. Reactivation is a fresh explicit release decision; replaying the already-recorded activation migration is not a ledger operation.
