@@ -15,6 +15,7 @@ export default defineConfig({
       "src/__tests__/moderation-text-checker.test.ts",
       "src/__tests__/moderation-target-guard.test.ts",
       "src/__tests__/moderation-worker.test.ts",
+      "src/__tests__/moderation-openai-listing-safety.test.ts",
       "src/__tests__/moderation-worker-vault-auth.test.ts",
       "tests/unit/email-outbox-worker.test.ts",
     ],

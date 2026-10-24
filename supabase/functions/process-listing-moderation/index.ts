@@ -40,8 +40,8 @@ export async function processListingModerationHandler(req: Request): Promise<Res
     supabaseUrl: getEnv("SUPABASE_URL"),
     supabaseServiceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY"),
     moderationWorkerSecret: workerToken,
-    batchSize: getEnv("MODERATION_BATCH_SIZE") || "10",
-    leaseSeconds: getEnv("MODERATION_LEASE_SECONDS") || "60",
+    batchSize: "1", // bounded OpenAI work per dispatch
+    leaseSeconds: "240", // permits all-photo provider latency
   };
 
   const parsedConfig = WorkerConfigSchema.safeParse(rawEnv);
