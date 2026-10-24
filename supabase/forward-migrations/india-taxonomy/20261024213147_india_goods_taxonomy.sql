@@ -1,4 +1,5 @@
 -- Forward-only candidate for Test and Production; never add to the immutable 58.
+-- Disabled seed only. Deploy compatible Web before the separate activation.
 -- No family release gates, existing category IDs, attributes or listings change.
 begin;
 set local lock_timeout='5s';
@@ -35,7 +36,7 @@ begin
       raise exception 'INDIA_TAXONOMY_IDENTITY_CONFLICT: %; reconcile existing category before release',item.slug;
     end if;
     insert into public.categories(slug,name,description,icon,sort_order,macro_category,new_listing_enabled,is_active)
-      values(item.slug,item.name,item.description,item.icon,item.sort_order,'goods',true,true)
+      values(item.slug,item.name,item.description,item.icon,item.sort_order,'goods',false,false)
       returning id into category_id;
     insert into public.category_attributes(category_id,name,label,value_type,is_required,is_filterable,validation_rules,sort_order)
       values(category_id,'item_type','Item type / वस्तु का प्रकार','text',true,false,'{"contract":"india_goods_v1","max_length":100}',1),
@@ -43,6 +44,10 @@ begin
   end loop;
 end $taxonomy$;
 
+-- AFTER ROW observes the final row from ALL BEFORE triggers, regardless of
+-- their names/order on Test or Production. Exceptions roll back the statement,
+-- including transactional moderation/transition side effects. Never rewrite NEW
+-- or disable lifecycle/moderation triggers to make validation pass.
 -- Runs for direct writes, seller RPCs, staff decisions and worker publication.
 -- Existing RLS/column grants still authorize the actor; this never grants access.
 create function app_security.india_goods_listing_guard()
@@ -52,12 +57,12 @@ declare
   answer record;
   assigning boolean;
 begin
-  select * into category from public.categories where id=new.category_id;
-  if category.slug not in (
+  select * into category from public.categories where id=new.category_id and slug in (
     'fashion-men','fashion-women','fashion-kids','fashion-watches','fashion-accessories',
     'strollers-prams','baby-furniture','baby-gear','toys-games','school-essentials',
     'tvs-video','audio-home-theatre','power-backup-solar','other-home-appliances','kitchenware-utensils'
-  ) or category.id is null then return new; end if;
+  ) for share;
+  if not found then return null; end if;
   assigning := tg_op='INSERT';
   if tg_op='UPDATE' then assigning := new.category_id is distinct from old.category_id; end if;
   if (assigning or new.status::text in ('pending_review','active','reserved')) and
@@ -78,10 +83,10 @@ begin
      pg_catalog.length(pg_catalog.btrim(coalesce(new.category_attributes->>'item_type','')))=0 then
     raise exception using errcode='23514',message='INDIA_GOODS_ITEM_TYPE_REQUIRED';
   end if;
-  return new;
+  return null;
 end $guard$;
 revoke all on function app_security.india_goods_listing_guard() from public,anon,authenticated,service_role;
-create trigger india_goods_listing_guard before insert or update on public.listings
+create trigger india_goods_listing_guard after insert or update on public.listings
   for each row execute function app_security.india_goods_listing_guard();
 
 -- No Other, car-seat, exempt-EV or commercial-property identities are enabled:
