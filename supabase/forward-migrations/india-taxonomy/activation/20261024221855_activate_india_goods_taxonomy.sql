@@ -1,7 +1,7 @@
 -- Separate operator-controlled migration. NEVER bundle with the disabled seed.
 -- Apply only after compatible Web is deployed to the specified environment.
 -- Session settings are operator release attestations, not app authorization.
-begin;
+-- The migration runner owns the transaction; SET LOCAL/locks require that scope.
 set local lock_timeout='5s';
 set local statement_timeout='30s';
 
@@ -54,4 +54,3 @@ begin
   perform pg_catalog.set_config('app.india_taxonomy_verified_web_release','',false);
   perform pg_catalog.set_config('app.india_taxonomy_target_project','',false);
 end $activate$;
-commit;
