@@ -458,10 +458,11 @@ RESET ROLE;
 UPDATE public.user_accounts SET account_status = 'active' WHERE user_id = '00000000-0000-4000-8000-0000000000a1';
 
 -- ---------------------------------------------------------------- export integration
-INSERT INTO public.privacy_requests (id, user_id, request_type)
-VALUES ('00000000-0000-4000-8000-00000000e001', '00000000-0000-4000-8000-0000000000a1', 'export_data');
+-- The request is created as the owner (authenticated JWT for user A), under the real trigger and RLS.
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000a1","role":"authenticated"}', true);
+INSERT INTO public.privacy_requests (id, user_id, request_type)
+VALUES ('00000000-0000-4000-8000-00000000e001', '00000000-0000-4000-8000-0000000000a1', 'export_data');
 SELECT is((public.admin_fulfill_data_export('00000000-0000-4000-8000-00000000e001'))->'private_details'->>'full_name', 'Asha Full', 'export includes private details for the owner');
 SELECT ok((public.admin_fulfill_data_export('00000000-0000-4000-8000-00000000e001')) ? 'policy_acceptances', 'export keeps existing sections');
 -- Authorization is still enforced by the (renamed, unchanged) base: a non-owner non-admin is refused.
