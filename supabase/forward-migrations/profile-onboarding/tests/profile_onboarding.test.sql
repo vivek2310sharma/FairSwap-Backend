@@ -25,7 +25,7 @@ SELECT ok(NOT EXISTS (
   WHERE schemaname = 'public' AND tablename = 'user_private_details' AND cmd <> 'SELECT'
 ), 'private details has no write policies');
 
--- Every function created by the eight migrations: explicit EXECUTE matrix.
+-- Every function created by the seven migrations: explicit EXECUTE matrix.
 -- expectation columns: may anon / authenticated execute? PUBLIC must never hold EXECUTE.
 -- (Supabase default privileges can grant anon/authenticated on public functions, so each
 -- role is checked per function with has_function_privilege, plus PUBLIC via aclexplode.)
@@ -35,7 +35,6 @@ INSERT INTO _fn_expect (sig, anon_ok, auth_ok) VALUES
   ('public.enforce_user_private_details_integrity()', false, false),
   ('public.enforce_profile_public_text()', false, false),
   ('public.handle_new_user()', false, false),
-  ('public.enqueue_avatar_on_profile_delete()', false, false),
   ('public.admin_list_profile_text_violations(integer)', false, true),
   ('public.save_my_public_profile(text,text)', false, true),
   ('public.complete_my_profile(text,text,uuid,uuid,text)', false, true),
@@ -44,9 +43,6 @@ INSERT INTO _fn_expect (sig, anon_ok, auth_ok) VALUES
   ('public.public_profile_location(uuid[])', true, true),
   ('public.service_set_profile_avatar(uuid,text,text,text)', false, false),
   ('public.service_clear_profile_avatar(uuid,text)', false, false),
-  ('public.service_claim_avatar_cleanup(integer,integer)', false, false),
-  ('public.service_complete_avatar_cleanup(uuid[])', false, false),
-  ('public.service_fail_avatar_cleanup(uuid,text)', false, false),
   -- app_security schema
   ('app_security.normalize_public_text(text)', false, true),
   ('app_security.validate_public_text(text,text)', false, true),
@@ -60,16 +56,13 @@ INSERT INTO _fn_expect (sig, anon_ok, auth_ok) VALUES
   ('app_security.cleanup_profile_private_data_on_deletion()', false, false),
   ('app_security.impl_set_avatar(uuid,text,text,text)', false, false),
   ('app_security.impl_clear_avatar(uuid,text)', false, false),
-  ('app_security.impl_claim_avatar_cleanup(integer,integer)', false, false),
-  ('app_security.impl_complete_avatar_cleanup(uuid[])', false, false),
-  ('app_security.impl_fail_avatar_cleanup(uuid,text)', false, false),
   ('app_security.check_profile_public_fields(uuid,text,text)', false, false),
   ('app_security.resolve_profile_location(text,uuid,uuid)', false, false);
 
--- Completeness: all 32 expected functions exist, and no unexpected overload of these names
+-- Completeness: all 25 expected functions exist, and no unexpected overload of these names
 -- exists in public/app_security (a superseded signature or a missing function fails here).
-SELECT is((SELECT count(*)::int FROM _fn_expect WHERE pg_catalog.to_regprocedure(sig) IS NOT NULL), 32,
-  'all 32 new functions exist');
+SELECT is((SELECT count(*)::int FROM _fn_expect WHERE pg_catalog.to_regprocedure(sig) IS NOT NULL), 25,
+  'all 25 new functions exist');
 SELECT is((SELECT string_agg(sig, ', ' ORDER BY sig) FROM _fn_expect WHERE pg_catalog.to_regprocedure(sig) IS NULL), NULL,
   'no expected function is missing');
 SELECT is((
@@ -77,7 +70,7 @@ SELECT is((
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname IN ('public', 'app_security')
     AND p.proname IN (SELECT split_part(split_part(sig, '(', 1), '.', 2) FROM _fn_expect)
-), 32, 'no unexpected overload of the new function names (checked set is complete)');
+), 25, 'no unexpected overload of the new function names (checked set is complete)');
 
 -- Violations: PUBLIC, anon or authenticated holds EXECUTE contrary to the matrix.
 SELECT is((
@@ -255,9 +248,8 @@ SET LOCAL ROLE service_role;
 SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
 SELECT is((public.service_set_profile_avatar('00000000-0000-4000-8000-0000000000a1', NULL, '00000000-0000-4000-8000-0000000000a1/abcdef12.webp', 'https://x.test/storage/v1/object/public/avatars/00000000-0000-4000-8000-0000000000a1/abcdef12.webp'))->>'success', 'true', 'avatar set when path, url and object valid');
 SELECT is((public.service_set_profile_avatar('00000000-0000-4000-8000-0000000000a1', NULL, '00000000-0000-4000-8000-0000000000a1/abcdef12.webp', 'https://x.test/storage/v1/object/public/avatars/00000000-0000-4000-8000-0000000000a1/abcdef12.webp'))->>'error', 'AVATAR_CONFLICT', 'stale old_path yields conflict (CAS)');
-SELECT is((public.service_clear_profile_avatar('00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a1/abcdef12.webp'))->>'success', 'true', 'avatar cleared with matching old path');
+SELECT ok((SELECT r->>'success' = 'true' AND r->>'previous_path' = '00000000-0000-4000-8000-0000000000a1/abcdef12.webp' FROM (SELECT public.service_clear_profile_avatar('00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a1/abcdef12.webp') AS r) s), 'avatar cleared with matching old path and previous_path returned for immediate deletion');
 RESET ROLE;
-SELECT is((SELECT count(*)::int FROM public.avatar_cleanup_queue WHERE user_id = '00000000-0000-4000-8000-0000000000a1'), 1, 'removed avatar queued for cleanup');
 
 -- ---------------------------------------------------------------- atomic save / legacy-safe save
 SET LOCAL ROLE authenticated;
@@ -299,62 +291,14 @@ FROM pg_catalog.pg_proc p
 JOIN pg_catalog.pg_roles r ON r.oid = p.proowner
 WHERE p.pronamespace = 'app_security'::regnamespace
   AND p.proname IN ('impl_complete_my_profile', 'impl_save_my_profile_details', 'impl_set_avatar',
-                    'impl_claim_avatar_cleanup', 'impl_public_profile_location', 'impl_fulfill_data_export');
-SELECT ok(c.relrowsecurity AND c.relforcerowsecurity, 'avatar_cleanup_queue: RLS enabled and forced')
-FROM pg_catalog.pg_class c WHERE c.oid = 'public.avatar_cleanup_queue'::regclass;
-SELECT ok(NOT has_table_privilege('authenticated', 'public.avatar_cleanup_queue', 'SELECT'), 'authenticated cannot read cleanup queue');
-SELECT ok(NOT has_table_privilege('anon', 'public.avatar_cleanup_queue', 'SELECT'), 'anon cannot read cleanup queue');
-SELECT ok(NOT EXISTS (
-  SELECT 1 FROM pg_catalog.pg_policies
-  WHERE schemaname = 'public' AND tablename = 'avatar_cleanup_queue' AND NOT ('service_role' = ANY (roles))
-), 'cleanup queue policies are service_role only');
-
--- ---------------------------------------------------------------- cleanup queue consumer
-SELECT ok(NOT has_function_privilege('anon', 'public.service_claim_avatar_cleanup(integer,integer)', 'EXECUTE'), 'anon cannot claim cleanup');
-SELECT ok(NOT has_function_privilege('authenticated', 'public.service_claim_avatar_cleanup(integer,integer)', 'EXECUTE'), 'authenticated cannot claim cleanup');
-SELECT ok(NOT has_function_privilege('authenticated', 'public.service_complete_avatar_cleanup(uuid[])', 'EXECUTE'), 'authenticated cannot complete cleanup');
-SELECT ok(NOT has_function_privilege('authenticated', 'public.service_fail_avatar_cleanup(uuid,text)', 'EXECUTE'), 'authenticated cannot fail cleanup');
-SELECT ok(has_function_privilege('service_role', 'public.service_claim_avatar_cleanup(integer,integer)', 'EXECUTE'), 'service_role can claim cleanup');
-SELECT ok(NOT has_function_privilege('authenticated', 'app_security.impl_claim_avatar_cleanup(integer,integer)', 'EXECUTE'), 'authenticated cannot call claim impl');
-
-SET LOCAL ROLE authenticated;
-SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000a1","role":"authenticated"}', true);
-SELECT throws_ok($$SELECT public.service_claim_avatar_cleanup(10, 60)$$, '42501', NULL, 'authenticated claim denied');
-RESET ROLE;
-
--- the 'removed' row queued earlier (A/abcdef12.webp) is claimable exactly once per lease
-SET LOCAL ROLE service_role;
-SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
-SELECT is((public.service_claim_avatar_cleanup(10, 60))->'items'->0->>'path', '00000000-0000-4000-8000-0000000000a1/abcdef12.webp', 'claim returns the queued path');
-SELECT is((public.service_claim_avatar_cleanup(10, 60))->'items', '[]'::jsonb, 'leased rows are not claimed twice');
-RESET ROLE;
-SELECT is((SELECT attempts FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/abcdef12.webp'), 1, 'claim increments attempts');
-
-SET LOCAL ROLE service_role;
-SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
-SELECT is((public.service_complete_avatar_cleanup(ARRAY[(SELECT id FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/abcdef12.webp')]))->>'completed', '1', 'complete marks the row');
-SELECT is((public.service_complete_avatar_cleanup(ARRAY[(SELECT id FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/abcdef12.webp')]))->>'success', 'true', 'complete is idempotent');
-RESET ROLE;
-
-INSERT INTO public.avatar_cleanup_queue (path, user_id, reason)
-VALUES ('00000000-0000-4000-8000-0000000000a1/fedcba98.webp', '00000000-0000-4000-8000-0000000000a1', 'test');
-SELECT throws_ok($$INSERT INTO public.avatar_cleanup_queue (path, user_id, reason) VALUES ('../etc/passwd', NULL, 'bad')$$, '23514', NULL, 'queue rejects non-avatar paths');
-
-SET LOCAL ROLE service_role;
-SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
-SELECT is((public.service_claim_avatar_cleanup(10, 60))->'items'->0->>'path', '00000000-0000-4000-8000-0000000000a1/fedcba98.webp', 'completed rows are not re-claimed; new row is');
-SELECT is((public.service_fail_avatar_cleanup((SELECT id FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/fedcba98.webp'), 'storage said https://x.test/a?token=abc eyJhbGciOiJIUzI1NiJ9.payload.sig failed'))->>'updated', 'true', 'fail records the error');
-RESET ROLE;
-SELECT ok(last_error NOT LIKE '%https://%' AND last_error NOT LIKE '%eyJ%' AND char_length(last_error) <= 200, 'error text is sanitised and truncated')
-FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/fedcba98.webp';
-SELECT ok(next_attempt_at > clock_timestamp(), 'failure backs off')
-FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/fedcba98.webp';
-UPDATE public.avatar_cleanup_queue SET attempts = 8, next_attempt_at = clock_timestamp() WHERE path = '00000000-0000-4000-8000-0000000000a1/fedcba98.webp';
-SET LOCAL ROLE service_role;
-SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
-SELECT is((public.service_fail_avatar_cleanup((SELECT id FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/fedcba98.webp'), 'again'))->>'dead_lettered', 'true', 'row dead-letters after max attempts');
-SELECT is((public.service_claim_avatar_cleanup(10, 60))->'items', '[]'::jsonb, 'dead-lettered rows are never claimed');
-RESET ROLE;
+                    'impl_clear_avatar', 'impl_public_profile_location', 'impl_fulfill_data_export');
+-- ---------------------------------------------------------------- no cleanup queue / worker
+-- Avatar objects are deleted immediately by the Web route; no queue or consumer RPC may exist.
+SELECT hasnt_table('public', 'avatar_cleanup_queue', 'avatar cleanup queue table does not exist');
+SELECT hasnt_function('public', 'service_claim_avatar_cleanup', 'claim RPC does not exist');
+SELECT hasnt_function('public', 'service_complete_avatar_cleanup', 'complete RPC does not exist');
+SELECT hasnt_function('public', 'service_fail_avatar_cleanup', 'fail RPC does not exist');
+SELECT hasnt_function('public', 'enqueue_avatar_on_profile_delete', 'profile-delete enqueue trigger function does not exist');
 
 -- ---------------------------------------------------------------- seeded-fixture flows
 -- Atomic save: a rejected location writes NOTHING (neither public nor private).
@@ -472,15 +416,18 @@ SELECT throws_ok($$SELECT public.admin_fulfill_data_export('00000000-0000-4000-8
 SELECT throws_ok($$SELECT app_security.impl_fulfill_data_export_base('00000000-0000-4000-8000-00000000e001')$$, '42501', NULL, 'authenticated cannot call the renamed base directly');
 RESET ROLE;
 
--- ---------------------------------------------------------------- profile hard-delete queues the avatar
-UPDATE public.profiles SET avatar_path = '00000000-0000-4000-8000-0000000000b2/abcdef12.webp' WHERE id = '00000000-0000-4000-8000-0000000000b2';
-DELETE FROM public.profiles WHERE id = '00000000-0000-4000-8000-0000000000b2';
-SELECT is((SELECT reason FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000b2/abcdef12.webp'), 'profile_deleted', 'deleted profile avatar is queued');
 SELECT is(app_security.validate_public_text('Deleted User', 'display_name'), NULL, 'deletion anonymisation name passes the validator');
 
 -- ---------------------------------------------------------------- deletion cleanup
+-- Account deletion removes the private row and stops advertising the avatar on the profile.
+-- It does NOT erase the Storage object (deferred), so only the profile columns are asserted.
+UPDATE public.profiles
+SET avatar_path = '00000000-0000-4000-8000-0000000000a1/abcdef12.webp',
+    avatar_url = 'https://x.test/storage/v1/object/public/avatars/00000000-0000-4000-8000-0000000000a1/abcdef12.webp'
+WHERE id = '00000000-0000-4000-8000-0000000000a1';
 UPDATE public.user_accounts SET account_status = 'deletion_pending' WHERE user_id = '00000000-0000-4000-8000-0000000000a1';
 SELECT is((SELECT count(*)::int FROM public.user_private_details WHERE user_id = '00000000-0000-4000-8000-0000000000a1'), 0, 'private details removed on deletion');
+SELECT ok((SELECT avatar_path IS NULL AND avatar_url IS NULL FROM public.profiles WHERE id = '00000000-0000-4000-8000-0000000000a1'), 'avatar_path/avatar_url cleared on deletion');
 
 SELECT * FROM finish();
 ROLLBACK;

@@ -15,21 +15,13 @@ ON CONFLICT (id) DO UPDATE SET
   file_size_limit = EXCLUDED.file_size_limit,
   allowed_mime_types = EXCLUDED.allowed_mime_types;
 
--- Objects awaiting deletion (replaced / deleted-account avatars). Service role only.
-CREATE TABLE IF NOT EXISTS public.avatar_cleanup_queue (
-  path text PRIMARY KEY,
-  user_id uuid,
-  reason text NOT NULL,
-  queued_at timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp()
-);
-ALTER TABLE public.avatar_cleanup_queue ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.avatar_cleanup_queue FORCE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE public.avatar_cleanup_queue FROM PUBLIC, anon, authenticated;
-GRANT SELECT, DELETE ON TABLE public.avatar_cleanup_queue TO service_role;
+-- Replaced/removed objects are deleted immediately by the authenticated Web route, using the
+-- previous_path returned by the RPCs below. There is no queue, worker or scheduler.
 
 -- ---------------------------------------------------------------------------
 -- service_set_profile_avatar(p_user_id, p_old_path, p_new_path, p_public_url)
--- Compare-and-swap on profiles.avatar_path. Returns previous_path for cleanup.
+-- Compare-and-swap on profiles.avatar_path. Returns previous_path so the caller can delete
+-- the old object right after this succeeds.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION app_security.impl_set_avatar(
   p_user_id uuid,
@@ -88,11 +80,6 @@ BEGIN
   SET avatar_path = p_new_path, avatar_url = p_public_url
   WHERE id = p_user_id;
 
-  IF v_prev IS NOT NULL THEN
-    INSERT INTO public.avatar_cleanup_queue (path, user_id, reason)
-    VALUES (v_prev, p_user_id, 'replaced') ON CONFLICT (path) DO NOTHING;
-  END IF;
-
   RETURN pg_catalog.jsonb_build_object('success', true, 'previous_path', v_prev, 'avatar_url', p_public_url);
 END;
 $$;
@@ -141,10 +128,6 @@ BEGIN
   END IF;
 
   UPDATE public.profiles SET avatar_path = NULL, avatar_url = NULL WHERE id = p_user_id;
-  IF v_prev IS NOT NULL THEN
-    INSERT INTO public.avatar_cleanup_queue (path, user_id, reason)
-    VALUES (v_prev, p_user_id, 'removed') ON CONFLICT (path) DO NOTHING;
-  END IF;
   RETURN pg_catalog.jsonb_build_object('success', true, 'previous_path', v_prev);
 END;
 $$;

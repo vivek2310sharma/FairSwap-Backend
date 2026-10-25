@@ -13,9 +13,11 @@
 -- Note: a later migration that re-declares impl_fulfill_data_export in full would replace
 -- this function and drop "private_details"; such a migration must call the _base function.
 --
--- Deletion: an AFTER UPDATE trigger on user_accounts removes the private row and queues the
--- avatar object for the cleanup consumer when the account enters deletion_pending/deleted.
--- Existing deletion functions are not redefined.
+-- Deletion: an AFTER UPDATE trigger on user_accounts removes the private row and clears
+-- profiles.avatar_path/avatar_url when the account enters deletion_pending/deleted. The
+-- physical object in the public avatars bucket is NOT erased by account deletion: Storage
+-- erasure is deferred to a separate implementation (a later sweep can list the "<user_id>/"
+-- prefix). Existing deletion functions are not redefined.
 begin;
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
@@ -68,21 +70,14 @@ $$;
 REVOKE ALL ON FUNCTION app_security.impl_fulfill_data_export(uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION app_security.impl_fulfill_data_export(uuid) TO authenticated, service_role;
 
--- Deletion cleanup: remove private details and queue the avatar object for deletion.
+-- Deletion cleanup: remove private details and stop advertising the avatar on the profile.
+-- Storage objects are NOT erased here (deferred; see header).
 CREATE OR REPLACE FUNCTION app_security.cleanup_profile_private_data_on_deletion()
 RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = ''
 AS $$
-DECLARE
-  v_path text;
 BEGIN
-  SELECT avatar_path INTO v_path FROM public.profiles WHERE id = NEW.user_id;
-  IF v_path IS NOT NULL THEN
-    INSERT INTO public.avatar_cleanup_queue (path, user_id, reason)
-    VALUES (v_path, NEW.user_id, 'account_deletion')
-    ON CONFLICT (path) DO NOTHING;
-  END IF;
   UPDATE public.profiles SET avatar_path = NULL, avatar_url = NULL WHERE id = NEW.user_id;
   DELETE FROM public.user_private_details WHERE user_id = NEW.user_id;
   RETURN NEW;
