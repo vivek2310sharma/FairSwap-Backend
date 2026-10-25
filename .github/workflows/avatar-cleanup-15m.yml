@@ -1,0 +1,88 @@
+# GitHub scheduler for FairSwap profile avatar Storage cleanup.
+# Scheduler lives on Backend main so no Vercel Hobby cron is required.
+# Routes/secrets MUST be provisioned before enabling environment-specific flags.
+# GitHub schedule events only execute from the repository's default branch.
+name: FairSwap avatar cleanup (15 minutes)
+
+on:
+  schedule:
+    # Offset from the top of the hour; GitHub may delay/drop occasional runs.
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: fairswap-avatar-cleanup
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    # Fail closed: no request before staging Web, DB and credentials are ready.
+    if: ${{ vars.AVATAR_CLEANUP_STAGING_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Drain staging avatar cleanup queue
+        shell: bash
+        env:
+          CLEANUP_TOKEN: ${{ secrets.AVATAR_CLEANUP_STAGING_SECRET }}
+          VERCEL_BYPASS: ${{ secrets.VERCEL_STAGING_BYPASS_SECRET }}
+        run: |
+          set -euo pipefail
+          if [[ "${#CLEANUP_TOKEN}" -lt 32 || "${#VERCEL_BYPASS}" -lt 16 ]]; then
+            echo "::error::Staging cleanup credentials missing or too short; disable staging until configured."
+            exit 1
+          fi
+          response="$(mktemp)"
+          trap 'rm -f "$response"' EXIT
+          status="$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 55 --retry 1 --retry-delay 4 \
+            --output "$response" --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer $CLEANUP_TOKEN" \
+            --header "x-vercel-protection-bypass: $VERCEL_BYPASS" \
+            'https://fairswap-web-git-staging-fairswap.vercel.app/api/internal/avatar-cleanup')"
+          if [[ "$status" != "200" ]]; then
+            echo "::error::Staging avatar cleanup returned HTTP $status."
+            exit 1
+          fi
+          if ! jq -e '.ok == true and .failed == 0 and (.claimed | type == "number") and (.deleted | type == "number")' "$response" >/dev/null; then
+            echo "::error::Staging cleanup reported failure or an invalid response."
+            exit 1
+          fi
+          echo "Staging avatar cleanup: $(jq -c '{claimed, deleted, failed, batches}' "$response")"
+
+  production:
+    # Enabled separately after production database and Web deployment.
+    if: ${{ vars.AVATAR_CLEANUP_PRODUCTION_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Drain production avatar cleanup queue
+        shell: bash
+        env:
+          CLEANUP_TOKEN: ${{ secrets.AVATAR_CLEANUP_PRODUCTION_SECRET }}
+        run: |
+          set -euo pipefail
+          if [[ "${#CLEANUP_TOKEN}" -lt 32 ]]; then
+            echo "::error::Production cleanup credential missing or too short; disable production until configured."
+            exit 1
+          fi
+          response="$(mktemp)"
+          trap 'rm -f "$response"' EXIT
+          status="$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 55 --retry 1 --retry-delay 4 \
+            --output "$response" --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer $CLEANUP_TOKEN" \
+            'https://fairswap.in/api/internal/avatar-cleanup')"
+          if [[ "$status" != "200" ]]; then
+            echo "::error::Production avatar cleanup returned HTTP $status."
+            exit 1
+          fi
+          if ! jq -e '.ok == true and .failed == 0 and (.claimed | type == "number") and (.deleted | type == "number")' "$response" >/dev/null; then
+            echo "::error::Production cleanup reported failure or an invalid response."
+            exit 1
+          fi
+          echo "Production avatar cleanup: $(jq -c '{claimed, deleted, failed, batches}' "$response")"
