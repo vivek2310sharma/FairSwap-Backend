@@ -144,6 +144,16 @@ SELECT is(app_security.validate_public_text('Major Singh', 'display_name'), 'IMP
 SELECT is(app_security.validate_public_text('Army Officer Raj', 'display_name'), 'IMPERSONATION', 'army officer blocked');
 SELECT is(app_security.validate_public_text('I love cricket and books.', 'bio'), NULL, 'normal bio passes');
 
+-- NFKC normalisation regression (pg_catalog.normalize(text, 'NFKC') must take the form as a text literal).
+-- Fullwidth / compatibility forms are written as Unicode escapes so the file stays ASCII-safe.
+SELECT is(app_security.normalize_public_text(U&'\FF35\FF30\FF29'), 'upi', 'NFKC folds fullwidth UPI to upi');
+SELECT is(app_security.normalize_public_text(U&'\FF46\FF41\FF49\FF52\FF53\FF57\FF41\FF50'), 'fairswap', 'NFKC folds fullwidth fairswap');
+SELECT is(app_security.validate_public_text(U&'\FF26\FF41\FF49\FF52\FF33\FF57\FF41\FF50 Support', 'display_name'), 'IMPERSONATION', 'NFKC-evaded FairSwap Support blocked');
+SELECT is(app_security.validate_public_text(U&'\FF19\FF18\FF17\FF16\FF15\FF14\FF13\FF12\FF11\FF10', 'bio'), 'PHONE_NUMBER', 'fullwidth-digit phone number blocked');
+SELECT is(app_security.validate_public_text(U&'pay on \FF35\FF30\FF29', 'bio'), 'PAYMENT_INSTRUCTION', 'fullwidth UPI payment instruction blocked');
+SELECT is(app_security.validate_public_text('Aarav Kumar Reddy', 'display_name'), NULL, 'ordinary South Indian name passes after NFKC');
+SELECT is(app_security.validate_public_text('राहुल शर्मा', 'display_name'), NULL, 'ordinary Devanagari name passes after NFKC');
+
 -- ---------------------------------------------------------------- fixtures
 INSERT INTO auth.users (id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 VALUES

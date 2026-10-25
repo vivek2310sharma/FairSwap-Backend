@@ -23,7 +23,7 @@ AS $$
   SELECT pg_catalog.btrim(pg_catalog.regexp_replace(
     pg_catalog.lower(pg_catalog.translate(
       pg_catalog.regexp_replace(
-        pg_catalog.normalize(COALESCE(p_text, ''), NFKC),
+        pg_catalog.normalize(COALESCE(p_text, ''), 'NFKC'),
         '[​-‏‪-‮⁠-⁤﻿­]', '', 'g'),
       '०१२३४५६७८९', '0123456789')),
     '\s+', ' ', 'g'))
