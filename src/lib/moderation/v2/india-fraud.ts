@@ -61,3 +61,53 @@ export function findIndiaFraudSignals(rawText: string): readonly FraudFinding[] 
   }
   return findings;
 }
+
+/** Chat-only extension. Does not change the listing moderation rule contract. */
+export type ChatFraudSignal = FraudSignal | "UPI_COLLECT" | "PAYMENT_LINK" |
+  "ADVANCE_DELIVERY" | "OFF_PLATFORM";
+
+export const CHAT_SAFETY_RULE_VERSION = "chat_india_v1" as const;
+
+// Never return matched text, phone numbers, addresses or URLs to a caller/logger.
+export interface ChatSafetyResult {
+  readonly rule_version: typeof CHAT_SAFETY_RULE_VERSION;
+  readonly rule_ids: readonly ChatFraudSignal[];
+}
+
+const chatAdvice = /\b(?:never|do not|don't|avoid)\s+(?:ever\s+)?(?:send|share|scan|pay|give|transfer|enter|accept|click|move|contact)\b|\b(?:mat|nahi|nahin)\s+(?:bhejo|dena|do|dalo|scan|share|pay|karo)\b|\b(?:share|pay|scan|bhejo|bhejna|dena|karo|karna)\s+(?:mat|nahi|nahin)\b|(?:मत\s*(?:भेज|बत|डाल|शेयर|स्कैन|भुगतान|दें|कर)|(?:भेज|शेयर|स्कैन|भुगतान|साझा).{0,20}(?:मत|नहीं))/u;
+const chatNoNeed = /\b(?:do not|don't)\s+need\s+to\s+(?:enter|share|pay|scan)\b|\bno\s+need\s+to\s+(?:enter|share|pay|scan)\b|\b(?:dalo|daalna|dalna|dena|bhejna|karna)\b.{0,28}\b(?:zaroorat|jarurat|zarurat)\s+(?:nahi|nahin)\b|(?:डालने|देने|भेजने|करने).{0,20}(?:ज़रूरत|जरूरत|आवश्यकता)\s*नहीं/u;
+const chatAdvance = /\b(?:advance|token|booking|deposit|refundable|pehle|pahle|first|before)\b|(?:अग्रिम|एडवांस|टोकन|बुकिंग|पहले|जमा)/u;
+const chatArmy = /\b(?:army|crpf|cisf|military|soldier|fauji|jawan|transfer\s+order)\b|(?:आर्मी|सीआरपीएफ|सेना|फौजी|ट्रांसफर)/u;
+const chatOffPlatform = /\b(?:whats\s*app|telegram|call\s+me|phone\s+me|contact\s+me|mobile\s+number)\b|(?:व्हाट्सएप|व्हाट्सऐप|कॉल\s*कर)|(?:\+?91[\s-]?)?[6-9](?:[\s-]?\d){9}\b/u;
+const chatUpi = /\b(?:collect\s*request|upi\s*(?:id|request)|vpa)\b|[a-z0-9._-]{2,256}@[a-z]{2,32}\b|(?:कलेक्ट\s*रिक्वेस्ट|यूपीआई\s*(?:आईडी|अनुरोध))/u;
+const chatUrl = /\bhttps?:\/\/[^\s<>]+|\bwww\.[^\s<>]+/u;
+const chatPaymentContext = /\b(?:pay|payment|courier|booking|deposit|token|advance|refund|collect)\b|(?:भुगतान|कूरियर|बुकिंग|टोकन|एडवांस|रिफंड)/u;
+
+/** Server-only deterministic cautions. Findings never reject or alter a message. */
+export function classifyIndiaChatSafety(rawText: string): ChatSafetyResult {
+  const ids = new Set<ChatFraudSignal>();
+  if (typeof rawText !== "string" || rawText.length > 2000) {
+    return { rule_version: CHAT_SAFETY_RULE_VERSION, rule_ids: [] };
+  }
+  // Keep periods inside links intact; punctuation/newlines still bound advice scope.
+  const clauses = normalizeForMatching(rawText).split(/[\n\r!?।;]+|\.(?=\s|$)/u).filter(Boolean);
+  for (const clause of clauses) {
+    if (chatAdvice.test(clause) || chatNoNeed.test(clause)) continue;
+    const ask = solicitation.test(clause);
+    if (ask && otpPin.test(clause)) ids.add("OTP_PIN");
+    if (ask && qr.test(clause) && receiving.test(clause)) ids.add("QR_RECEIVE");
+    if (ask && before.test(clause) && viewing.test(clause) && payment.test(clause) && !afterViewing.test(clause)) {
+      ids.add("ADVANCE_VIEWING");
+    }
+    if (ask && chatArmy.test(clause) && !benignArmyProduct.test(clause) && fee.test(clause)) {
+      ids.add("IMPERSONATION_FEE");
+    }
+    if (chatUpi.test(clause) && (ask || receiving.test(clause))) ids.add("UPI_COLLECT");
+    if (chatUrl.test(clause) && chatPaymentContext.test(clause)) ids.add("PAYMENT_LINK");
+    if (ask && chatAdvance.test(clause) && courier.test(clause) && payment.test(clause) && !afterViewing.test(clause)) {
+      ids.add("ADVANCE_DELIVERY");
+    }
+    if (chatOffPlatform.test(clause)) ids.add("OFF_PLATFORM");
+  }
+  return { rule_version: CHAT_SAFETY_RULE_VERSION, rule_ids: [...ids].sort() };
+}
