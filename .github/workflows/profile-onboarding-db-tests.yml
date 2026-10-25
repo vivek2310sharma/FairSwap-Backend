@@ -1,0 +1,69 @@
+# PROPOSED workflow for ChatGPT to review and add as .github/workflows/profile-onboarding-db-tests.yml.
+# Inert here (not under .github/workflows). Not run. Separate from backend-ci.yml so the pinned
+# historical baseline job is unchanged; make it a required check only after a first green run.
+# Fail-closed by design: no secrets, no hosted credentials, loopback-only throwaway database.
+name: Profile onboarding DB tests
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/forward-migrations/profile-onboarding/**'
+      - 'scripts/ci/run-profile-onboarding-tests.mjs'
+      - 'scripts/ci/run-profile-onboarding-db.sh'
+      - 'scripts/ci/toolchain.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: profile-onboarding-db-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  profile-onboarding-db:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+
+      - name: Install psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Fail closed if hosted Supabase/database settings are present
+        # Deliberately no `env:` block anywhere in this workflow and no `secrets.*` reference.
+        # This guard also catches repository/organisation variables or runner-level settings.
+        run: |
+          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD SUPABASE_SERVICE_ROLE_KEY SUPABASE_SERVICE_KEY \
+                   SUPABASE_PROJECT_REF SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_JWT_SECRET NEXT_PUBLIC_SUPABASE_URL \
+                   DATABASE_URL POSTGRES_URL PGHOST PGHOSTADDR PGPASSWORD PGSERVICE PGSERVICEFILE \
+                   PROFILE_ONBOARDING_DB_URL; do
+            if [[ -n "${!v:-}" ]]; then echo "FAIL: $v must not be set in this job" >&2; exit 1; fi
+          done
+
+      - name: Shell syntax, allowlist self-test and static scan (supplementary; not acceptance)
+        run: |
+          bash -n scripts/ci/run-profile-onboarding-db.sh
+          node --check scripts/ci/run-profile-onboarding-tests.mjs
+          node scripts/ci/run-profile-onboarding-tests.mjs --self-test
+          node scripts/ci/run-profile-onboarding-tests.mjs --static
+
+      - name: Run pgTAP on a throwaway loopback-only Supabase database
+        # The driver downloads the pinned CLI (checksum + version verified), starts a disposable
+        # local stack, applies the 58 repo migrations, then the forward package, and runs the suite
+        # against 127.0.0.1:<reserved port> only. Teardown is automatic (trap).
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" RUNNER_TEMP="$RUNNER_TEMP" \
+            timeout --signal=TERM --kill-after=30s 25m bash scripts/ci/run-profile-onboarding-db.sh

@@ -1,0 +1,403 @@
+-- Isolated forward-release pgTAP suite for supabase/forward-migrations/profile-onboarding.
+-- AUTHORED / NOT RUN locally. Executed ONLY by scripts/ci/run-profile-onboarding-tests.mjs
+-- against a disposable database that has the repo migrations plus this forward folder applied.
+-- Never run on shared FairSwapTest / Production. Not registered in verify-db-results.mjs.
+-- Everything runs inside one transaction that is rolled back.
+BEGIN;
+SET LOCAL statement_timeout = '60s';
+SELECT no_plan();
+
+-- ---------------------------------------------------------------- structure
+SELECT has_table('public', 'user_private_details', 'private details table exists');
+SELECT ok(c.relrowsecurity AND c.relforcerowsecurity, 'private details: RLS enabled and forced')
+FROM pg_catalog.pg_class c WHERE c.oid = 'public.user_private_details'::regclass;
+SELECT ok(NOT has_table_privilege('anon', 'public.user_private_details', 'SELECT'), 'anon cannot SELECT private details');
+SELECT ok(NOT has_table_privilege('anon', 'public.user_private_details', 'INSERT'), 'anon cannot INSERT private details');
+SELECT ok(has_table_privilege('authenticated', 'public.user_private_details', 'SELECT'), 'authenticated can SELECT (RLS owner-only)');
+SELECT ok(NOT has_table_privilege('authenticated', 'public.user_private_details', 'INSERT'), 'authenticated has no INSERT');
+SELECT ok(NOT has_table_privilege('authenticated', 'public.user_private_details', 'UPDATE'), 'authenticated has no UPDATE');
+SELECT ok(NOT has_table_privilege('authenticated', 'public.user_private_details', 'DELETE'), 'authenticated has no DELETE');
+SELECT ok(NOT has_column_privilege('authenticated', 'public.profiles', 'avatar_url', 'UPDATE'), 'authenticated cannot UPDATE profiles.avatar_url');
+SELECT ok(NOT has_column_privilege('authenticated', 'public.profiles', 'avatar_path', 'UPDATE'), 'authenticated cannot UPDATE profiles.avatar_path');
+
+SELECT ok(NOT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_policies
+  WHERE schemaname = 'public' AND tablename = 'user_private_details' AND cmd <> 'SELECT'
+), 'private details has no write policies');
+
+-- Every new function: no PUBLIC execute; definer impls pin search_path.
+SELECT ok(NOT EXISTS (
+  SELECT 1 FROM pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
+  WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
+    AND p.proname IN ('save_my_public_profile','complete_my_profile','get_my_private_details',
+      'service_set_profile_avatar','service_clear_profile_avatar','impl_save_my_public_profile',
+      'impl_complete_my_profile','impl_set_avatar','impl_clear_avatar','validate_public_text',
+      'save_my_profile_details','impl_save_my_profile_details','resolve_profile_location','check_profile_public_fields',
+      'admin_list_profile_text_violations')
+), 'no PUBLIC EXECUTE on new functions')
+FROM pg_catalog.pg_proc p LIMIT 1;
+
+SELECT ok(p.prosecdef AND p.proconfig @> ARRAY['search_path=""'], p.proname || ' is definer with empty search_path')
+FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'app_security'
+  AND p.proname IN ('impl_save_my_public_profile','impl_complete_my_profile','impl_set_avatar','impl_clear_avatar','impl_public_profile_location');
+
+SELECT ok(NOT has_function_privilege('anon', 'public.service_set_profile_avatar(uuid,text,text,text)', 'EXECUTE'), 'anon cannot call avatar set');
+SELECT ok(NOT has_function_privilege('authenticated', 'public.service_set_profile_avatar(uuid,text,text,text)', 'EXECUTE'), 'authenticated cannot call avatar set');
+SELECT ok(has_function_privilege('service_role', 'public.service_set_profile_avatar(uuid,text,text,text)', 'EXECUTE'), 'service_role can call avatar set');
+SELECT ok(NOT has_function_privilege('authenticated', 'public.service_clear_profile_avatar(uuid,text)', 'EXECUTE'), 'authenticated cannot call avatar clear');
+SELECT ok(NOT has_function_privilege('anon', 'public.save_my_public_profile(text,text)', 'EXECUTE'), 'anon cannot save profile');
+SELECT ok(NOT has_function_privilege('anon', 'public.complete_my_profile(text,text,uuid,uuid,text)', 'EXECUTE'), 'anon cannot complete profile');
+SELECT ok(NOT has_function_privilege('anon', 'public.get_my_private_details()', 'EXECUTE'), 'anon cannot read private details');
+SELECT ok(has_function_privilege('anon', 'public.public_profile_location(uuid[])', 'EXECUTE'), 'anon can read public location projection');
+
+-- Storage bucket
+SELECT is((SELECT public FROM storage.buckets WHERE id = 'avatars'), true, 'avatars bucket is public');
+SELECT is((SELECT file_size_limit FROM storage.buckets WHERE id = 'avatars'), 204800::bigint, 'avatars size limit 200KB');
+SELECT is((SELECT allowed_mime_types FROM storage.buckets WHERE id = 'avatars'), ARRAY['image/webp']::text[], 'avatars accepts webp only');
+SELECT ok(NOT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_policies
+  WHERE schemaname = 'storage' AND tablename = 'objects'
+    AND (qual ILIKE '%avatars%' OR with_check ILIKE '%avatars%')
+    AND roles && ARRAY['anon','authenticated']::name[]
+    AND cmd <> 'SELECT'
+), 'no anon/authenticated write policy on avatars');
+SELECT is((SELECT public FROM storage.buckets WHERE id = 'listing-originals'), false, 'listing-originals stays private');
+SELECT is((SELECT public FROM storage.buckets WHERE id = 'listing-derivatives'), false, 'listing-derivatives stays private');
+
+-- ---------------------------------------------------------------- validator
+SELECT is(app_security.validate_public_text('Rahul Sharma', 'display_name'), NULL, 'ordinary name passes');
+SELECT is(app_security.validate_public_text('Priya Majorie Iyer', 'display_name'), NULL, 'Majorie is not blocked');
+SELECT is(app_security.validate_public_text('Member-ghkpqaef', 'display_name'), NULL, 'generated fallback passes');
+SELECT is(app_security.validate_public_text('A', 'display_name'), 'LENGTH', 'too short');
+SELECT is(app_security.validate_public_text('call 98765 43210', 'display_name'), 'PHONE_NUMBER', 'phone blocked');
+SELECT is(app_security.validate_public_text('९८७६५४३२१०', 'bio'), 'PHONE_NUMBER', 'devanagari digits normalised');
+SELECT is(app_security.validate_public_text('me@gmail.com', 'bio'), 'CONTACT_INFO', 'email blocked');
+SELECT is(app_security.validate_public_text('rahul@okaxis', 'bio'), 'CONTACT_INFO', 'UPI id blocked');
+SELECT is(app_security.validate_public_text('visit www.shop.in', 'bio'), 'LINK', 'link blocked');
+SELECT is(app_security.validate_public_text('visit shop dot com', 'bio'), 'LINK', 'obfuscated link blocked');
+SELECT is(app_security.validate_public_text('pay advance on gpay', 'bio'), 'PAYMENT_INSTRUCTION', 'payment instruction blocked');
+SELECT is(app_security.validate_public_text('F4irSw4p', 'display_name'), 'IMPERSONATION', 'leetspeak FairSwap blocked');
+SELECT is(app_security.validate_public_text('Fair​Swap', 'display_name'), 'IMPERSONATION', 'zero-width evasion blocked');
+SELECT is(app_security.validate_public_text('Official Support', 'display_name'), 'IMPERSONATION', 'official support blocked');
+SELECT is(app_security.validate_public_text('Major Singh', 'display_name'), 'IMPERSONATION', 'Major blocked');
+SELECT is(app_security.validate_public_text('Army Officer Raj', 'display_name'), 'IMPERSONATION', 'army officer blocked');
+SELECT is(app_security.validate_public_text('I love cricket and books.', 'bio'), NULL, 'normal bio passes');
+
+-- ---------------------------------------------------------------- fixtures
+INSERT INTO auth.users (id, aud, role, email, raw_user_meta_data, created_at, updated_at)
+VALUES
+ ('00000000-0000-4000-8000-0000000000a1', 'authenticated', 'authenticated', 'owner.a@example.test',
+  '{"display_name":"Asha Verma","terms_accepted":"true","terms_version":"2026-09-18","privacy_policy_version":"2026-09-18","acceptable_use_version":"2026-09-18","age_confirmed":"true"}', now(), now()),
+ ('00000000-0000-4000-8000-0000000000b2', 'authenticated', 'authenticated', 'other.b@example.test',
+  '{"display_name":"Official Support","terms_accepted":"true","terms_version":"2026-09-18","privacy_policy_version":"2026-09-18","acceptable_use_version":"2026-09-18","age_confirmed":"true"}', now(), now());
+
+SELECT is((SELECT display_name FROM public.profiles WHERE id = '00000000-0000-4000-8000-0000000000a1'), 'Asha Verma', 'valid metadata name kept');
+SELECT matches((SELECT display_name FROM public.profiles WHERE id = '00000000-0000-4000-8000-0000000000b2'), '^Member-[a-z]{8}$', 'invalid metadata name replaced by neutral fallback');
+SELECT ok((SELECT display_name FROM public.profiles WHERE id = '00000000-0000-4000-8000-0000000000b2') NOT ILIKE 'other%', 'name never derived from email');
+SELECT is((SELECT count(*)::int FROM public.user_private_details WHERE user_id IN ('00000000-0000-4000-8000-0000000000a1','00000000-0000-4000-8000-0000000000b2')), 2, 'signup seeds private rows');
+
+-- Legacy-style user C: signed up before this release, so it has no private row.
+INSERT INTO auth.users (id, aud, role, email, raw_user_meta_data, created_at, updated_at)
+VALUES ('00000000-0000-4000-8000-0000000000c3', 'authenticated', 'authenticated', 'legacy.c@example.test',
+  '{"display_name":"Chandra Rao","terms_accepted":"true","terms_version":"2026-09-18","privacy_policy_version":"2026-09-18","acceptable_use_version":"2026-09-18","age_confirmed":"true"}', now(), now());
+DELETE FROM public.user_private_details WHERE user_id = '00000000-0000-4000-8000-0000000000c3';
+
+-- Deterministic, locally seeded postal fixtures (reserved fake PINs 999001-999002, fake state).
+-- Inserted inside this rolled-back transaction; no dependency on the real postal import.
+--   999001: single district (Test District A) with localities A1 and A2
+--   999002: ambiguous PIN spanning Test District A (locality A2) and Test District B (locality B1)
+--   Locality C1 (Test District C) is mapped to no PIN: used for PIN/locality mismatch.
+INSERT INTO public.cities (id, name, state, slug) VALUES
+  ('00000000-0000-4000-8000-00000000c0a1', 'Test District A', 'Test State', 'zz-test-district-a'),
+  ('00000000-0000-4000-8000-00000000c0b1', 'Test District B', 'Test State', 'zz-test-district-b'),
+  ('00000000-0000-4000-8000-00000000c0c1', 'Test District C', 'Test State', 'zz-test-district-c');
+INSERT INTO public.localities (id, city_id, name, slug) VALUES
+  ('00000000-0000-4000-8000-0000000010a1', '00000000-0000-4000-8000-00000000c0a1', 'Test Locality A1', 'zz-a1'),
+  ('00000000-0000-4000-8000-0000000010a2', '00000000-0000-4000-8000-00000000c0a1', 'Test Locality A2', 'zz-a2'),
+  ('00000000-0000-4000-8000-0000000010b1', '00000000-0000-4000-8000-00000000c0b1', 'Test Locality B1', 'zz-b1'),
+  ('00000000-0000-4000-8000-0000000010c1', '00000000-0000-4000-8000-00000000c0c1', 'Test Locality C1', 'zz-c1');
+INSERT INTO public.india_postal_data (pincode, office_name, district, state, source) VALUES
+  ('999001', 'Test PO A1', 'Test District A', 'Test State', 'pgtap_fixture'),
+  ('999002', 'Test PO A2', 'Test District A', 'Test State', 'pgtap_fixture'),
+  ('999002', 'Test PO B1', 'Test District B', 'Test State', 'pgtap_fixture');
+INSERT INTO public.postal_pincode_localities (pincode, locality_id, office_name, source) VALUES
+  ('999001', '00000000-0000-4000-8000-0000000010a1', 'Test PO A1', 'pgtap_fixture'),
+  ('999001', '00000000-0000-4000-8000-0000000010a2', 'Test PO A1', 'pgtap_fixture'),
+  ('999002', '00000000-0000-4000-8000-0000000010a2', 'Test PO A2', 'pgtap_fixture'),
+  ('999002', '00000000-0000-4000-8000-0000000010b1', 'Test PO B1', 'pgtap_fixture');
+SELECT is((public.lookup_pincode('999001'))->>'success', 'true', 'fixture PIN 999001 resolves via the real lookup_pincode');
+SELECT is(jsonb_array_length((public.lookup_pincode('999002'))->'districts'), 2, 'fixture PIN 999002 is multi-district');
+
+-- ---------------------------------------------------------------- RLS as users
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000a1","role":"authenticated"}', true);
+
+SELECT is((SELECT count(*)::int FROM public.user_private_details), 1, 'owner sees only own private row');
+SELECT is((public.get_my_private_details())->>'exists', 'true', 'owner get_my_private_details exists');
+SELECT is((public.get_my_private_details())->>'onboarding_completed', 'false', 'new user not onboarded');
+SELECT throws_ok($$INSERT INTO public.user_private_details (user_id) VALUES ('00000000-0000-4000-8000-0000000000a1')$$, '42501', NULL, 'owner cannot INSERT directly');
+SELECT throws_ok($$UPDATE public.user_private_details SET full_name = 'x'$$, '42501', NULL, 'owner cannot UPDATE directly');
+SELECT throws_ok($$UPDATE public.profiles SET avatar_url = 'https://evil.example/x.png' WHERE id = '00000000-0000-4000-8000-0000000000a1'$$, '42501', NULL, 'owner cannot set avatar_url directly');
+SELECT throws_ok($$SELECT public.service_set_profile_avatar('00000000-0000-4000-8000-0000000000a1', NULL, 'x', 'y')$$, '42501', NULL, 'owner cannot call service avatar RPC');
+
+SELECT is((public.save_my_public_profile('Asha V', 'Hello there'))->>'success', 'true', 'save public profile ok');
+SELECT is((public.save_my_public_profile('Support Team', NULL))->>'error', 'INVALID_DISPLAY_NAME', 'impersonation rejected by RPC');
+SELECT is((public.save_my_public_profile('Asha V', 'call 9876543210'))->>'error', 'INVALID_BIO', 'phone in bio rejected by RPC');
+SELECT throws_ok($$UPDATE public.profiles SET bio = 'mail me a@b.co' WHERE id = '00000000-0000-4000-8000-0000000000a1'$$, '22023', NULL, 'direct profile update still validated by trigger');
+
+SELECT is((public.complete_my_profile(NULL, '12345', NULL, NULL, 'en'))->>'error', 'INVALID_PINCODE', 'bad pin rejected');
+SELECT is((public.complete_my_profile(NULL, '110003', NULL, NULL, 'en'))->>'error', 'LOCALITY_REQUIRED', 'locality required');
+SELECT is((public.complete_my_profile(NULL, '110003', gen_random_uuid(), NULL, 'hi'))->>'error', 'INVALID_LANGUAGE', 'hindi not accepted yet');
+SELECT is((public.complete_my_profile(NULL, '110003', gen_random_uuid(), NULL, 'en'))->>'error' IN ('PIN_LOCALITY_MISMATCH','PINCODE_NOT_FOUND','DISTRICT_REQUIRED','PINCODE_ADMIN_DATA_UNAVAILABLE','CONFLICTING_POSTAL_STATES'), true, 'random locality never completes onboarding');
+SELECT is((public.get_my_private_details())->>'onboarding_completed', 'false', 'failed completion leaves onboarding incomplete');
+
+-- Other user cannot read A's data and public projection never leaks the PIN.
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000b2","role":"authenticated"}', true);
+SELECT is((SELECT count(*)::int FROM public.user_private_details WHERE user_id = '00000000-0000-4000-8000-0000000000a1'), 0, 'other user cannot read A private row');
+SELECT is((public.public_profile_location(ARRAY['00000000-0000-4000-8000-0000000000a1']::uuid[]))::text, '[]', 'not-onboarded user has no public location');
+
+SET LOCAL ROLE anon;
+SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);
+SELECT throws_ok($$SELECT count(*) FROM public.user_private_details$$, '42501', NULL, 'anon denied private table');
+SELECT throws_ok($$SELECT public.get_my_private_details()$$, '42501', NULL, 'anon denied private RPC');
+SELECT ok(public.public_profile_location(ARRAY[]::uuid[]) = '[]'::jsonb, 'anon location projection callable');
+
+RESET ROLE;
+
+-- ---------------------------------------------------------------- avatar RPCs (service role)
+SET LOCAL ROLE service_role;
+SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
+SELECT is((public.service_set_profile_avatar('00000000-0000-4000-8000-0000000000a1', NULL, '00000000-0000-4000-8000-0000000000b2/abcdef12.webp', 'https://x.test/storage/v1/object/public/avatars/00000000-0000-4000-8000-0000000000b2/abcdef12.webp'))->>'error', 'INVALID_AVATAR_PATH', 'path must belong to target user');
+SELECT is((public.service_set_profile_avatar('00000000-0000-4000-8000-0000000000a1', NULL, '00000000-0000-4000-8000-0000000000a1/abcdef12.webp', 'https://evil.test/a.png'))->>'error', 'INVALID_AVATAR_URL', 'url must end with the avatar path');
+SELECT is((public.service_set_profile_avatar('00000000-0000-4000-8000-0000000000a1', NULL, '00000000-0000-4000-8000-0000000000a1/abcdef12.webp', 'https://x.test/storage/v1/object/public/avatars/00000000-0000-4000-8000-0000000000a1/abcdef12.webp'))->>'error', 'AVATAR_OBJECT_MISSING', 'object must exist in storage');
+RESET ROLE;
+
+INSERT INTO storage.objects (bucket_id, name, owner) VALUES ('avatars', '00000000-0000-4000-8000-0000000000a1/abcdef12.webp', NULL);
+SET LOCAL ROLE service_role;
+SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
+SELECT is((public.service_set_profile_avatar('00000000-0000-4000-8000-0000000000a1', NULL, '00000000-0000-4000-8000-0000000000a1/abcdef12.webp', 'https://x.test/storage/v1/object/public/avatars/00000000-0000-4000-8000-0000000000a1/abcdef12.webp'))->>'success', 'true', 'avatar set when path, url and object valid');
+SELECT is((public.service_set_profile_avatar('00000000-0000-4000-8000-0000000000a1', NULL, '00000000-0000-4000-8000-0000000000a1/abcdef12.webp', 'https://x.test/storage/v1/object/public/avatars/00000000-0000-4000-8000-0000000000a1/abcdef12.webp'))->>'error', 'AVATAR_CONFLICT', 'stale old_path yields conflict (CAS)');
+SELECT is((public.service_clear_profile_avatar('00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a1/abcdef12.webp'))->>'success', 'true', 'avatar cleared with matching old path');
+RESET ROLE;
+SELECT is((SELECT count(*)::int FROM public.avatar_cleanup_queue WHERE user_id = '00000000-0000-4000-8000-0000000000a1'), 1, 'removed avatar queued for cleanup');
+
+-- ---------------------------------------------------------------- atomic save / legacy-safe save
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000a1","role":"authenticated"}', true);
+
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader', 'Asha Full Name', '110003', gen_random_uuid(), NULL, 'en'))->>'success', 'false', 'invalid location rejects the whole save');
+SELECT is((SELECT display_name FROM public.profiles WHERE id = '00000000-0000-4000-8000-0000000000a1'), 'Asha V', 'rejected save wrote no public change');
+SELECT is((public.get_my_private_details())->>'full_name', NULL::text, 'rejected save wrote no private change');
+SELECT is((public.save_my_profile_details('Support Team', NULL))->>'error', 'INVALID_DISPLAY_NAME', 'atomic save: impersonation rejected');
+SELECT is((public.save_my_profile_details('Asha Verma', 'x', NULL, NULL, NULL, NULL, 'hi'))->>'error', 'INVALID_LANGUAGE', 'atomic save: hindi not accepted yet');
+SELECT is((public.save_my_profile_details('Asha Verma', NULL, NULL, '110003', NULL, NULL, 'en'))->>'error', 'LOCALITY_REQUIRED', 'PIN without locality rejected');
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader'))->>'success', 'true', 'public-only save works without a PIN (legacy users)');
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader'))->>'onboarding_completed', 'false', 'public-only save does not complete onboarding');
+SELECT is((SELECT display_name FROM public.profiles WHERE id = '00000000-0000-4000-8000-0000000000a1'), 'Asha Verma', 'public-only save applied');
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader', 'Asha Full'))->>'success', 'true', 'full-name-only private save works');
+SELECT is((public.get_my_private_details())->>'full_name', 'Asha Full', 'full name stored');
+SELECT is((public.get_my_private_details())->>'onboarding_completed', 'false', 'full-name-only save does not complete onboarding');
+SELECT ok(NOT has_function_privilege('anon', 'public.save_my_profile_details(text,text,text,text,uuid,uuid,text,boolean)', 'EXECUTE'), 'anon cannot call atomic save');
+SELECT hasnt_function('public', 'save_my_profile_details', ARRAY['text','text','text','text','uuid','uuid','text'], 'superseded 7-arg overload does not exist');
+SELECT ok(has_function_privilege('authenticated', 'public.save_my_profile_details(text,text,text,text,uuid,uuid,text,boolean)', 'EXECUTE'), 'authenticated can call atomic save');
+RESET ROLE;
+
+-- Legacy profile values (invalid under today's rules) must not block unrelated updates.
+ALTER TABLE public.profiles DISABLE TRIGGER trg_profiles_public_text;
+UPDATE public.profiles SET display_name = 'Major Singh', bio = 'call 9876543210' WHERE id = '00000000-0000-4000-8000-0000000000a1';
+ALTER TABLE public.profiles ENABLE TRIGGER trg_profiles_public_text;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000a1","role":"authenticated"}', true);
+SELECT is((public.save_my_profile_details('Major Singh', 'call 9876543210', 'Asha Full'))->>'success', 'true', 'unchanged legacy name/bio do not block a save');
+SELECT is((public.save_my_public_profile('Major Singh', 'call 9876543210'))->>'success', 'true', 'legacy-safe public save');
+SELECT is((public.save_my_profile_details('Major Singh', 'Now a clean bio'))->>'success', 'true', 'changing only the bio works with a legacy name');
+SELECT is((public.save_my_profile_details('Official Admin', 'Now a clean bio'))->>'error', 'INVALID_DISPLAY_NAME', 'changed name is still validated');
+SELECT is((public.save_my_profile_details('Major Singh', 'mail me a@b.co'))->>'error', 'INVALID_BIO', 'changed bio is still validated');
+RESET ROLE;
+
+-- ---------------------------------------------------------------- FORCE RLS / owner assumptions
+SELECT ok(r.rolbypassrls OR r.rolsuper, 'definer owner bypasses FORCE RLS: ' || p.proname)
+FROM pg_catalog.pg_proc p
+JOIN pg_catalog.pg_roles r ON r.oid = p.proowner
+WHERE p.pronamespace = 'app_security'::regnamespace
+  AND p.proname IN ('impl_complete_my_profile', 'impl_save_my_profile_details', 'impl_set_avatar',
+                    'impl_claim_avatar_cleanup', 'impl_public_profile_location', 'impl_fulfill_data_export');
+SELECT ok(c.relrowsecurity AND c.relforcerowsecurity, 'avatar_cleanup_queue: RLS enabled and forced')
+FROM pg_catalog.pg_class c WHERE c.oid = 'public.avatar_cleanup_queue'::regclass;
+SELECT ok(NOT has_table_privilege('authenticated', 'public.avatar_cleanup_queue', 'SELECT'), 'authenticated cannot read cleanup queue');
+SELECT ok(NOT has_table_privilege('anon', 'public.avatar_cleanup_queue', 'SELECT'), 'anon cannot read cleanup queue');
+SELECT ok(NOT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_policies
+  WHERE schemaname = 'public' AND tablename = 'avatar_cleanup_queue' AND NOT ('service_role' = ANY (roles))
+), 'cleanup queue policies are service_role only');
+
+-- ---------------------------------------------------------------- cleanup queue consumer
+SELECT ok(NOT has_function_privilege('anon', 'public.service_claim_avatar_cleanup(integer,integer)', 'EXECUTE'), 'anon cannot claim cleanup');
+SELECT ok(NOT has_function_privilege('authenticated', 'public.service_claim_avatar_cleanup(integer,integer)', 'EXECUTE'), 'authenticated cannot claim cleanup');
+SELECT ok(NOT has_function_privilege('authenticated', 'public.service_complete_avatar_cleanup(uuid[])', 'EXECUTE'), 'authenticated cannot complete cleanup');
+SELECT ok(NOT has_function_privilege('authenticated', 'public.service_fail_avatar_cleanup(uuid,text)', 'EXECUTE'), 'authenticated cannot fail cleanup');
+SELECT ok(has_function_privilege('service_role', 'public.service_claim_avatar_cleanup(integer,integer)', 'EXECUTE'), 'service_role can claim cleanup');
+SELECT ok(NOT has_function_privilege('authenticated', 'app_security.impl_claim_avatar_cleanup(integer,integer)', 'EXECUTE'), 'authenticated cannot call claim impl');
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000a1","role":"authenticated"}', true);
+SELECT throws_ok($$SELECT public.service_claim_avatar_cleanup(10, 60)$$, '42501', NULL, 'authenticated claim denied');
+RESET ROLE;
+
+-- the 'removed' row queued earlier (A/abcdef12.webp) is claimable exactly once per lease
+SET LOCAL ROLE service_role;
+SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
+SELECT is((public.service_claim_avatar_cleanup(10, 60))->'items'->0->>'path', '00000000-0000-4000-8000-0000000000a1/abcdef12.webp', 'claim returns the queued path');
+SELECT is((public.service_claim_avatar_cleanup(10, 60))->'items', '[]'::jsonb, 'leased rows are not claimed twice');
+RESET ROLE;
+SELECT is((SELECT attempts FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/abcdef12.webp'), 1, 'claim increments attempts');
+
+SET LOCAL ROLE service_role;
+SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
+SELECT is((public.service_complete_avatar_cleanup(ARRAY[(SELECT id FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/abcdef12.webp')]))->>'completed', '1', 'complete marks the row');
+SELECT is((public.service_complete_avatar_cleanup(ARRAY[(SELECT id FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/abcdef12.webp')]))->>'success', 'true', 'complete is idempotent');
+RESET ROLE;
+
+INSERT INTO public.avatar_cleanup_queue (path, user_id, reason)
+VALUES ('00000000-0000-4000-8000-0000000000a1/fedcba98.webp', '00000000-0000-4000-8000-0000000000a1', 'test');
+SELECT throws_ok($$INSERT INTO public.avatar_cleanup_queue (path, user_id, reason) VALUES ('../etc/passwd', NULL, 'bad')$$, '23514', NULL, 'queue rejects non-avatar paths');
+
+SET LOCAL ROLE service_role;
+SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
+SELECT is((public.service_claim_avatar_cleanup(10, 60))->'items'->0->>'path', '00000000-0000-4000-8000-0000000000a1/fedcba98.webp', 'completed rows are not re-claimed; new row is');
+SELECT is((public.service_fail_avatar_cleanup((SELECT id FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/fedcba98.webp'), 'storage said https://x.test/a?token=abc eyJhbGciOiJIUzI1NiJ9.payload.sig failed'))->>'updated', 'true', 'fail records the error');
+RESET ROLE;
+SELECT ok(last_error NOT LIKE '%https://%' AND last_error NOT LIKE '%eyJ%' AND char_length(last_error) <= 200, 'error text is sanitised and truncated')
+FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/fedcba98.webp';
+SELECT ok(next_attempt_at > clock_timestamp(), 'failure backs off')
+FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/fedcba98.webp';
+UPDATE public.avatar_cleanup_queue SET attempts = 8, next_attempt_at = clock_timestamp() WHERE path = '00000000-0000-4000-8000-0000000000a1/fedcba98.webp';
+SET LOCAL ROLE service_role;
+SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
+SELECT is((public.service_fail_avatar_cleanup((SELECT id FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000a1/fedcba98.webp'), 'again'))->>'dead_lettered', 'true', 'row dead-letters after max attempts');
+SELECT is((public.service_claim_avatar_cleanup(10, 60))->'items', '[]'::jsonb, 'dead-lettered rows are never claimed');
+RESET ROLE;
+
+-- ---------------------------------------------------------------- seeded-fixture flows
+-- Atomic save: a rejected location writes NOTHING (neither public nor private).
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000a1","role":"authenticated"}', true);
+SELECT is((public.save_my_profile_details('Atomic Probe', 'probe bio', 'Probe Full', '999001', '00000000-0000-4000-8000-0000000010c1', NULL, 'en'))->>'error', 'PIN_LOCALITY_MISMATCH', 'locality of another PIN rejects the whole save');
+SELECT is((SELECT display_name FROM public.profiles WHERE id = '00000000-0000-4000-8000-0000000000a1'), 'Major Singh', 'atomic: failed save left public name untouched');
+SELECT is((public.get_my_private_details())->>'full_name', 'Asha Full', 'atomic: failed save left private name untouched');
+SELECT is((public.get_my_private_details())->>'pin_code', NULL, 'atomic: failed save stored no PIN');
+
+-- Multi-district PIN: must pick a district explicitly, and it must match the locality.
+SELECT is((public.complete_my_profile(NULL, '999002', '00000000-0000-4000-8000-0000000010a2', NULL, 'en'))->>'error', 'DISTRICT_REQUIRED', 'ambiguous PIN requires an explicit district');
+SELECT is((public.complete_my_profile(NULL, '999002', '00000000-0000-4000-8000-0000000010a2', '00000000-0000-4000-8000-00000000c0b1', 'en'))->>'error', 'DISTRICT_MISMATCH', 'district not owning the locality is rejected');
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader', NULL, '999002', '00000000-0000-4000-8000-0000000010a2', NULL, 'en'))->>'error', 'DISTRICT_REQUIRED', 'atomic save also requires a district for ambiguous PIN');
+SELECT is((public.complete_my_profile(NULL, '999001', '00000000-0000-4000-8000-0000000010a1', '00000000-0000-4000-8000-00000000c0b1', 'en'))->>'error', 'DISTRICT_MISMATCH', 'single-district PIN rejects a foreign district');
+SELECT is((public.complete_my_profile(NULL, '999002', '00000000-0000-4000-8000-0000000010c1', '00000000-0000-4000-8000-00000000c0c1', 'en'))->>'error', 'PIN_LOCALITY_MISMATCH', 'locality not mapped to the PIN is rejected');
+SELECT is((public.get_my_private_details())->>'onboarding_completed', 'false', 'rejected completions never mark onboarding complete');
+
+-- Positive completion through the atomic save (ambiguous PIN with explicit district).
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader', 'Asha Full', '999002', '00000000-0000-4000-8000-0000000010a2', '00000000-0000-4000-8000-00000000c0a1', 'en'))->>'success', 'true', 'ambiguous PIN + explicit matching district completes');
+SELECT is((public.get_my_private_details())->>'onboarding_completed', 'true', 'onboarding completed after valid PIN/locality/district');
+SELECT is((public.get_my_private_details())->>'locality', 'Test Locality A2', 'locality resolved from IDs');
+SELECT is((public.get_my_private_details())->>'district', 'Test District A', 'district resolved from IDs');
+SELECT is((public.get_my_private_details())->>'state', 'Test State', 'state derived server-side');
+SELECT is((SELECT display_name FROM public.profiles WHERE id = '00000000-0000-4000-8000-0000000000a1'), 'Asha Verma', 'atomic success wrote the public name');
+-- Single-district PIN, plain complete_my_profile; the result never carries the PIN.
+SELECT is((public.complete_my_profile('Asha Full', '999001', '00000000-0000-4000-8000-0000000010a1', NULL, 'en'))->>'success', 'true', 'single-district PIN completes without a district id');
+SELECT ok(NOT ((public.complete_my_profile('Asha Full', '999001', '00000000-0000-4000-8000-0000000010a1', NULL, 'en')) ? 'pin_code'), 'completion result does not echo the PIN');
+SELECT is((public.get_my_private_details())->>'pin_code', '999001', 'owner can read own PIN');
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader', NULL, '999001', '00000000-0000-4000-8000-0000000010a1', '00000000-0000-4000-8000-00000000c0a1', 'en'))->>'district', 'Test District A', 'single-district PIN accepts the matching district id');
+
+-- Full name: clear without a PIN, leave unchanged when omitted, reject contradictory input.
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader', NULL, NULL, NULL, NULL, 'en', true))->>'success', 'true', 'clearing full name needs no PIN');
+SELECT is((public.get_my_private_details())->>'full_name', NULL::text, 'full name cleared');
+SELECT is((public.get_my_private_details())->>'pin_code', '999001', 'clearing the name keeps the saved location');
+SELECT is((public.get_my_private_details())->>'onboarding_completed', 'true', 'clearing the name keeps onboarding complete');
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader', 'Asha Full'))->>'success', 'true', 'name can be set again without a PIN');
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader'))->>'success', 'true', 'omitting the name is a no-op for it');
+SELECT is((public.get_my_private_details())->>'full_name', 'Asha Full', 'omitted full name left unchanged (not cleared)');
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader', 'Contradiction', NULL, NULL, NULL, 'en', true))->>'error', 'INVALID_FULL_NAME', 'name + clear flag together is rejected');
+SELECT is((public.get_my_private_details())->>'full_name', 'Asha Full', 'rejected contradiction wrote nothing');
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader', NULL, '999001', '00000000-0000-4000-8000-0000000010a2', NULL, 'en', true))->>'success', 'true', 'location change + name clear in one call');
+SELECT is((public.get_my_private_details())->>'locality', 'Test Locality A2', 'location updated in the same call');
+SELECT is((public.get_my_private_details())->>'full_name', NULL::text, 'name cleared in the same call');
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader', 'Asha Full'))->>'success', 'true', 'restore name for the later export check');
+RESET ROLE;
+
+-- Legacy user C (no private row): public-only editing works and creates no private row.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000c3","role":"authenticated"}', true);
+SELECT is((public.get_my_private_details())->>'exists', 'false', 'legacy user has no private row');
+SELECT is((public.save_my_profile_details('Chandra Rao', 'New bio'))->>'success', 'true', 'legacy user edits public fields without a PIN');
+SELECT is((public.save_my_profile_details('Chandra Rao', 'New bio', NULL, NULL, NULL, NULL, 'en', true))->>'success', 'true', 'clear flag on a user with no private row succeeds');
+RESET ROLE;
+SELECT is((SELECT count(*)::int FROM public.user_private_details WHERE user_id = '00000000-0000-4000-8000-0000000000c3'), 0, 'public-only / clear-only saves create no private row');
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000c3","role":"authenticated"}', true);
+SELECT is((public.save_my_profile_details('Chandra Rao', 'New bio', 'Chandra Full'))->>'success', 'true', 'legacy user can add a private name without a PIN');
+SELECT is((public.get_my_private_details())->>'onboarding_completed', 'false', 'name-only edit does not complete onboarding');
+RESET ROLE;
+
+-- Non-owner denial: B's identity is always B, never A.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000b2","role":"authenticated"}', true);
+SELECT is((public.save_my_profile_details('Bhavna Rao', 'B bio', 'B Full', '999001', '00000000-0000-4000-8000-0000000010a1', NULL, 'en'))->>'success', 'true', 'B completes its own profile');
+SELECT is((public.get_my_private_details())->>'full_name', 'B Full', 'B reads only its own private details');
+WITH u AS (UPDATE public.profiles SET bio = 'hijack' WHERE id = '00000000-0000-4000-8000-0000000000a1' RETURNING 1) SELECT is((SELECT count(*)::int FROM u), 0, 'B cannot update A public profile (RLS)');
+SELECT is((SELECT count(*)::int FROM public.user_private_details WHERE user_id <> '00000000-0000-4000-8000-0000000000b2'), 0, 'B sees no other private rows');
+RESET ROLE;
+SELECT is((SELECT full_name FROM public.user_private_details WHERE user_id = '00000000-0000-4000-8000-0000000000a1'), 'Asha Full', 'A private details unaffected by B calls');
+SELECT is((SELECT bio FROM public.profiles WHERE id = '00000000-0000-4000-8000-0000000000a1'), 'Reader', 'A bio unaffected by B calls');
+
+-- Public locality projection: locality + district only; active + onboarded only; never PIN/IDs.
+SET LOCAL ROLE anon;
+SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);
+SELECT is(jsonb_array_length(public.public_profile_location(ARRAY['00000000-0000-4000-8000-0000000000a1']::uuid[])), 1, 'onboarded active user is projected');
+SELECT is((public.public_profile_location(ARRAY['00000000-0000-4000-8000-0000000000a1']::uuid[]))->0->>'locality', 'Test Locality A2', 'projection exposes locality name');
+SELECT is((public.public_profile_location(ARRAY['00000000-0000-4000-8000-0000000000a1']::uuid[]))->0->>'district', 'Test District A', 'projection exposes district name');
+SELECT is((SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys((public.public_profile_location(ARRAY['00000000-0000-4000-8000-0000000000a1']::uuid[]))->0) k), ARRAY['district','locality','user_id'], 'projection has exactly user_id/locality/district');
+SELECT ok(position('999001' in (public.public_profile_location(ARRAY['00000000-0000-4000-8000-0000000000a1','00000000-0000-4000-8000-0000000000b2']::uuid[]))::text) = 0
+  AND position('999002' in (public.public_profile_location(ARRAY['00000000-0000-4000-8000-0000000000a1','00000000-0000-4000-8000-0000000000b2']::uuid[]))::text) = 0, 'projection never contains a PIN');
+SELECT is(jsonb_array_length(public.public_profile_location(ARRAY['00000000-0000-4000-8000-0000000000c3']::uuid[])), 0, 'not-onboarded user is not projected');
+RESET ROLE;
+UPDATE public.user_accounts SET account_status = 'suspended' WHERE user_id = '00000000-0000-4000-8000-0000000000a1';
+SET LOCAL ROLE anon;
+SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);
+SELECT is(jsonb_array_length(public.public_profile_location(ARRAY['00000000-0000-4000-8000-0000000000a1']::uuid[])), 0, 'suspended user is not projected');
+RESET ROLE;
+
+-- Suspended account: owner save and the service avatar RPC both refuse; owner reads stay allowed.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000a1","role":"authenticated"}', true);
+SELECT is((public.save_my_profile_details('Asha Verma', 'Reader'))->>'error', 'ACCOUNT_RESTRICTED', 'suspended user cannot save the profile');
+SELECT is((public.get_my_private_details())->>'exists', 'true', 'suspended owner can still read own private details (privacy rights)');
+RESET ROLE;
+INSERT INTO storage.objects (bucket_id, name, owner) VALUES ('avatars', '00000000-0000-4000-8000-0000000000a1/0123abcd.webp', NULL);
+SET LOCAL ROLE service_role;
+SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
+SELECT is((public.service_set_profile_avatar('00000000-0000-4000-8000-0000000000a1', NULL, '00000000-0000-4000-8000-0000000000a1/0123abcd.webp', 'https://x.test/storage/v1/object/public/avatars/00000000-0000-4000-8000-0000000000a1/0123abcd.webp'))->>'error', 'ACCOUNT_RESTRICTED', 'avatar RPC refuses a suspended account');
+RESET ROLE;
+UPDATE public.user_accounts SET account_status = 'active' WHERE user_id = '00000000-0000-4000-8000-0000000000a1';
+
+-- ---------------------------------------------------------------- export integration
+INSERT INTO public.privacy_requests (id, user_id, request_type)
+VALUES ('00000000-0000-4000-8000-00000000e001', '00000000-0000-4000-8000-0000000000a1', 'export_data');
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000a1","role":"authenticated"}', true);
+SELECT is((public.admin_fulfill_data_export('00000000-0000-4000-8000-00000000e001'))->'private_details'->>'full_name', 'Asha Full', 'export includes private details for the owner');
+SELECT ok((public.admin_fulfill_data_export('00000000-0000-4000-8000-00000000e001')) ? 'policy_acceptances', 'export keeps existing sections');
+RESET ROLE;
+
+-- ---------------------------------------------------------------- profile hard-delete queues the avatar
+UPDATE public.profiles SET avatar_path = '00000000-0000-4000-8000-0000000000b2/abcdef12.webp' WHERE id = '00000000-0000-4000-8000-0000000000b2';
+DELETE FROM public.profiles WHERE id = '00000000-0000-4000-8000-0000000000b2';
+SELECT is((SELECT reason FROM public.avatar_cleanup_queue WHERE path = '00000000-0000-4000-8000-0000000000b2/abcdef12.webp'), 'profile_deleted', 'deleted profile avatar is queued');
+SELECT is(app_security.validate_public_text('Deleted User', 'display_name'), NULL, 'deletion anonymisation name passes the validator');
+
+-- ---------------------------------------------------------------- deletion cleanup
+UPDATE public.user_accounts SET account_status = 'deletion_pending' WHERE user_id = '00000000-0000-4000-8000-0000000000a1';
+SELECT is((SELECT count(*)::int FROM public.user_private_details WHERE user_id = '00000000-0000-4000-8000-0000000000a1'), 0, 'private details removed on deletion');
+
+SELECT * FROM finish();
+ROLLBACK;
