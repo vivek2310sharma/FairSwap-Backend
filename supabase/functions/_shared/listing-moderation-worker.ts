@@ -6,10 +6,12 @@
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { evaluateListingText } from "../../../src/lib/moderation/checker";
+import { reviewListingContentSafety } from "./listing-media-safety";
+
+declare const Deno: { env: { get(name: string): string | undefined } };
 import {
   MODERATION_RULESET_VERSION,
   MODERATION_EVALUATION_SCOPE,
-  type ModerationEvaluationResult,
 } from "../../../src/lib/moderation/contract";
 
 export const WorkerConfigSchema = z.object({
@@ -61,40 +63,69 @@ export async function processClaimedJob(
   }
   const job = parsedJob.data;
 
-  // 1. Run canonical MOD-01A evaluator on claimed listing text
-  const evalResult: ModerationEvaluationResult = evaluateListingText({
+  // Legacy three-rule evaluation is retained WITHOUT modifying keyword/regex
+  // rules; the SQL V1 finalizer requires its unchanged version and scope.
+  const legacy = evaluateListingText({
     title: job.title,
     description: job.description,
   });
 
-  // 2. Prepare payload for atomic publication gate RPC
-  let completedRules: string[] = [];
-  let failedRules: string[] = [];
-  let flags: unknown[] = [];
-  let errors: unknown[] = [];
+  let outcome = legacy.outcome;
+  const completedRules = "completedRules" in legacy ? [...legacy.completedRules] : [];
+  const failedRules = "failedRules" in legacy ? [...legacy.failedRules] : [];
+  const flags: unknown[] = "flags" in legacy ? [...legacy.flags] : [];
+  const errors: unknown[] = "errors" in legacy ? [...legacy.errors] : [];
 
-  if (evalResult.outcome === "no_review_flags") {
-    completedRules = [...evalResult.completedRules];
-    flags = [];
-    errors = [];
-  } else if (evalResult.outcome === "needs_review") {
-    completedRules = [...evalResult.completedRules];
-    flags = [...evalResult.flags];
-    errors = [];
-  } else if (evalResult.outcome === "checks_incomplete") {
-    completedRules = [...evalResult.completedRules];
-    failedRules = [...evalResult.failedRules];
-    flags = [...evalResult.flags];
-    errors = [];
-  } else if (evalResult.outcome === "invalid_input") {
-    errors = [...evalResult.errors];
+  // OpenAI Moderation runs for both text and ALL attached images before
+  // otherwise clean listings can be automatically approved. The separate
+  // OpenAI marketplace-policy check handles firearm sales and fraud, which
+  // the harm-oriented moderation categories do not guarantee to detect.
+  if (legacy.outcome !== "invalid_input") {
+    const key = typeof Deno !== "undefined"
+      ? Deno.env.get("OPENAI_API_KEY")
+      : process.env.OPENAI_API_KEY;
+    const ai = await reviewListingContentSafety({
+      listingId: job.listing_id,
+      revision: job.listing_revision,
+      title: job.title,
+      description: job.description,
+    }, supabase, key);
+
+    if (ai.state === "clear" && outcome === "no_review_flags") {
+      // The authoritative SQL finalizer refuses auto-publication without this
+      // request-bound, revision-bound, full-photo OpenAI clearance record.
+      const { data: proof, error: proofError } = await supabase.rpc(
+        "record_listing_openai_clear_evidence", {
+          p_request_id: job.request_id,
+          p_claim_token: job.claim_token,
+          p_media_digests: ai.mediaDigests,
+        },
+      );
+      if (proofError || !proof || proof.success !== true) {
+        outcome = "checks_incomplete";
+        errors.push({ source: "openai", code: "CLEAR_EVIDENCE_RECORDING_FAILED" });
+      }
+    }
+
+    if (ai.state === "review") {
+      outcome = "needs_review";
+      flags.push({
+        ruleId: "openai_content_review",
+        source: ai.source,
+        reason: ai.reason,
+      });
+    } else if (ai.state === "incomplete" && outcome === "no_review_flags") {
+      // Never translate OpenAI errors or missing images into a clear verdict.
+      outcome = "checks_incomplete";
+      errors.push({ source: "openai", code: ai.reason });
+    }
   }
 
   // 3. Call atomic publication gate (service-role only via public wrapper)
   const { data, error } = await supabase.rpc("impl_finalize_moderation_result", {
     p_request_id: job.request_id,
     p_claim_token: job.claim_token,
-    p_outcome: evalResult.outcome,
+    p_outcome: outcome,
     p_ruleset_version: MODERATION_RULESET_VERSION,
     p_scope: MODERATION_EVALUATION_SCOPE,
     p_completed_rules: completedRules,
