@@ -25,17 +25,77 @@ SELECT ok(NOT EXISTS (
   WHERE schemaname = 'public' AND tablename = 'user_private_details' AND cmd <> 'SELECT'
 ), 'private details has no write policies');
 
--- Every new function: no PUBLIC execute; definer impls pin search_path.
-SELECT ok(NOT EXISTS (
-  SELECT 1 FROM pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
-  WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
-    AND p.proname IN ('save_my_public_profile','complete_my_profile','get_my_private_details',
-      'service_set_profile_avatar','service_clear_profile_avatar','impl_save_my_public_profile',
-      'impl_complete_my_profile','impl_set_avatar','impl_clear_avatar','validate_public_text',
-      'save_my_profile_details','impl_save_my_profile_details','resolve_profile_location','check_profile_public_fields',
-      'admin_list_profile_text_violations')
-), 'no PUBLIC EXECUTE on new functions')
-FROM pg_catalog.pg_proc p LIMIT 1;
+-- Every function created by the eight migrations: explicit EXECUTE matrix.
+-- expectation columns: may anon / authenticated execute? PUBLIC must never hold EXECUTE.
+-- (Supabase default privileges can grant anon/authenticated on public functions, so each
+-- role is checked per function with has_function_privilege, plus PUBLIC via aclexplode.)
+CREATE TEMP TABLE _fn_expect (sig text PRIMARY KEY, anon_ok boolean NOT NULL, auth_ok boolean NOT NULL) ON COMMIT DROP;
+INSERT INTO _fn_expect (sig, anon_ok, auth_ok) VALUES
+  -- public schema
+  ('public.enforce_user_private_details_integrity()', false, false),
+  ('public.enforce_profile_public_text()', false, false),
+  ('public.handle_new_user()', false, false),
+  ('public.enqueue_avatar_on_profile_delete()', false, false),
+  ('public.admin_list_profile_text_violations(integer)', false, true),
+  ('public.save_my_public_profile(text,text)', false, true),
+  ('public.complete_my_profile(text,text,uuid,uuid,text)', false, true),
+  ('public.save_my_profile_details(text,text,text,text,uuid,uuid,text,boolean)', false, true),
+  ('public.get_my_private_details()', false, true),
+  ('public.public_profile_location(uuid[])', true, true),
+  ('public.service_set_profile_avatar(uuid,text,text,text)', false, false),
+  ('public.service_clear_profile_avatar(uuid,text)', false, false),
+  ('public.service_claim_avatar_cleanup(integer,integer)', false, false),
+  ('public.service_complete_avatar_cleanup(uuid[])', false, false),
+  ('public.service_fail_avatar_cleanup(uuid,text)', false, false),
+  -- app_security schema
+  ('app_security.normalize_public_text(text)', false, true),
+  ('app_security.validate_public_text(text,text)', false, true),
+  ('app_security.impl_list_profile_text_violations(integer)', false, true),
+  ('app_security.impl_save_my_public_profile(text,text)', false, true),
+  ('app_security.impl_complete_my_profile(text,text,uuid,uuid,text)', false, true),
+  ('app_security.impl_save_my_profile_details(text,text,text,text,uuid,uuid,text,boolean)', false, true),
+  ('app_security.impl_public_profile_location(uuid[])', true, true),
+  ('app_security.impl_fulfill_data_export(uuid)', false, true),
+  ('app_security.impl_fulfill_data_export_base(uuid)', false, false),
+  ('app_security.cleanup_profile_private_data_on_deletion()', false, false),
+  ('app_security.impl_set_avatar(uuid,text,text,text)', false, false),
+  ('app_security.impl_clear_avatar(uuid,text)', false, false),
+  ('app_security.impl_claim_avatar_cleanup(integer,integer)', false, false),
+  ('app_security.impl_complete_avatar_cleanup(uuid[])', false, false),
+  ('app_security.impl_fail_avatar_cleanup(uuid,text)', false, false),
+  ('app_security.check_profile_public_fields(uuid,text,text)', false, false),
+  ('app_security.resolve_profile_location(text,uuid,uuid)', false, false);
+
+-- Completeness: all 32 expected functions exist, and no unexpected overload of these names
+-- exists in public/app_security (a superseded signature or a missing function fails here).
+SELECT is((SELECT count(*)::int FROM _fn_expect WHERE pg_catalog.to_regprocedure(sig) IS NOT NULL), 32,
+  'all 32 new functions exist');
+SELECT is((SELECT string_agg(sig, ', ' ORDER BY sig) FROM _fn_expect WHERE pg_catalog.to_regprocedure(sig) IS NULL), NULL,
+  'no expected function is missing');
+SELECT is((
+  SELECT count(*)::int FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname IN ('public', 'app_security')
+    AND p.proname IN (SELECT split_part(split_part(sig, '(', 1), '.', 2) FROM _fn_expect)
+), 32, 'no unexpected overload of the new function names (checked set is complete)');
+
+-- Violations: PUBLIC, anon or authenticated holds EXECUTE contrary to the matrix.
+SELECT is((
+  SELECT string_agg(e.sig, ', ' ORDER BY e.sig)
+  FROM _fn_expect e
+  WHERE pg_catalog.to_regprocedure(e.sig) IS NOT NULL
+    AND (
+      EXISTS (SELECT 1
+              FROM pg_catalog.pg_proc p,
+                   LATERAL pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
+              WHERE p.oid = pg_catalog.to_regprocedure(e.sig)
+                AND a.grantee = 0 AND a.privilege_type = 'EXECUTE')
+      OR pg_catalog.has_function_privilege('anon', pg_catalog.to_regprocedure(e.sig), 'EXECUTE') <> e.anon_ok
+      OR pg_catalog.has_function_privilege('authenticated', pg_catalog.to_regprocedure(e.sig), 'EXECUTE') <> e.auth_ok
+    )
+), NULL, 'no PUBLIC/anon/authenticated EXECUTE outside the expected matrix on any new function');
+SELECT ok(pg_catalog.has_function_privilege('service_role', 'app_security.impl_fulfill_data_export(uuid)', 'EXECUTE'), 'service_role keeps export impl EXECUTE (original ACL)');
+SELECT ok(NOT pg_catalog.has_function_privilege('service_role', 'app_security.impl_fulfill_data_export_base(uuid)', 'EXECUTE'), 'renamed export base is not executable by service_role');
 
 SELECT ok(p.prosecdef AND p.proconfig @> ARRAY['search_path=""'], p.proname || ' is definer with empty search_path')
 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
@@ -117,10 +177,17 @@ INSERT INTO public.localities (id, city_id, name, slug) VALUES
   ('00000000-0000-4000-8000-0000000010a2', '00000000-0000-4000-8000-00000000c0a1', 'Test Locality A2', 'zz-a2'),
   ('00000000-0000-4000-8000-0000000010b1', '00000000-0000-4000-8000-00000000c0b1', 'Test Locality B1', 'zz-b1'),
   ('00000000-0000-4000-8000-0000000010c1', '00000000-0000-4000-8000-00000000c0c1', 'Test Locality C1', 'zz-c1');
-INSERT INTO public.india_postal_data (pincode, office_name, district, state, source) VALUES
-  ('999001', 'Test PO A1', 'Test District A', 'Test State', 'pgtap_fixture'),
-  ('999002', 'Test PO A2', 'Test District A', 'Test State', 'pgtap_fixture'),
-  ('999002', 'Test PO B1', 'Test District B', 'Test State', 'pgtap_fixture');
+-- source_record_key is NOT NULL with UNIQUE (source, source_record_key). The BEFORE INSERT
+-- trigger trg_india_postal_data_source_record_key recomputes it as md5 of the canonical
+-- metadata, but a value is still supplied explicitly so the insert is valid on its own; the
+-- values are unique per row and the assertions below prove the trigger-canonical key is
+-- a unique 32-char md5 for every fixture row.
+INSERT INTO public.india_postal_data (pincode, office_name, district, state, source, source_record_key) VALUES
+  ('999001', 'Test PO A1', 'Test District A', 'Test State', 'pgtap_fixture', 'pgtap-fixture-999001-test-po-a1'),
+  ('999002', 'Test PO A2', 'Test District A', 'Test State', 'pgtap_fixture', 'pgtap-fixture-999002-test-po-a2'),
+  ('999002', 'Test PO B1', 'Test District B', 'Test State', 'pgtap_fixture', 'pgtap-fixture-999002-test-po-b1');
+SELECT is((SELECT count(*)::int FROM public.india_postal_data WHERE source = 'pgtap_fixture'), 3, 'three postal fixture rows seeded');
+SELECT is((SELECT count(DISTINCT source_record_key)::int FROM public.india_postal_data WHERE source = 'pgtap_fixture' AND source_record_key ~ '^[0-9a-f]{32}$'), 3, 'trigger-canonical source_record_key is a unique md5 for every fixture row');
 INSERT INTO public.postal_pincode_localities (pincode, locality_id, office_name, source) VALUES
   ('999001', '00000000-0000-4000-8000-0000000010a1', 'Test PO A1', 'pgtap_fixture'),
   ('999001', '00000000-0000-4000-8000-0000000010a2', 'Test PO A1', 'pgtap_fixture'),
@@ -387,6 +454,11 @@ SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000a1","role":"authenticated"}', true);
 SELECT is((public.admin_fulfill_data_export('00000000-0000-4000-8000-00000000e001'))->'private_details'->>'full_name', 'Asha Full', 'export includes private details for the owner');
 SELECT ok((public.admin_fulfill_data_export('00000000-0000-4000-8000-00000000e001')) ? 'policy_acceptances', 'export keeps existing sections');
+-- Authorization is still enforced by the (renamed, unchanged) base: a non-owner non-admin is refused.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000b2","role":"authenticated"}', true);
+SELECT throws_ok($$SELECT public.admin_fulfill_data_export('00000000-0000-4000-8000-00000000e001')$$, NULL, 'Forbidden: not authorized to export this data', 'non-owner non-admin cannot export another user''s data');
+SELECT throws_ok($$SELECT app_security.impl_fulfill_data_export_base('00000000-0000-4000-8000-00000000e001')$$, '42501', NULL, 'authenticated cannot call the renamed base directly');
 RESET ROLE;
 
 -- ---------------------------------------------------------------- profile hard-delete queues the avatar

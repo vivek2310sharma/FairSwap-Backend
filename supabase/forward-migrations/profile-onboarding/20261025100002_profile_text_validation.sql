@@ -136,6 +136,9 @@ CREATE TRIGGER trg_profiles_public_text
 BEFORE INSERT OR UPDATE OF display_name, bio ON public.profiles
 FOR EACH ROW EXECUTE FUNCTION public.enforce_profile_public_text();
 
+-- Trigger function: not callable by client roles (EXECUTE is checked only at CREATE TRIGGER).
+REVOKE ALL ON FUNCTION public.enforce_profile_public_text() FROM PUBLIC, anon, authenticated;
+
 -- Non-destructive remediation aid: lists legacy profiles that would fail validation.
 -- Administrator (AAL2) only. Returns ids + reason codes, never rewrites data.
 CREATE OR REPLACE FUNCTION app_security.impl_list_profile_text_violations(p_limit integer DEFAULT 200)

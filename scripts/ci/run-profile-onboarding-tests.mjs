@@ -28,7 +28,32 @@ const failures = [];
 const fail = (m) => failures.push(m);
 
 function staticScan() {
-  if (migrations.length < 8) fail(`expected >= 8 forward migrations, found ${migrations.length}`);
+  // The release package is exactly these eight forward migrations, in this order. The runner
+  // depends only on the 58 repo migrations (profiles, user_accounts, policy/staff helpers,
+  // postal tables, lookup_pincode, privacy_requests, storage); no other forward topic
+  // (seller-profile, india-taxonomy, moderation-v2) is a prerequisite.
+  const EXPECTED = [
+    '20261025100001_user_private_details.sql',
+    '20261025100002_profile_text_validation.sql',
+    '20261025100003_profile_rpcs.sql',
+    '20261025100004_handle_new_user_hardening.sql',
+    '20261025100005_avatars_bucket_and_rpcs.sql',
+    '20261025100006_privacy_export_and_deletion.sql',
+    '20261025100007_avatar_cleanup_consumer.sql',
+    '20261025100008_atomic_profile_save.sql',
+  ];
+  if (migrations.length !== EXPECTED.length || migrations.some((f, i) => f !== EXPECTED[i])) {
+    fail(`forward migrations must be exactly the eight expected files in order; found: ${migrations.join(', ')}`);
+  }
+  const m6 = readFileSync(join(dir, EXPECTED[5]), 'utf8').replace(/--.*$/gm, '');
+  if (!/RENAME TO impl_fulfill_data_export_base/.test(m6)
+      || !/v_export := app_security\.impl_fulfill_data_export_base\(p_request_id\)/.test(m6)
+      || !/REVOKE ALL ON FUNCTION app_security\.impl_fulfill_data_export_base\(uuid\)\s+FROM PUBLIC, anon, authenticated, service_role/.test(m6)
+      || !/GRANT EXECUTE ON FUNCTION app_security\.impl_fulfill_data_export\(uuid\) TO authenticated, service_role/.test(m6)
+      || !/private_details/.test(m6)) {
+    fail('migration 006 must wrap the renamed export base (rename, base call, base ACL revoked, original ACL, private_details)');
+  }
+  if (/SELECT \* INTO v_req|is_active_staff_aal2/.test(m6)) fail('migration 006 must not duplicate the historical export authorization logic');
   for (const f of migrations) {
     const sql = readFileSync(join(dir, f), 'utf8');
     if ((sql.match(/\$\$/g) || []).length % 2 !== 0) fail(`${f}: unbalanced $$ dollar quoting`);

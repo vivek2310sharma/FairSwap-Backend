@@ -96,4 +96,7 @@ BEGIN
 END;
 $$;
 
+-- Auth trigger function: not callable by client roles (trigger EXECUTE is checked only at CREATE TRIGGER).
+REVOKE ALL ON FUNCTION public.handle_new_user() FROM PUBLIC, anon, authenticated;
+
 commit;

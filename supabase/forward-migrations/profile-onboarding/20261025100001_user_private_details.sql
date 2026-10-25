@@ -58,4 +58,7 @@ CREATE TRIGGER trg_user_private_details_integrity
 BEFORE INSERT OR UPDATE ON public.user_private_details
 FOR EACH ROW EXECUTE FUNCTION public.enforce_user_private_details_integrity();
 
+-- Trigger function: never callable as an RPC by client roles (EXECUTE is checked only at CREATE TRIGGER).
+REVOKE ALL ON FUNCTION public.enforce_user_private_details_integrity() FROM PUBLIC, anon, authenticated;
+
 commit;
