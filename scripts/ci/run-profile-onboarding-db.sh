@@ -42,7 +42,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-export SUPABASE_SKIP_UPDATE_CHECK=true SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws
+export SUPABASE_SKIP_UPDATE_CHECK=true
+# CLI >= 2.108 retries the official ECR, GHCR and Docker Hub registries automatically.
+# Do not force one registry: ECR regularly rate-limits GitHub shared egress IPs.
 
 # Free loopback ports (DB, shadow, SMTP, API placeholder) chosen up front so nothing uses defaults.
 mapfile -t ports < <(node --input-type=module -e '

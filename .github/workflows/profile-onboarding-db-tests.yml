@@ -60,15 +60,6 @@ jobs:
           node scripts/ci/run-profile-onboarding-tests.mjs --self-test
           node scripts/ci/run-profile-onboarding-tests.mjs --static
 
-      - name: Preload pinned Supabase Postgres from official GHCR
-        # The Supabase CLI script uses public.ecr.aws, which is rate-limited on
-        # GitHub-hosted runners. Cache the exact official tag under its ECR
-        # image reference without changing the pinned CLI or historical CI.
-        run: |
-          docker pull ghcr.io/supabase/postgres:15.8.1.085
-          docker tag ghcr.io/supabase/postgres:15.8.1.085 public.ecr.aws/supabase/postgres:15.8.1.085
-          docker image inspect public.ecr.aws/supabase/postgres:15.8.1.085 >/dev/null
-
       - name: Run pgTAP on a throwaway loopback-only Supabase database
         # The driver downloads the pinned CLI (checksum + version verified), starts a disposable
         # local stack, applies the 58 repo migrations, then the forward package, and runs the suite
