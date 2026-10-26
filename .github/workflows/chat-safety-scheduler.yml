@@ -1,0 +1,71 @@
+name: Protected Chat Safety scheduler
+
+on:
+  schedule:
+    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
+    - cron: '19 * * * *'
+  workflow_dispatch:
+    inputs:
+      target:
+        type: choice
+        required: true
+        default: test
+        options: [test, prod]
+
+permissions:
+  contents: read
+
+jobs:
+  fairswaptest:
+    if: >-
+      github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
+      vars.CHAT_SAFETY_TEST_SCHEDULER_ENABLED == 'true' &&
+      ((github.event_name == 'schedule' && github.event.schedule == '19 * * * *') ||
+       (github.event_name == 'workflow_dispatch' && inputs.target == 'test'))
+    runs-on: ubuntu-slim
+    timeout-minutes: 2
+    environment: chat-safety-test
+    concurrency:
+      group: chat-safety-test
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+      - name: Deliver bounded authenticated Test tick
+        env:
+          CHAT_SAFETY_TARGET: test
+          CHAT_SAFETY_SCHEDULER_ENABLED: ${{ vars.CHAT_SAFETY_TEST_SCHEDULER_ENABLED }}
+          CHAT_SAFETY_WORKER_SECRET: ${{ secrets.CHAT_SAFETY_WORKER_SECRET }}
+        run: node scripts/chat-safety/run-scheduler.mjs
+
+  fairswapprod:
+    if: >-
+      github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
+      vars.CHAT_SAFETY_PROD_SCHEDULER_ENABLED == 'true' &&
+      ((github.event_name == 'schedule' && github.event.schedule == '2,7,12,17,22,27,32,37,42,47,52,57 * * * *') ||
+       (github.event_name == 'workflow_dispatch' && inputs.target == 'prod'))
+    runs-on: ubuntu-slim
+    timeout-minutes: 2
+    environment: chat-safety-prod
+    concurrency:
+      group: chat-safety-prod
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+      - name: Deliver bounded authenticated Production tick
+        env:
+          CHAT_SAFETY_TARGET: prod
+          CHAT_SAFETY_SCHEDULER_ENABLED: ${{ vars.CHAT_SAFETY_PROD_SCHEDULER_ENABLED }}
+          CHAT_SAFETY_WORKER_SECRET: ${{ secrets.CHAT_SAFETY_WORKER_SECRET }}
+        run: node scripts/chat-safety/run-scheduler.mjs
