@@ -1,0 +1,15 @@
+# Proposal for ChatGPT to integrate, preserving every current job and aggregate gate.
+# Existing exact dependency pins/lock and network-blocking test guard must be present.
+# This is NOT a workflow and is not executed by GitHub Actions.
+ratings:
+  runs-on: ubuntu-latest
+  steps:
+    # Reuse repository's reviewed checkout/setup/frozen-install action pins here.
+    - run: npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
+    - run: node --experimental-strip-types --test tests/ratings/contract.test.mjs
+    - run: node tests/ratings/run.mjs
+    - run: node_modules/.bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution Bundler --module ESNext src/lib/ratings/contract.ts src/lib/ratings/score.ts
+# Also require the native PG17 independent-session suite in an appropriate disposable
+# Windows runner using tests/ratings/run-native.ps1 and a reviewed full PG17 binary.
+# The existing scripts/ci/run-local-db.sh remains Linux-only and unchanged.
+# Add this job to backend-ci-success only through ChatGPT-owned Actions changes.

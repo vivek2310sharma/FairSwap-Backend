@@ -1,0 +1,25 @@
+{
+  "status": "LOCAL_IMPLEMENTATION_VERIFIED_HOSTED_RELEASE_NOT_EXECUTED",
+  "date": "2026-10-26",
+  "baseHead": "213b57c84e2b3767e3ab3499846dd280bf3315c3",
+  "checks": [
+    { "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/ratings/run-native.ps1 -PgBin ../.ratings-native-tools/node_modules/@embedded-postgres/windows-x64/native/bin", "result": "PASS", "engine": "PostgreSQL 17.6 native Windows x64", "cases": 37, "evidence": "checks.postgres17.txt", "includes": ["independent-session concurrent sell/confirm/duplicate-submit", "both environment preflights", "both inactive identity guards", "rollback", "behavior", "security", "privacy"] },
+    { "command": "node tests/ratings/run.mjs", "result": "PASS", "engine": "PostgreSQL 18.3 / PGlite 0.5.8", "cases": 34, "evidence": "checks.pglite.txt", "notes": "Supplementary single-session engine; installed standalone test lock independently." },
+    { "command": "node --experimental-strip-types --test tests/ratings/contract.test.mjs", "result": "PASS", "tests": 4, "includesAll64FaceCombinations": true, "evidence": "checks.contract.txt" },
+    { "command": "node_modules/.bin/tsc --noEmit", "result": "PASS", "notes": "Existing explicit repository typecheck scope unchanged." },
+    { "command": "node_modules/.bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution Bundler --module ESNext src/lib/ratings/contract.ts src/lib/ratings/score.ts", "result": "PASS" },
+    { "command": "node_modules/.bin/vitest run", "result": "PASS", "files": 5, "tests": 93, "notes": "Ran outside filesystem sandbox after esbuild was denied directory access; existing no-network guard and whitelist unchanged." },
+    { "command": "node tests/ratings/verify-baseline.mjs", "result": "PASS", "migrations": 58, "notes": "Canonical Git blobs match immutable SHA-256 manifest; working sources/manifest unchanged under Git EOL conversion." },
+    { "command": "node scripts/verify-migration-manifest.mjs", "result": "FAIL_EXISTING_WINDOWS_EOL", "error": "Malformed manifest entry at line 1", "notes": "Immutable manifest is CRLF in Windows checkout. No historical file or manifest was changed. Existing CI gate retained." },
+    { "command": "npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund", "result": "PASS", "notes": "Exact PGlite 0.5.8 nested lock; independent of unmerged root Chat V2 dependency work." },
+    { "command": "git apply --check scoped.diff (isolated temporary directory with exact starting package.json)", "result": "PASS", "notes": "Read-only patch applicability check; no branch, stage, commit or remote action." },
+    { "command": "lint / build", "result": "NOT_DEFINED", "notes": "Repository has no lint or build scripts." },
+    { "command": "full Supabase baseline / 52-version production regression / real pg_cron / Data API / advisors / consumer deployments / load qualification", "result": "NOT_RUN", "notes": "Tests use Auth/JWT, policy-provider, Vault identity and cron fixtures, canonical initial domain SQL and latest sold RPC body. Hosted deployments/queries/settings changes were prohibited." }
+  ],
+  "githubOperations": "NONE",
+  "hostedWrites": "NONE",
+  "manualExploratoryTests": "NONE",
+  "newEnvironmentVariables": [],
+  "remainingReleaseGates": ["documented Backend deployment ownership blockers", "current exact environment ledgers and installed definitions/ACLs", "backup/restore receipt", "full environment regression and load qualification", "ChatGPT-owned CI integration", "compatible consumer releases", "separately authorized activation"],
+  "concurrentWork": "Six unrelated existing Chat V2/CI paths changed concurrently. Recorded separately and excluded; not edited by Ratings."
+}

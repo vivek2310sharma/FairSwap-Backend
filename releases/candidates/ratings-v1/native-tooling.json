@@ -1,0 +1,37 @@
+{
+  "purpose": "Disposable native PostgreSQL 17.6 automated checks only",
+  "package": "@embedded-postgres/windows-x64",
+  "version": "17.6.0-beta.15",
+  "lock": {
+    "name": ".ratings-native-tools",
+    "lockfileVersion": 3,
+    "requires": true,
+    "packages": {
+      "": {
+        "dependencies": {
+          "@embedded-postgres/windows-x64": "^17.6.0-beta.15"
+        }
+      },
+      "node_modules/@embedded-postgres/windows-x64": {
+        "version": "17.6.0-beta.15",
+        "resolved": "https://registry.npmjs.org/@embedded-postgres/windows-x64/-/windows-x64-17.6.0-beta.15.tgz",
+        "integrity": "sha512-zzoF/J8NA6cePJPnWcWBti4IXt3347A9zD7ucSHx4ccuS5v/uhip4Cm1Oc+isI8TIjW/jtEL9pKsu6J1upoHSA==",
+        "cpu": [
+          "x64"
+        ],
+        "hasInstallScript": true,
+        "license": "MIT",
+        "os": [
+          "win32"
+        ],
+        "engines": {
+          "node": ">=16"
+        }
+      }
+    }
+  },
+  "psql": "Existing C:/Program Files/PostgreSQL/17/bin/psql.exe",
+  "supabaseCli": "2.122.0",
+  "migrationGeneration": "supabase migration new in an isolated local .cli directory; no db apply",
+  "hostedCalls": "NONE"
+}

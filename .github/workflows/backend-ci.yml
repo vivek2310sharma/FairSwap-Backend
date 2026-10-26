@@ -74,6 +74,19 @@ jobs:
         timeout-minutes: 2
         run: corepack pnpm typecheck
 
+      - name: Install isolated Ratings V1 PGlite dependencies
+        timeout-minutes: 3
+        run: npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
+
+      - name: Ratings V1 offline contract and PGlite regression
+        timeout-minutes: 8
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            node --experimental-strip-types --test tests/ratings/contract.test.mjs
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            node tests/ratings/run.mjs
+          ./node_modules/.bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution Bundler --module ESNext src/lib/ratings/contract.ts src/lib/ratings/score.ts
+
       - name: Run validator regression checks
         timeout-minutes: 1
         run: node --test scripts/ci/verification.test.mjs

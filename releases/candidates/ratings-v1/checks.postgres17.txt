@@ -1,0 +1,39 @@
+Engine: PostgreSQL 17.6 on x86_64-windows, compiled by msvc-19.44.35213, 64-bit
+ok 1 - all activation flags default off and scheduler does nothing
+ok 2 - zero existing baseline; no historical sold backfill
+ok 3 - cron provisioning remains inactive on retries
+ok 4 - separate release scripts reject wrong project and provision only inactive jobs
+ok 5 - legacy sold listings cannot acquire invented trades
+ok 6 - new accounts receive zero baseline without phone/email gates
+ok 7 - legacy mark_sold preserves response and creates pending selection only
+ok 8 - valid buyer comes only from listing conversation and sell retries are idempotent
+ok 9 - arbitrary buyer, wrong-listing conversation, self and outsider denied atomically
+ok 10 - none choice closes unattributed without ratings
+ok 11 - existing policy acceptance gate survives additive sold integration
+ok 12 - buyer must explicitly confirm before review
+ok 13 - database score formula and private sealed author submission
+ok 14 - sealed counterpart is absent from Received, export and public projections
+ok 15 - confirmed trade counts with zero buyer reviews; repeat confirmation stable
+ok 16 - reciprocal submissions publish early and true 0.0 survives threshold masking
+ok 17 - duplicate submission exact replay returns same id, changed review rejected
+ok 18 - independent native sessions serialize concurrent sell, confirm and duplicate review requests
+ok 19 - required integer faces, role vocabulary, max/duplicate tags, Unicode and HTML validation
+ok 20 - reply requires written published review and remains immutable
+ok 21 - reply rejects sealed or unwritten review, and inactive accounts cannot mutate
+ok 22 - expiry publishes seller-only review without inflating reputation or trades
+ok 23 - same pair counts across distinct listings without cooldown and score reaches 0.0
+ok 24 - buyer dispute freezes trade, removes aggregates and creates support evidence
+ok 25 - review reporting is durable, deduplicated, and linked to support case
+ok 26 - staff requires AAL2, role, enabled flag and audited explicit reason
+ok 27 - hide/restore recalculates counts, including threshold loss and recovery
+ok 28 - resolution and void recompute trade counts with immutable audit
+ok 29 - risk exclusion affects score and completed counts but reveals no internal flags
+ok 30 - outsider reads/writes and forged system events are denied by grants/RLS
+ok 31 - initial and day3/day10 reminders deduplicate; completed actions are excluded
+ok 32 - cursor pagination uses stable timestamp/UUID boundary and rejects partial cursor
+ok 33 - anonymous public APIs expose published visible content only
+ok 34 - privacy wrapper retains original authorization and does not grant base access
+ok 35 - account deletion erases text and removes reputation; physical deletion is FK safe
+ok 36 - catalog security assertions pass
+ok 37 - rollback kill switch disables only Ratings settings and jobs
+PASS 37 automated database checks; no hosted or external network operations

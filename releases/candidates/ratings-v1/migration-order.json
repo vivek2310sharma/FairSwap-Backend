@@ -1,0 +1,17 @@
+{
+  "staging": [
+    "supabase/forward-migrations/ratings/20261026083608_ratings_schema.sql",
+    "supabase/forward-migrations/ratings/20261026083610_ratings_rpcs.sql",
+    "supabase/forward-migrations/ratings/20261026083612_ratings_reads.sql",
+    "supabase/forward-migrations/ratings/20261026083613_ratings_jobs.sql",
+    "supabase/forward-migrations/ratings/20261026083614_ratings_moderation_privacy.sql"
+  ],
+  "production": [
+    "supabase/forward-migrations/ratings/20261026083608_ratings_schema.sql",
+    "supabase/forward-migrations/ratings/20261026083610_ratings_rpcs.sql",
+    "supabase/forward-migrations/ratings/20261026083612_ratings_reads.sql",
+    "supabase/forward-migrations/ratings/20261026083613_ratings_jobs.sql",
+    "supabase/forward-migrations/ratings/20261026083614_ratings_moderation_privacy.sql"
+  ],
+  "notes": "Same additive bytes; different isolated baselines, project guards and receipts. Never run raw historical chain."
+}

@@ -1,0 +1,12 @@
+✔ all 64 face combinations and required score examples (0.7478ms)
+✔ review input boundary normalizes Unicode, counts codepoints, rejects unsafe content and duplicate tags (1.8785ms)
+✔ system events require fixed typed shape without user content or URL (0.5098ms)
+✔ zero is a valid rated score; null is a distinct unrated state (0.1196ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 117.5131
