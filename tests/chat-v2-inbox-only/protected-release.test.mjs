@@ -1,9 +1,13 @@
 import './offline-guard.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync,mkdtempSync,mkdirSync,writeFileSync,unlinkSync,rmdirSync,readdirSync,copyFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join,resolve,basename} from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {auditProtection} from '../../scripts/release/inbox-protection.mjs';
-import {buildPlan,hash} from '../../scripts/release/protected-inbox-plan.mjs';
+import {buildPlan,hash,classifyCliFailure,verifyHistoryWorkspace} from '../../scripts/release/protected-inbox-plan.mjs';
 import {verifyTestReceipt} from '../../scripts/release/protected-inbox-release.mjs';
 import {manifest} from '../../scripts/release/chat-v2-inbox-only.mjs';
 const input={projectRef:manifest.environments.fairswaptest.projectRef,baseCommit:manifest.baseCommit,observedAt:new Date().toISOString(),reviewEvidence:'https://github.com/vivek2310sharma/FairSwap-Backend/pull/60',ledger:[{version:'20260914000011',name:'create_communication',statementsSha256:hash(JSON.stringify(['fixture baseline']))}]};
@@ -39,5 +43,62 @@ test('complete protections pass; self approval, bypass, pagination and repositor
  assert.equal((await auditProtection('FairSwapTest','fixture',api(responses))).protected,true);
  for(const mutate of [x=>{x['/environments/FairSwapTest'].can_admins_bypass=true;},x=>{x['/actions/secrets?per_page=100']={total_count:1,secrets:[{name:'CHAT_DATABASE_PASSWORD'}]};},x=>{x['/actions/secrets?per_page=100'].total_count=999;},x=>{x['/rulesets/1'].bypass_actors=[{actor_id:1}];}]){
   const copy=structuredClone(responses);mutate(copy);await assert.rejects(()=>auditProtection('FairSwapTest','fixture',api(copy)),/CHAT_/);
+ }
+});
+test('only the explicit PostgreSQL rollback sentinel is an expected negative result',()=>{
+ assert.equal(classifyCliFailure('ERROR: CHAT_FIXTURE_ROLLBACK (SQLSTATE P0001)'),'EXPECTED_SQL_ROLLBACK');
+ assert.equal(classifyCliFailure('message: "CHAT_FIXTURE_ROLLBACK", code: "P0001"'),'EXPECTED_SQL_ROLLBACK');
+ assert.equal(classifyCliFailure('PostgresError: CHAT_FIXTURE_ROLLBACK\n code: "P0001"'),'EXPECTED_SQL_ROLLBACK');
+ assert.equal(classifyCliFailure('query: CHAT_FIXTURE_ROLLBACK; syntax error (SQLSTATE 42601)'),'UNEXPECTED_SQL_FAILURE');
+ assert.equal(classifyCliFailure("ERROR: CHAT_EXACT_LEDGER_MISMATCH (SQLSTATE P0001)\nquery: do $$begin raise exception 'CHAT_FIXTURE_ROLLBACK';end$$;"),'UNEXPECTED_SQL_FAILURE');
+ assert.equal(classifyCliFailure('CHAT_FIXTURE_ROLLBACK'),'UNCLASSIFIED_CLI_FAILURE');
+ assert.equal(classifyCliFailure('CHAT_FIXTURE_ROLLBACK (SQLSTATE P0001) password authentication failed'),'AUTHENTICATION_FAILURE');
+});
+test('CLI error classification is allowlisted and never echoes SQL, URLs or credentials',()=>{
+ assert.equal(classifyCliFailure('CHAT_HISTORY_WORKSPACE_MISMATCH'),'LOCAL_HISTORY_WORKSPACE_FAILURE');
+ assert.equal(classifyCliFailure('CHAT_NATIVE_CLI_SEED_HISTORY_REQUIRED'),'FIXTURE_CONFIGURATION_FAILURE');
+ const cases=[['Remote migration versions not found in local migrations directory.','MISSING_LOCAL_HISTORY'],['Found local migration files to be inserted before the last migration on remote database.','MIGRATION_ORDER_FAILURE'],['password authentication failed (SQLSTATE 28P01)','AUTHENTICATION_FAILURE'],['connect ECONNREFUSED','CONNECTION_FAILURE'],['ERROR: permission denied for schema (SQLSTATE 42501)','ROLE_PERMISSION_FAILURE'],['unknown flag --fixture','CLI_CONFIGURATION_FAILURE'],['opaque upstream text','UNCLASSIFIED_CLI_FAILURE']];
+ for(const [raw,expected]of cases){const output=classifyCliFailure(raw+' postgres://fixture:do-not-echo@host/ SELECT private_sql;');assert.equal(output,expected);assert(/^[A-Z_]+$/.test(output));assert(!output.includes('do-not-echo'));}
+});
+test('isolated CLI workspace requires authentic applied files plus exactly one pending foundation',()=>{
+ const directory=mkdtempSync(join(tmpdir(),'chat-history-check-')),folder=join(directory,'supabase/migrations');mkdirSync(folder,{recursive:true});
+ const ledger=[{version:'20000101000000',name:'ci_fixture_baseline'},{version:'20990101000000',name:'ci_fixture_later'}];
+ const pending=`${manifest.version}_${manifest.name}.sql`,created=[];
+ const put=(name,body)=>{writeFileSync(join(folder,name),body);created.push(name);};
+ try{
+  put(pending,'select 1;');assert.throws(()=>verifyHistoryWorkspace(directory,ledger,{pending:true}),/WORKSPACE_MISMATCH/);
+  for(const row of ledger)put(`${row.version}_${row.name}.sql`,'create table fixture_real_source(id integer);');
+  assert.equal(verifyHistoryWorkspace(directory,ledger,{pending:true}),3);
+  put('unreviewed.sql','select 1;');assert.throws(()=>verifyHistoryWorkspace(directory,ledger,{pending:true}),/WORKSPACE_MISMATCH/);
+  unlinkSync(join(folder,'unreviewed.sql'));created.pop();
+  writeFileSync(join(folder,`${ledger[0].version}_${ledger[0].name}.sql`),'');assert.throws(()=>verifyHistoryWorkspace(directory,ledger,{pending:true}),/INVALID_FILE/);
+  assert.throws(()=>verifyHistoryWorkspace(directory,[{version:'20000101000000',name:'../invalid'}]),/INVALID_LEDGER/);
+ }finally{for(const file of created)unlinkSync(join(folder,file));rmdirSync(folder);rmdirSync(join(directory,'supabase'));rmdirSync(directory);}
+});
+test('native negative and hosted positive paths reconcile history without repair or placeholders',()=>{
+ const native=readFileSync(new URL('../../scripts/ci/run-chat-inbox-pg17.sh',import.meta.url),'utf8');
+ const hosted=readFileSync(new URL('../../scripts/release/protected-inbox-release.mjs',import.meta.url),'utf8');
+ assert(native.includes('task_negative_class != EXPECTED_SQL_ROLLBACK'));
+ assert(native.includes('migration fetch'));assert(native.includes('schema_migrations where version='));
+ assert(hosted.includes("['migration','fetch'"));assert(hosted.includes('verifyHistoryWorkspace(isolated,approvedLedger,{pending:true})'));
+ assert(!/migration['", ]+repair/.test(hosted));assert(!/insert into supabase_migrations/.test(hosted));
+});
+test('native fixture generation records genuine seed migrations before planning the pending foundation',()=>{
+ const directory=mkdtempSync(join(tmpdir(),'chat-inbox-native.'));
+ const run=phase=>spawnSync(process.execPath,['--import',new URL('./offline-guard.mjs',import.meta.url).href,fileURLToPath(new URL('../../scripts/ci/prepare-chat-inbox-cli-fixture.mjs',import.meta.url)),directory,phase],{encoding:'utf8'});
+ try{
+  assert.equal(run('seed').status,0);
+  const prepare=readFileSync(join(directory,'prepare.sql'),'utf8');assert(!prepare.includes('insert into supabase_migrations.schema_migrations'));
+  const names=readdirSync(join(directory,'seed/supabase/migrations')).sort();assert.equal(names.length,2);
+  const ledger=names.map(name=>{const body=readFileSync(join(directory,'seed/supabase/migrations',name),'utf8');assert(body.includes('create table app_security.inbox_cli_'));return {version:name.slice(0,14),name:name.slice(15,-4),statementsSha256:hash(JSON.stringify([body]))};});
+  writeFileSync(join(directory,'history.json'),JSON.stringify(ledger));
+  assert.notEqual(run('plan').status,0); // Missing fetched versions must stop planning.
+  for(const name of names)copyFileSync(join(directory,'seed/supabase/migrations',name),join(directory,'supabase/migrations',name));
+  assert.equal(run('plan').status,0);
+  assert.equal(verifyHistoryWorkspace(directory,ledger,{pending:true}),3);
+  assert(!readFileSync(join(directory,'approved.sql'),'utf8').includes('insert into supabase_migrations'));
+ }finally{
+  assert.equal(resolve(directory),directory);assert.equal(resolve(directory,'..'),resolve(tmpdir()));assert(basename(directory).startsWith('chat-inbox-native.'));
+  rmSync(directory,{recursive:true,force:true});
  }
 });
