@@ -1,4 +1,178 @@
-# Chat V2 — local phase 1 candidate
+# Chat V2 — Phase 1B local infrastructure candidate
+
+26 October 2026. **No hosted operations, deployment, schedule activation or flag activation.**
+Contract: [PR #58 comment 6405221297](https://github.com/vivek2310sharma/FairSwap-Backend/pull/58#issuecomment-6405221297).
+Local observed HEAD remains `213b57c84e2b3767e3ab3499846dd280bf3315c3`;
+the read-only PR snapshot reports `0b5644f0269e5cfee17c06f10a05a10a38837b32`.
+No fetch/pull or synchronization was performed. ChatGPT must reconcile the scoped
+Phase 1B delta onto that PR, preserving newer unrelated main/PR work. The user
+explicitly authorized local CI/package/config changes for this phase; no GitHub
+branch, commit, workflow execution or PR mutation was performed.
+
+## Phase 1B files and behavior
+
+- `supabase/functions/process-chat-safety/{index.ts,deno.json}`: POST-only Edge
+  entrypoint, exact Supabase JS 2.116.0/Zod 3.24.2 npm pins and explicit `.ts`
+  imports. It invokes the existing `src/lib/chat-v2/safety-worker.ts` core.
+- `supabase/functions/_shared/chat-safety-worker-handler.ts`: injectable handler.
+  Method and credential-format checks happen before configuration/client creation.
+  The **only** DB call permitted before authentication succeeds is the service-only
+  Vault verification RPC. Strict boolean true with no RPC error is required before
+  claim/complete; false/null/truthy strings/errors/exceptions fail closed. No
+  body-selected URL, token, batch size, Bearer fallback or raw error reflection.
+  Responses are generic/no-store; authenticated success exposes aggregate counts
+  only. Neither handler nor core logs tokens, messages, URLs or raw RPC errors.
+- `supabase/config.toml`: only the new function gets `verify_jwt=false`. Existing
+  function gates are unchanged. Custom-header Vault auth is mandatory even though
+  the platform JWT check is disabled.
+- New CLI-generated forward-only migration
+  `supabase/migrations/20261026073143_chat_safety_worker_infrastructure.sql` in
+  this isolated directory, after the unchanged Phase 1 migration. It adds the
+  verifier, private runtime/recovery state, indexed bounded recovery, service-only
+  metrics, owner-only dispatcher and inactive provisioning function. The original
+  58 migrations, their manifest and Phase 1 migration are unchanged.
+- `release/fairswaptest.inactive.sql` and `release/fairswapprod.inactive.sql`:
+  separately reviewed, owner-run setup artifacts, **not auto-applied migrations**.
+  They validate the exact existing Vault `project_url`, allowed environment and
+  all five flags off; create a separate 32-byte random credential in Vault if
+  missing; preserve an existing valid credential; bind runtime to that environment;
+  create/update one named cron job; and commit it inactive in the same transaction.
+  Repeating setup preserves the credential and resets dispatch/schedule inactive.
+  Wrong-environment, duplicate or malformed Vault setup fails closed. Setup does
+  not return a credential or place one in cron command text.
+- `.github/workflows/backend-ci.yml`: separate required `chat-v2` job with frozen
+  dependency installation, isolated Node tests, strict transport/core typecheck,
+  and standalone PostgreSQL harness. The aggregate success job requires all three
+  jobs. Existing unit-integrity and PG15 jobs, action pins, 58-file integrity
+  gates, five Vitest files/93 cases and no-network setup digest stay intact.
+  `scripts/ci/db-verification.test.mjs` now requires the three-job dependency
+  list and the extra Chat V2 success condition; every former assertion remains.
+- `package.json`, `pnpm-lock.yaml`, `scripts/ci/toolchain.json`: exact Backend
+  dev dependency `@electric-sql/pglite` **0.5.8**, frozen integrity resolution.
+  `scripts/ci/test-chat-v2.mjs` imports it directly; there is no sibling Web or
+  external repository requirement.
+- `tests/chat-v2/{edge-auth.test.mjs,infrastructure-contract.test.mjs,offline-guard.mjs}`,
+  plus the existing safety tests and expanded DB harness: transport authorization,
+  CI/pin guards, queue/lease/backlog/RLS and inactive release assertions. The new
+  offline guard blocks fetch and socket connections, failing the process on an
+  attempted connection; the original five-file Vitest network guard is unchanged.
+
+## Auth, metrics and bounded recovery
+
+Environment-variable names: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (existing
+Supabase-hosted defaults). Vault names: `chat_safety_worker_secret`, `project_url`.
+No worker dispatch secret is stored in Edge env or shipped to browsers/native
+clients. Dispatch uses `x-chat-safety-worker-secret`; it sends **no service-role
+key**, API key or Bearer token. The current server client uses the existing legacy
+service-role hosted default; `sb_secret_` and `sb_publishable_` values are rejected
+in that slot, never treated as JWTs. A future new-key migration needs an explicitly
+reviewed API-key-header client contract.
+
+`verify_chat_safety_worker_secret(candidate)` and `chat_safety_metrics()` are
+service-role-only public invoker wrappers over private definer implementations
+with fixed empty search paths. Neither accepts a client-selected recipient or
+returns credential/message contents. Verification rejects missing/duplicate/bad
+Vault credentials and old credentials after rotation. Runtime, recovery state,
+dispatcher and setup have no client/service direct grants; only DB owner can
+configure/schedule them. Jobs remain accessible solely through service RPCs.
+The new tables have forced RLS and revoked client grants.
+
+Metrics return pending/due/leased/exhausted/completed counts, cumulative scanned,
+recovered (missed-insert repair) and enqueue-failure counts, sweep count and the
+last scan's size/time. A fifth lease is still leased until its deadline; only then
+is it exhausted. No automatic retry or token acceptance occurs after exhaustion.
+Exact queue metrics may scan the job table: review monitoring frequency/cost at
+release. Missing jobs not yet reached by the sweep are not presented as an exact
+global missing count. Recovered totals and failed-trigger counters are the
+content-free missed-insert monitoring signals.
+
+Each enabled claim locks one private recovery-state row and scans **at most 100
+source messages** in `(created_at,id)` order between a durable cursor and a fixed
+per-sweep high-water tuple. The indexed `LIMIT 100` materialized CTE runs **before**
+conversation joins and the missing-job anti-join. The final source tuple advances
+the cursor even for ineligible/already-queued rows. At the high-water tuple/end,
+the cursor resets; late commits/backdated messages behind it are revisited on a
+later sweep. A fixed horizon prevents continuing arrivals from extending the
+current sweep forever. The recovery-state row lock serializes only this bounded
+DB work; queue selection retains `FOR UPDATE SKIP LOCKED`, 20 claims maximum,
+five attempts, exponential delays and idempotent completion.
+
+Automated PGlite `EXPLAIN (FORMAT JSON)` requires `Limit` plus an index condition
+using `chat_safety_recovery_messages` for the row-range query. It uses
+`enable_seqscan=off` to assert availability of that plan, not to claim a production
+optimizer choice. Verify actual hosted plans/statistics after authorization;
+index creation itself may require a controlled lock window on a large table.
+Legacy delivery never fails because a warning enqueue failed; a safe counter
+records that event and the bounded sweep repairs missing jobs.
+
+`pg_net` temporarily stores the dispatch credential in its request queue; the
+migration revokes client/service access to `net.http_request_queue`. The dispatcher
+is owner-only, builds its URL from a two-value environment allowlist, and reads
+the token only from Vault. Review actual hosted net/schema grants before release;
+do not log request headers, DB RPC parameters, Vault data or net queue contents.
+
+## Phase 1B automated checks and release constraints
+
+Run from Backend, with its own frozen dependencies installed:
+
+```powershell
+corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+node --test tests/chat-v2/*.test.mjs
+node scripts/ci/test-chat-v2.mjs
+corepack pnpm exec tsc --noEmit --strict --skipLibCheck --target ES2022 --module NodeNext --moduleResolution NodeNext --allowImportingTsExtensions src/lib/chat-v2/safety-worker.ts supabase/functions/process-chat-safety/index.ts
+corepack pnpm typecheck
+corepack pnpm test:unit
+```
+
+The handoff contains actual command results. PGlite runs real Phase 1 and 1B SQL
+with explicit account/listing/Vault/cron/net fixtures; those fixtures do not prove
+Vault encryption, pgcrypto randomness, real cron activation, pg_net delivery or
+Deno-hosted execution. Strict TypeScript covers the entrypoint and imports; the
+actual Deno runtime is NOT RUN here. PG15 native-Linux rehearsal is NOT RUN on
+Windows. Existing CRLF checkout limitations remain distinct from canonical Git
+blob verification; no gate or historical byte is changed to mask a failure.
+
+The PR contract reports Test 87 / Prod 71 ledger entries and required extensions
+on 26 October; those are PR-reported facts, not freshly queried hosted evidence.
+Backend hosted release authority/standing staging delivery remains unresolved.
+No source patch or green local check authorizes hosted execution.
+
+ChatGPT-managed release order after review/automated CI:
+
+1. Reconcile the Phase 1B delta onto PR #58 and rerun all old/new CI gates. Verify
+   exact Test/Prod ledgers, protected deployment ownership, backup/forward-fix
+   readiness, extension capabilities and relevant net/Vault grants. Prepare
+   isolated environment-specific migrations; never push the historical chain.
+2. Apply the two isolated forward migrations to **FairSwapTest first**, deploy
+   the worker inactive, then run the Test inactive setup artifact under explicit
+   release authority. Validate its existing Vault `project_url` first; if absent,
+   resolve that owner provisioning prerequisite without copying production data.
+   No secrets are printed or checked into SQL. All five flags stay off.
+3. After automated Test evidence, repeat reviewed forward-only release and the
+   distinct inactive setup artifact for **FairSwapProd**. The migration/setup
+   creates no active schedule. Cron names are `chat-safety-fairswaptest` and
+   `chat-safety-fairswapprod`; interval is one minute only after future activation.
+4. Enabling the cron job, private runtime `dispatch_enabled`, and warning flag
+   requires separate coordinated release authority and compatible recipients/
+   policy prerequisites. Rich media, meetup pin and seller sale flow stay off.
+
+Rollback: disable the warning flag, set runtime dispatch off and deactivate the
+environment's named cron job; revert the Edge/consumer release while retaining
+additive objects, queue state and evidence. Vault credential rotation revokes old
+dispatch tokens. No destructive down-migration, secret deletion or evidence loss.
+After production deployment the owner checks availability and recipient-only
+warnings; those are post-deployment checks, never a manual predeployment gate.
+
+Current release blockers: protected hosted authority/ledger reconciliation,
+actual extension/Deno/pg_net execution evidence, environment Vault prerequisite
+review, and compatible consumer/policy readiness before warning activation.
+CI workflow execution awaits ChatGPT integration. No local code blocker is
+intentionally waived; actual failed or unavailable checks are listed in the ZIP.
+
+References: [scheduled functions](https://supabase.com/docs/guides/functions/schedule-functions),
+[authorization headers](https://supabase.com/docs/guides/functions/auth-headers).
+
+## Historical Phase 1 snapshot (superseded where Phase 1B above differs)
 
 25 October 2026. **Not applied, deployed, activated, or release-approved.**
 
@@ -85,7 +259,7 @@ Run from Backend with Node 24.15.0 and the already installed dependencies:
 
 ```powershell
 node --test tests/chat-v2/safety.test.mjs tests/v2-single-project/india-fraud.test.mjs
-node scripts/ci/test-chat-v2.mjs '../FairSwap-Web'
+node scripts/ci/test-chat-v2.mjs
 corepack pnpm test:unit
 corepack pnpm typecheck
 corepack pnpm exec tsc --noEmit --strict --skipLibCheck --target ES2022 --module NodeNext --moduleResolution NodeNext --allowImportingTsExtensions src/lib/chat-v2/safety-worker.ts src/lib/moderation/v2/india-fraud.ts

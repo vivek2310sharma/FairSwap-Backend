@@ -32,6 +32,7 @@
     "verification": "2026-10-16 P1.1: raw SHA-256 recomputed from the unchanged setup; raw Git blob matches HEAD:tests/setup/no-network.ts"
   },
   "packages": {
+    "@electric-sql/pglite": "0.5.8",
     "@supabase/supabase-js": "2.116.0",
     "zod": "3.24.2",
     "@types/node": "20.19.43",

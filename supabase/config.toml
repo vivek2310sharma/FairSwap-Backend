@@ -127,3 +127,7 @@ verify_jwt = true
 [functions.moderation-v2-image-shadow-probe]
 verify_jwt = true
 
+# Custom Vault credential is mandatory; verification RPC runs before any queue access.
+[functions.process-chat-safety]
+verify_jwt = false
+

@@ -174,8 +174,9 @@ test("evidence rejects unknown artifacts instead of copying private raw files", 
 test("workflow and executor preserve the local-only fail-closed boundaries", () => {
   const workflow = readFileSync(path.join(root, ".github/workflows/backend-ci.yml"), "utf8");
   assert.match(workflow, /database-pg15:\r?\n\s+needs: unit-integrity/);
-  assert.match(workflow, /backend-ci-success:\r?\n\s+needs: \[unit-integrity, database-pg15\]\r?\n\s+if: \$\{\{ always\(\) \}\}/);
+  assert.match(workflow, /backend-ci-success:\r?\n\s+needs: \[unit-integrity, database-pg15, chat-v2\]\r?\n\s+if: \$\{\{ always\(\) \}\}/);
   assert.match(workflow, /UNIT_RESULT.*== success &&.*DATABASE_RESULT.*== success/);
+  assert.match(workflow, /DATABASE_RESULT.*== success &&.*CHAT_V2_RESULT.*== success/);
   assert.doesNotMatch(workflow, /continue-on-error|pull_request_target|secrets\./);
   assert.match(workflow, /branches: \[main\]/);
   assert.doesNotMatch(workflow, /branches: \[[^\]]*chore\/backend-extraction-baseline/);

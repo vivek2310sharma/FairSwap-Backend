@@ -1,3 +1,4 @@
+import './offline-guard.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {classifyIndiaChatSafety, findIndiaFraudSignals} from '../../src/lib/moderation/v2/india-fraud.ts';

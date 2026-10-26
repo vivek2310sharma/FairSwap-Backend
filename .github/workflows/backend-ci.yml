@@ -171,17 +171,58 @@ jobs:
           retention-days: 14
           include-hidden-files: false
 
+  chat-v2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up pinned Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+      - name: Install frozen self-contained dependencies
+        timeout-minutes: 4
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+      - name: Require Chat V2 pins, security contracts and isolated tests
+        timeout-minutes: 4
+        run: |
+          test -f tests/chat-v2/safety.test.mjs
+          test -f tests/chat-v2/edge-auth.test.mjs
+          test -f tests/chat-v2/infrastructure-contract.test.mjs
+          test -f tests/chat-v2/offline-guard.mjs
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            node --test tests/chat-v2/*.test.mjs
+      - name: Strictly typecheck worker and Edge transport
+        timeout-minutes: 2
+        run: |
+          corepack pnpm exec tsc --noEmit --strict --skipLibCheck --target ES2022 \
+            --module NodeNext --moduleResolution NodeNext --allowImportingTsExtensions \
+            src/lib/chat-v2/safety-worker.ts supabase/functions/process-chat-safety/index.ts
+      - name: Execute Chat V2 disposable PostgreSQL and RLS checks
+        timeout-minutes: 4
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            node scripts/ci/test-chat-v2.mjs
+
   backend-ci-success:
-    needs: [unit-integrity, database-pg15]
+    needs: [unit-integrity, database-pg15, chat-v2]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     permissions: {}
     timeout-minutes: 2
     steps:
-      - name: Require both verification jobs to succeed
+      - name: Require every verification job to succeed
         timeout-minutes: 1
         env:
           UNIT_RESULT: ${{ needs.unit-integrity.result }}
           DATABASE_RESULT: ${{ needs.database-pg15.result }}
+          CHAT_V2_RESULT: ${{ needs.chat-v2.result }}
         shell: bash --noprofile --norc -euo pipefail {0}
-        run: '[[ "$UNIT_RESULT" == success && "$DATABASE_RESULT" == success ]]'
+        run: '[[ "$UNIT_RESULT" == success && "$DATABASE_RESULT" == success && "$CHAT_V2_RESULT" == success ]]'
