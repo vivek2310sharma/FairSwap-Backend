@@ -171,11 +171,73 @@ test("evidence rejects unknown artifacts instead of copying private raw files", 
     assert.throws(() => verifyEvidence(out));
   });
 });
+function assertWorkflowVerificationGate(workflow) {
+  const gate = workflow.match(/^  backend-ci-success:\r?\n([\s\S]*?)(?=^  [\w-]+:\r?$|(?![\s\S]))/m)?.[1];
+  assert.ok(gate, "backend-ci-success must exist");
+  const jobs = ["unit-integrity", "database-pg15", "ratings-native-pg17"];
+  const variables = ["UNIT_RESULT", "DATABASE_RESULT", "PG17_RESULT"];
+  // Preserve the independent local Chat V2 gate whenever that job is installed.
+  if (/^  chat-v2:\r?$/m.test(workflow)) {
+    jobs.push("chat-v2");
+    variables.push("CHAT_V2_RESULT");
+  }
+  const needs = gate.match(/^    needs: \[([^\]\r\n]+)\]\r?$/m)?.[1].split(/,\s*/);
+  assert.deepEqual(needs?.slice().sort(), jobs.slice().sort(), "all verification jobs must be required dependencies");
+  assert.match(gate, /^    needs: .+\r?\n    if: \$\{\{ always\(\) \}\}\r?$/m);
+  for (const [index, job] of jobs.entries()) {
+    assert.match(workflow, new RegExp(`^  ${job}:\\r?$`, "m"), `${job} must exist`);
+    assert.match(gate, new RegExp(`^          ${variables[index]}: \\$\\{\\{ needs\\.${job}\\.result \\}\\}\\r?$`, "m"), `${job} result must be bound`);
+  }
+  assert.match(workflow, /^  ratings-native-pg17:\r?\n    needs: unit-integrity\r?$/m);
+  const condition = variables.map(variable => `"$${variable}" == success`).join(" && ");
+  assert.deepEqual(gate.match(/^        run: .+$/gm)?.map(line => line.trimEnd()),
+    [`        run: '[[ ${condition} ]]'`], "every verification result must equal success without a bypass");
+}
+
+function workflowGateFixture(chat = false) {
+  const jobs = ["unit-integrity", "database-pg15", "ratings-native-pg17", ...(chat ? ["chat-v2"] : [])];
+  const variables = ["UNIT_RESULT", "DATABASE_RESULT", "PG17_RESULT", ...(chat ? ["CHAT_V2_RESULT"] : [])];
+  return jobs.map(job => `  ${job}:\n    needs: unit-integrity\n`).join("") +
+    `  backend-ci-success:\n    needs: [${jobs.join(", ")}]\n    if: \$\{\{ always() \}\}\n    steps:\n      - name: Require every verification job\n        env:\n` +
+    jobs.map((job, index) => `          ${variables[index]}: \$\{\{ needs.${job}.result \}\}\n`).join("") +
+    `        run: '[[ ${variables.map(variable => `"$${variable}" == success`).join(" && ")} ]]'\n`;
+}
+
+test("workflow gate accepts all three mandatory jobs and preserves an installed Chat V2 gate", () => {
+  assertWorkflowVerificationGate(workflowGateFixture());
+  assertWorkflowVerificationGate(workflowGateFixture(true));
+});
+const gateChanges = {
+  "missing PG17 dependency": workflow => workflow.replace(", ratings-native-pg17]", "]"),
+  "missing PG17 job": workflow => workflow.replace("  ratings-native-pg17:\n    needs: unit-integrity\n", ""),
+  "missing PG17 success condition": workflow => workflow.replace(' && "$PG17_RESULT" == success', ""),
+  "incorrect PG17 result binding": workflow => workflow.replace("PG17_RESULT: ${{ needs.ratings-native-pg17.result }}", "PG17_RESULT: ${{ needs.unit-integrity.result }}"),
+  "missing unit success condition": workflow => workflow.replace('"$UNIT_RESULT" == success && ', ""),
+  "missing database success condition": workflow => workflow.replace('"$DATABASE_RESULT" == success && ', ""),
+  "OR bypass": workflow => workflow.replace('&& "$PG17_RESULT"', '|| "$PG17_RESULT"'),
+  "unconditional success bypass": workflow => workflow.replace(" ]]'", " ]] || true'"),
+  "missing always condition": workflow => workflow.replace("    if: ${{ always() }}\n", ""),
+};
+for (const [name, change] of Object.entries(gateChanges)) test(`workflow gate rejects ${name}`, () => {
+  const workflow = workflowGateFixture();
+  const altered = change(workflow);
+  assert.notEqual(altered, workflow, "negative fixture must change the workflow");
+  assert.throws(() => assertWorkflowVerificationGate(altered));
+});
+for (const variable of ["UNIT_RESULT", "DATABASE_RESULT", "PG17_RESULT"]) {
+  for (const result of ["failure", "cancelled", "skipped"]) test(`workflow gate rejects ${variable} accepting ${result}`, () => {
+    assert.throws(() => assertWorkflowVerificationGate(workflowGateFixture().replace(`"$${variable}" == success`, `"$${variable}" == ${result}`)));
+  });
+}
+test("workflow gate rejects removing an installed Chat V2 gate or success condition", () => {
+  assert.throws(() => assertWorkflowVerificationGate(workflowGateFixture(true).replace(", chat-v2]", "]")));
+  assert.throws(() => assertWorkflowVerificationGate(workflowGateFixture(true).replace(' && "$CHAT_V2_RESULT" == success', "")));
+});
+
 test("workflow and executor preserve the local-only fail-closed boundaries", () => {
   const workflow = readFileSync(path.join(root, ".github/workflows/backend-ci.yml"), "utf8");
   assert.match(workflow, /database-pg15:\r?\n\s+needs: unit-integrity/);
-  assert.match(workflow, /backend-ci-success:\r?\n\s+needs: \[unit-integrity, database-pg15\]\r?\n\s+if: \$\{\{ always\(\) \}\}/);
-  assert.match(workflow, /UNIT_RESULT.*== success &&.*DATABASE_RESULT.*== success/);
+  assertWorkflowVerificationGate(workflow);
   assert.doesNotMatch(workflow, /continue-on-error|pull_request_target|secrets\./);
   assert.match(workflow, /branches: \[main\]/);
   assert.doesNotMatch(workflow, /branches: \[[^\]]*chore\/backend-extraction-baseline/);
