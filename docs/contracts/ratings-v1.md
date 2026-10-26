@@ -3,8 +3,11 @@
 Candidate, 26 October 2026. Backend only; no hosted changes or consumer activation.
 Observed local base HEAD: `213b57c84e2b3767e3ab3499846dd280bf3315c3` on `main`.
 No fetch/pull or synchronization was authorized. Existing local work is inventoried in
-`releases/candidates/ratings-v1/starting-checkout.json`. This candidate adds five
-CLI-generated forward migrations, independent of the unmerged Chat V2 PR #58.
+`releases/candidates/ratings-v1/starting-checkout.json`. The initial candidate adds five
+CLI-generated forward migrations. Consumer-contract completion adds
+`20261026094908_ratings_consumer_contract.sql` after those five, independently of
+Chat V2 PR #58. No initial migration bytes are changed. Separate release delta:
+`releases/candidates/ratings-v1-contract-fix/`.
 
 ## Constants and eligibility
 
@@ -160,14 +163,39 @@ immutable ordering tuple avoids duplicate page rows. No page read changes state.
 | `ratings_summary(user_id uuid) -> jsonb` | `anon`/`authenticated`; `public_reads` required; NULL for absent/nonactive. `{user_id:uuid,published_review_count:int,counted_review_count:int,completed_trades:int,score:number|null,communication_average:number|null,payment_item_average:number|null,meetup_average:number|null,display_state:'rated'|'no_rating_yet'}`. |
 | `ratings_pending_count() -> integer` | Current active user's total outstanding actions, unpaginated count, including buyer selection. |
 | `ratings_trade(trade_id uuid) -> jsonb` | Active participant only. `{id:uuid,listing_id:uuid|null,conversation_id:uuid|null,state:TradeState,deadline:timestamp,buyer_confirmed:boolean,can_dispute:boolean,my_review_id:uuid|null,my_rating_status:'submitted'|'not_rated'|'pending'}`. |
+| `ratings_trade_for_conversation(conversation_id uuid) -> jsonb|null` | Active actual conversation participant AND trade participant only. Same Trade DTO as `ratings_trade`, including pending, confirmed, submitted/rated, disputed and expired trades. Existing conversation with no matching selected trade returns JSON null; missing/foreign conversation always `42501 RATINGS_ACCESS_DENIED`. Seller can retrieve an unselected `pending_selection` trade through their listing conversation; an unselected enquirer receives null. A submitted review is represented by `my_rating_status='submitted'`, not a new trade state. |
+| `ratings_given_history(before_at timestamptz=NULL,before_id uuid=NULL) -> jsonb` | Active current user only, enabled required. Typed Given-history entries below; existing `ratings_given` remains review-only. |
 
 Review DTO (all keys present): `{id:uuid,author_id:uuid|null,recipient_id:uuid|null,
 reviewer_role:'buyer'|'seller',communication:int,payment_item:int,meetup:int,score:number,
+author_display_name:text|null,recipient_display_name:text|null,context:RatingContext,
 body:text|null,tags:string[],submitted_at:timestamp,published_at:timestamp|null,
 reply:{body:text,created_at:timestamp}|null}`. Author ID is NULL for nonactive author.
+Recipient ID and each display name are also NULL when that identity is not active.
+`RatingContext` is `{trade_id:uuid,listing_id:uuid|null,listing_title:text,sold_at:timestamp}`.
+Only active/reserved/sold listings with an active seller supply ID/title; otherwise
+`listing_id=null,listing_title='Listing removed'`. No historical title snapshot,
+description, location, price, contact information or media is disclosed. `reviewer_role`
+identifies the author's buyer/seller role; the recipient has the opposite role. Render
+names/title/body as escaped plain text. New DTO keys require consumers using strict
+Zod validation to adopt the updated schema before activation.
 Private author DTO may show their own hidden submission; redacted text is never
 returned. Public profile route stays `/seller/{userId}`. No handles or contact fields.
 Client boundary schemas/reference calculation are under `src/lib/ratings/`.
+
+Given-history entry is a discriminated union (no mixed nullable review fields):
+
+- `{kind:'review',id:review_uuid,at:submitted_at,review:ReviewDTO}`
+- `{kind:'not_rated',id:trade_uuid,at:deadline,context:RatingContext,my_role:'buyer'|'seller'}`
+
+Not-rated entries require a selected buyer/seller, nonvoid trade, expired deadline,
+and no own submission. They include disputed and unconfirmed expired transactions;
+unattributed and never-selected trades are excluded. They appear immediately at the
+deadline, even before scheduler processing. They reveal no counterpart submission ID,
+existence, text, faces, tags or publication time. No synthetic review or reputation is
+created. Pagination is 20 entries plus one lookahead, descending `(at,id)` where review
+`at=submitted_at` and not-rated `at=deadline`; use the envelope cursor unchanged.
+No 90-day filter, new phone/OTP requirement or historical backfill is introduced.
 
 ## Chat and notifications
 
@@ -200,6 +228,19 @@ reminders; delivered notifications remain ordinary account history.
 moderator/administrator, JWT AAL2, separate `staff_enabled` and reason 3..500 codepoints.
 The ticket RPC resolves only an existing case linked to the supplied support ticket.
 Staff cannot operate on their own trades/reports. No existing Admin grants are restored.
+
+`admin_ratings_cases(kind text,status text='open',before_at timestamptz=NULL,before_id uuid=NULL)
+-> jsonb` is the metadata-only queue. Kind is required `review_report` or `dispute`;
+status is `open`, `resolved` or `all`, based on `resolved_at`. Active moderator or
+administrator, JWT AAL2 and `staff_enabled` are all required. Conflicted rows (own
+trade or report) are omitted, including NULL-safe checks for erased identities.
+Same fixed 20-row envelope/cursor, descending `(created_at,id)`. Exact queue row:
+`{id,trade_id,review_id:null|uuid,support_ticket_id:null|uuid,kind,created_at,resolved_at:null|timestamp}`.
+No reason, reporter/participant identities, review content, listing details, sealed
+evidence or eligibility flags appear. Queue navigation creates no evidence-read audit;
+detailed reads still require the case-scoped, reason-required audited `evidence` action.
+All new RPCs grant only authenticated EXECUTE; no table grants or existing staff/export
+permissions are broadened. Public wrappers remain invokers with private definers.
 
 Actions: `evidence`, `hide`, `restore`, `resolve`, `void`, `exclude`, `clear_exclusion`.
 Hide/restore requires a review-report case. Resolve requires disputed nonvoid trade;

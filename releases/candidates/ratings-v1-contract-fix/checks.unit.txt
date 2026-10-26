@@ -1,0 +1,14 @@
+
+ RUN  v3.2.7 C:/Users/VivekKumar/OneDrive - Nobly A S/Documents/FairSwap-ClaudeCodex/FairSwap-Backend
+
+ ✓ src/__tests__/moderation-target-guard.test.ts (7 tests) 11ms
+ ✓ src/__tests__/moderation-worker-vault-auth.test.ts (3 tests) 22ms
+ ✓ tests/unit/email-outbox-worker.test.ts (34 tests) 85ms
+ ✓ src/__tests__/moderation-text-checker.test.ts (39 tests) 45ms
+ ✓ src/__tests__/moderation-worker.test.ts (10 tests) 67ms
+
+ Test Files  5 passed (5)
+      Tests  93 passed (93)
+   Start at  10:58:32
+   Duration  2.05s (transform 635ms, setup 446ms, collect 1.36s, tests 231ms, environment 2ms, prepare 3.62s)
+

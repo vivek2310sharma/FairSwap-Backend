@@ -32,11 +32,23 @@ export type RatingSummary = z.infer<typeof ratingSummarySchema>;
 export type SubmitReview = z.infer<typeof submitReviewSchema>;
 const uuid = z.string().uuid();
 const timestamp = z.string().datetime({ offset: true });
+export const ratingContextSchema = z.object({
+  trade_id: uuid, listing_id: uuid.nullable(), listing_title: z.string(), sold_at: timestamp,
+}).strict();
 export const reviewSchema = reviewFacesSchema.extend({
   id: uuid, author_id: uuid.nullable(), recipient_id: uuid.nullable(), reviewer_role: z.enum(['buyer', 'seller']),
+  author_display_name: z.string().nullable(), recipient_display_name: z.string().nullable(), context: ratingContextSchema,
   score: z.number().min(0).max(10), body: z.string().nullable(), tags: z.array(z.string()).max(5),
   submitted_at: timestamp, published_at: timestamp.nullable(),
   reply: z.object({ body: z.string(), created_at: timestamp }).strict().nullable(),
+}).strict();
+export const givenHistoryEntrySchema = z.discriminatedUnion('kind', [
+  z.object({kind: z.literal('review'), id: uuid, at: timestamp, review: reviewSchema}).strict(),
+  z.object({kind: z.literal('not_rated'), id: uuid, at: timestamp, context: ratingContextSchema, my_role: z.enum(['buyer', 'seller'])}).strict(),
+]);
+export const ratingCaseQueueSchema = z.object({
+  id: uuid, trade_id: uuid, review_id: uuid.nullable(), support_ticket_id: uuid.nullable(),
+  kind: z.enum(['review_report', 'dispute']), created_at: timestamp, resolved_at: timestamp.nullable(),
 }).strict();
 export const pendingActionSchema = z.object({
   id: uuid, listing_id: uuid.nullable(), sold_at: timestamp, deadline: timestamp, state: tradeStateSchema,
@@ -48,6 +60,7 @@ export const tradeSchema = z.object({
   buyer_confirmed: z.boolean(), can_dispute: z.boolean(), my_review_id: uuid.nullable(),
   my_rating_status: z.enum(['submitted', 'not_rated', 'pending']),
 }).strict();
+export const conversationTradeSchema = tradeSchema.nullable();
 export const sellRequestSchema = z.discriminatedUnion('choice', [
   z.object({ listing_id: uuid, choice: z.literal('select'), conversation_id: uuid }).strict(),
   z.object({ listing_id: uuid, choice: z.literal('pending'), conversation_id: z.null().default(null) }).strict(),

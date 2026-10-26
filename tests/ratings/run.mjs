@@ -5,6 +5,7 @@ const {NativeDatabase}=await import('./native-adapter.mjs');
 import {readFileSync,readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
+import {consumerContractChecks} from './consumer-contract.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const read=p=>readFileSync(root+p,'utf8');
 const db=nativePort?new NativeDatabase(nativePort):new PGlite();
@@ -54,7 +55,18 @@ try {
   await db.exec('delete from vault.decrypted_secrets');await db.query(`insert into vault.decrypted_secrets values('project_url',$1)`,['https://'+ref+'.supabase.co']);
   await db.exec(read('releases/candidates/ratings-v1/'+env+'.preflight.sql'));
  }
- for(const f of readdirSync(root+'supabase/forward-migrations/ratings').filter(f=>/^\d{14}_.+\.sql$/.test(f)).sort()) await db.exec(read('supabase/forward-migrations/ratings/'+f));
+ for(const f of readdirSync(root+'supabase/forward-migrations/ratings').filter(f=>/^\d{14}_.+\.sql$/.test(f)).sort()) {
+  if(nativePort&&f.endsWith('_ratings_consumer_contract.sql')) {
+   for(const [env,ref] of [['staging','wpppxlnbzqynvhpeuavd'],['production','kriuhwppxgxsyyrbjsau']]){
+    await db.exec('delete from vault.decrypted_secrets');await db.query("insert into vault.decrypted_secrets values('project_url','https://wrong.invalid')");
+    await assert.rejects(()=>db.exec(read('releases/candidates/ratings-v1-contract-fix/'+env+'.preflight.sql')),/RATINGS_ENVIRONMENT_MISMATCH/);
+    await db.exec('delete from vault.decrypted_secrets');await db.query('insert into vault.decrypted_secrets values(\'project_url\',$1)',['https://'+ref+'.supabase.co']);
+    await db.exec(read('releases/candidates/ratings-v1-contract-fix/'+env+'.preflight.sql'));
+   }
+   console.log('PASS separate contract-fix environment preflights and wrong-project rejection');
+  }
+  await db.exec(read('supabase/forward-migrations/ratings/'+f));
+ }
  const version=await q('select version()');console.log('Engine: '+version);
  if(nativePort)assert.match(version,/PostgreSQL 17\./);
  await test('all activation flags default off and scheduler does nothing',async()=>{
@@ -182,6 +194,7 @@ try {
  });
  await test('anonymous public APIs expose published visible content only',async()=>{await owner();await actor(null);await db.exec('set role anon');assert((await summary(seller)).counted_review_count===3);assert((await q('select public.ratings_public_reviews($1)',[seller])).items.length===3);await rejects('select public.ratings_pending()');});
  await test('privacy wrapper retains original authorization and does not grant base access',async()=>{await client(outsider);await rejects('select app_security.ratings_export_base($1)',[id(999)]);await rejects('select public.admin_fulfill_data_export($1)',[id(999)]);});
+ await consumerContractChecks(db,test);
  await test('account deletion erases text and removes reputation; physical deletion is FK safe',async()=>{await owner();await db.query(`update public.user_accounts set account_status='deletion_pending' where user_id=$1`,[buyer]);assert.equal((await summary(seller)).counted_review_count,0);assert.equal((await summary(seller)).completed_trades,0);assert.equal(await q(`select count(*)::int from public.rating_reviews where body is not null`),0);assert.equal(await q(`select count(*)::int from public.rating_replies where body<>'[redacted]'`),0);await db.query('delete from auth.users where id=$1',[buyer]);});
  await owner();await db.exec(read('supabase/forward-migrations/ratings/tests/security.sql'));
  await test('catalog security assertions pass',async()=>{});

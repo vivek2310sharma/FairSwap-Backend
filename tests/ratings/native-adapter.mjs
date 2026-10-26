@@ -2,8 +2,10 @@
 import {spawnSync,spawn} from 'node:child_process';
 import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-const psql='C:/Program Files/PostgreSQL/17/bin/psql.exe';
+import {join,isAbsolute} from 'node:path';
+const pgBin=process.argv.find(x=>x.startsWith('--pg-bin='))?.slice('--pg-bin='.length)??'C:/Program Files/PostgreSQL/17/bin';
+if(!isAbsolute(pgBin))throw new Error('Absolute native PostgreSQL bin directory required');
+const psql=join(pgBin,process.platform==='win32'?'psql.exe':'psql');
 export class NativeDatabase {
  constructor(port){if(!/^\d{5}$/.test(port)||+port<49152||+port>65535)throw new Error('Disposable port required');this.port=port;this.role='ratings_fixture_admin';this.user='';this.aal='aal1';this.policy='true';}
  literal(x){if(x===null)return 'null';if(typeof x==='number')return String(x);if(Array.isArray(x))return `array[${x.map(y=>this.literal(y)).join(',')}]::text[]`;return `E'${String(x).replaceAll('\\','\\\\').replaceAll("'","''")}'`;}
@@ -12,7 +14,7 @@ export class NativeDatabase {
  process(sql,async=false){
   const dir=mkdtempSync(join(tmpdir(),'ratings-sql-'));const file=join(dir,'fixture.sql');
   // Prefix's set_config result must not enter the JSON result stream.
-  writeFileSync(file,`\\o NUL\n${this.prefix()}\n\\o\n${sql}`);
+  writeFileSync(file,`\\o ${process.platform==='win32'?'NUL':'/dev/null'}\n${this.prefix()}\n\\o\n${sql}`);
   const cleanup=()=>rmSync(dir,{recursive:true,force:true});
   const result=(status,stdout,stderr)=>{if(status!==0){const e=new Error(stderr.trim());e.code='PSQL_ERROR';throw e;}return stdout.trim();};
   const env={SystemRoot:process.env.SystemRoot,PATH:process.env.PATH,PGCONNECT_TIMEOUT:'5',PGCLIENTENCODING:'UTF8'};

@@ -1,0 +1,21 @@
+{
+  "status": "LOCAL_AUTOMATED_CHECKS_COMPLETE_WITH_RECORDED_LIMITS",
+  "checks": [
+    {"name":"native PostgreSQL 17.6","result":"PASS","checks":46,"includes":"Independent-session concurrency, consumer contracts, security catalog, privacy, rollback and both delta environment preflights with wrong-project rejection","log":"checks.postgres17.txt"},
+    {"name":"PGlite 18.3 supplementary suite","command":"node tests/ratings/run.mjs","result":"PASS","checks":43,"log":"checks.pglite.txt"},
+    {"name":"Zod and score boundary tests","command":"node --test tests/ratings/contract.test.mjs","result":"PASS","tests":5,"log":"checks.contract.txt"},
+    {"name":"existing unit suite","command":"node node_modules/vitest/vitest.mjs run","result":"PASS","files":5,"tests":93,"log":"checks.unit.txt"},
+    {"name":"scoped Ratings TypeScript","command":"node node_modules/typescript/bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution Bundler --module ESNext src/lib/ratings/contract.ts src/lib/ratings/score.ts","result":"PASS","log":"checks.typecheck.txt"},
+    {"name":"existing root TypeScript","command":"node node_modules/typescript/bin/tsc --noEmit","result":"PASS","log":"checks.root-typecheck.txt"},
+    {"name":"historical Git blob/EOL integrity","command":"node tests/ratings/verify-baseline.mjs","result":"PASS","migrations":58,"log":"checks.git-baseline.txt"},
+    {"name":"existing raw-byte historical verifier","command":"node scripts/ci/verify-baseline.mjs","result":"FAIL_PREEXISTING_CHECKOUT_EOL","log":"checks.raw-baseline.txt","note":"Historical working files remain byte-identical to this task starting snapshot; the separate verifier proves canonical Git blobs and EOL conversion. Existing CI verifier is unchanged."},
+    {"name":"Bash syntax","command":"bash --noprofile --norc -n tests/ratings/run-native.sh; bash --noprofile --norc -n tests/ratings/build-native-pg17.sh","result":"PASS"},
+    {"name":"Linux native source-build CI job","result":"NOT_RUN","note":"Prepared checksum-pinned PostgreSQL 17.6 source builder, Linux runner and unapplied workflow job proposal; no Linux execution environment used."},
+    {"name":"full hosted Supabase histories, actual pg_cron, transport, consumers, load and deployment","result":"NOT_RUN"}
+  ],
+  "nativeCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/ratings/run-native.ps1 -PgBin '<workspace>/.ratings-native-tools/node_modules/@embedded-postgres/windows-x64/native/bin' -PsqlBin 'C:/Program Files/PostgreSQL/17/bin'",
+  "nativeTooling": {"server":"Existing embedded PostgreSQL 17.6 distribution","client":"Existing psql 17.11","node":"24.15.0","dataDirectoryRemovedAfterStop":true},
+  "resolvedAttempts": ["Sandbox initdb restricted-token failure; authorized disposable execution used elevation","Installed PostgreSQL server distribution lacks share files; used existing complete embedded 17.6 distribution","Corrected Windows descendant handle wait/readiness and cleanup behavior","Used OS-allocated ephemeral loopback port to avoid Windows excluded-port ranges","Corrected two regression fixtures to respect existing foreign keys","Vitest local esbuild subprocess required authorized execution outside sandbox"],
+  "hostedOperations": "NONE",
+  "gitMutations": "NONE"
+}

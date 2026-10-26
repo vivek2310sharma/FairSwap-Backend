@@ -1,0 +1,49 @@
+{
+  "baseHead": "213b57c84e2b3767e3ab3499846dd280bf3315c3",
+  "branch": "main",
+  "synchronized": false,
+  "startingFilesChecked": 316,
+  "unchangedFiles": 310,
+  "concurrentUnrelatedFiles": [
+    {
+      "path": ".github/workflows/backend-ci.yml",
+      "startingSha256": "e7f07313a84aeb22a480eb1b7afd8d27a476aa99d7bb0c8f9577d3bbb8e3fe95",
+      "currentSha256": "38063e353d7095ee5117935804aeb48246d9d0cb4c3804ac8e0ea51c6a0f6da1",
+      "disposition": "Not edited by Ratings; untouched and excluded"
+    },
+    {
+      "path": "scripts/ci/emit-chat-net-privileges-sql.mjs",
+      "startingSha256": "65215564c4d72b754bac9287fef252e251bf952d4ce6c0b4870fd9f888eb1174",
+      "currentSha256": "31fe767de16ec68ef436e5d4c8a5f1ca899c1a668df4c3f86b07b63108cb979a",
+      "disposition": "Not edited by Ratings; untouched and excluded"
+    },
+    {
+      "path": "scripts/ci/run-chat-net-privileges-pg15.sh",
+      "startingSha256": "c203d1116374d41114f7f32472184ffc97304f51c279b9b34d74d82ec5b6b300",
+      "currentSha256": "069fc8aec5fe74f9e86ebe0fb21d688dfec6c3a4424d98937236c20b09d17d48",
+      "disposition": "Not edited by Ratings; untouched and excluded"
+    },
+    {
+      "path": "scripts/ci/test-chat-v2.mjs",
+      "startingSha256": "35cda66abba1fa325f6ceb5208cb60324e52a375bb0993ba1621940857c8e00e",
+      "currentSha256": "55ed9af9cc2184d8d26391dfd4aec0c05770a4cdcbba33c49e643ea4b1b75419",
+      "disposition": "Not edited by Ratings; untouched and excluded"
+    },
+    {
+      "path": "supabase/forward-migrations/chat-v2/README.md",
+      "startingSha256": "70cc29dc15ac2a4030990013d334891004d0eac38db9731057185661071313aa",
+      "currentSha256": "133dbb30704f789411a6df2cdefc4454d822f37a227de996c87cb6d68d6dbcad",
+      "disposition": "Not edited by Ratings; untouched and excluded"
+    },
+    {
+      "path": "tests/chat-v2/edge-auth.test.mjs",
+      "startingSha256": "75d982682f346038cebc5913fe390658fd8af9c1b789970aefefb4f70e1b429b",
+      "currentSha256": "9a37c6a7596b309f4dc9dcd8cb51aa959c4063047b2d362274c01007a2356040",
+      "disposition": "Not edited by Ratings; untouched and excluded"
+    }
+  ],
+  "initialFiveMigrationsUnchanged": true,
+  "allOriginalRatingsReleaseArtifactsUnchanged": true,
+  "allExistingPackageAndConfigFilesUnchanged": true,
+  "notes": "All starting files outside the explicit delta were compared byte-for-byte. Six unrelated CI/Chat V2 files changed concurrently; no Ratings overlap, restoration or overwrite. The six changes previously recorded by the original Ratings handoff also remain excluded and untouched. No other repository was edited."
+}
