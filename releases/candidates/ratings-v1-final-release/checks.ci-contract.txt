@@ -1,0 +1,14 @@
+✔ hosted PG17 runs on every existing CI trigger and is mandatory in aggregate (4.6251ms)
+✔ reviewed PR CI integration retains every original job, step and aggregate result check (1.4681ms)
+✔ missing job, omitted dependency or ignored readiness failure cannot satisfy CI contract (17.4527ms)
+✔ waiver is release-specific in both records and waives no other gate (11.5383ms)
+✔ six raw migration bytes equal source fetched at reviewed PR SHA (10.0347ms)
+✔ HDR-03 NULL exception is Production-only and full ledger/security checks remain (1.6865ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 267.0668

@@ -1,0 +1,230 @@
+name: Backend independent CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-unit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-integrity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        timeout-minutes: 3
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+
+      - name: Verify runtime and package pins
+        timeout-minutes: 2
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const pins = JSON.parse(readFileSync('scripts/ci/toolchain.json', 'utf8'));
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          if (process.versions.node !== pins.node) throw new Error('Node version mismatch');
+          if (pkg.packageManager !== `pnpm@${pins.pnpm}` || pkg.engines.pnpm !== pins.pnpm) throw new Error('pnpm pin mismatch');
+          for (const [name, version] of Object.entries(pins.packages)) {
+            if ((pkg.dependencies?.[name] ?? pkg.devDependencies?.[name]) !== version) throw new Error('Package pin mismatch');
+          }
+          const pnpm = execFileSync('corepack', ['pnpm', '--version'], { encoding: 'utf8' }).trim();
+          if (pnpm !== pins.pnpm) throw new Error('pnpm runtime mismatch');
+          console.log(`Verified Node ${pins.node}, pnpm ${pnpm} and package pins`);
+          NODE
+
+      - name: Install frozen dependencies without lifecycle scripts
+        timeout-minutes: 4
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+
+      - name: Verify approved migration bytes (no database execution)
+        timeout-minutes: 1
+        run: node scripts/ci/verify-baseline.mjs
+
+      - name: Verify pinned Production-hidden category release plan (static only)
+        timeout-minutes: 2
+        run: |
+          node scripts/ci/verify-production-category-release.mjs
+          node --test scripts/ci/verify-production-category-release.test.mjs
+
+      - name: Verify FairSwap branding templates and protected auth placeholders (offline)
+        timeout-minutes: 1
+        run: node scripts/verify-email-branding.mjs
+
+      - name: Typecheck
+        timeout-minutes: 2
+        run: corepack pnpm typecheck
+
+      - name: Install isolated Ratings V1 PGlite dependencies
+        timeout-minutes: 3
+        run: npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
+
+      - name: Ratings V1 offline contract and PGlite regression
+        timeout-minutes: 8
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            node --experimental-strip-types --test tests/ratings/contract.test.mjs
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            node tests/ratings/run.mjs
+          ./node_modules/.bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution Bundler --module ESNext src/lib/ratings/contract.ts src/lib/ratings/score.ts
+
+      - name: Run validator regression checks
+        timeout-minutes: 1
+        run: node --test scripts/ci/verification.test.mjs
+
+      - name: Require all free Moderation V2 shadow and image-integrity tests
+        timeout-minutes: 3
+        run: |
+          test -f tests/v2-single-project/free-moderation.test.mjs
+          test -f tests/v2-single-project/india-fraud.test.mjs
+          test -f tests/v2-single-project/shadow-evaluator.test.mjs
+          test -f tests/v2-single-project/verified-media.test.mjs
+          test -f tests/v2-single-project/text-shadow-probe.test.mjs
+          test -f tests/v2-single-project/image-shadow-probe.test.mjs
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            node --experimental-strip-types --test tests/v2-single-project/*.test.mjs
+
+      - name: Run the five unit files with network-blocking setup
+        id: unit
+        timeout-minutes: 3
+        run: |
+          node scripts/ci/verify-unit-results.mjs --check-isolation
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            corepack pnpm test:unit --reporter=default --reporter=json \
+            --outputFile="$RUNNER_TEMP/backend-unit-results.json"
+
+      - name: Verify exact results and create sanitized summary
+        id: results
+        if: ${{ !cancelled() && steps.unit.outcome != 'skipped' }}
+        timeout-minutes: 1
+        run: |
+          node scripts/ci/verify-unit-results.mjs "$RUNNER_TEMP/backend-unit-results.json" \
+            --summary "$RUNNER_TEMP/backend-ci-artifacts/unit-summary.json"
+
+      - name: Upload sanitized unit summary only
+        if: ${{ !cancelled() && steps.results.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        timeout-minutes: 2
+        with:
+          name: backend-unit-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/backend-ci-artifacts/unit-summary.json
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
+
+  database-pg15:
+    needs: unit-integrity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 2
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned Node for database validators
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        timeout-minutes: 3
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+
+      - name: Check database validators and shell syntax without starting services
+        timeout-minutes: 2
+        run: |
+          bash -n scripts/ci/run-local-db.sh
+          node --test scripts/ci/db-verification.test.mjs
+
+      - name: Reconstruct and verify isolated local PG15 only
+        id: database
+        timeout-minutes: 25
+        run: |
+          timeout --signal=TERM --kill-after=30s 20m \
+            bash scripts/ci/run-local-db.sh "$RUNNER_TEMP/backend-db-evidence"
+
+      - name: Require complete sanitized database evidence and checksums
+        if: ${{ !cancelled() && steps.database.outcome != 'skipped' }}
+        timeout-minutes: 1
+        run: node scripts/ci/verify-db-results.mjs --verify "$RUNNER_TEMP/backend-db-evidence"
+
+      - name: Upload only allowlisted sanitized database evidence
+        if: ${{ always() && steps.database.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        timeout-minutes: 2
+        with:
+          name: backend-database-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/backend-db-evidence/result.json
+            ${{ runner.temp }}/backend-db-evidence/suite-results.json
+            ${{ runner.temp }}/backend-db-evidence/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
+
+  ratings-native-pg17:
+    needs: unit-integrity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+      - name: Frozen dependencies, no lifecycle scripts
+        run: |
+          corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+          npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
+      - name: Build checksum-pinned native PostgreSQL 17.6
+        run: bash tests/ratings/build-native-pg17.sh
+      - name: Ratings DTO and independent-session PostgreSQL regression
+        run: |
+          node --experimental-strip-types --test tests/ratings/contract.test.mjs
+          node node_modules/typescript/bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution Bundler --module ESNext src/lib/ratings/contract.ts src/lib/ratings/score.ts
+          bash tests/ratings/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+
+  backend-ci-success:
+    needs: [unit-integrity, database-pg15, ratings-native-pg17]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    permissions: {}
+    timeout-minutes: 2
+    steps:
+      - name: Require all three verification jobs to succeed
+        timeout-minutes: 1
+        env:
+          UNIT_RESULT: ${{ needs.unit-integrity.result }}
+          DATABASE_RESULT: ${{ needs.database-pg15.result }}
+          PG17_RESULT: ${{ needs.ratings-native-pg17.result }}
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: '[[ "$UNIT_RESULT" == success && "$DATABASE_RESULT" == success && "$PG17_RESULT" == success ]]'

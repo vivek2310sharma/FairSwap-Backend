@@ -1,0 +1,11 @@
+{
+  "status": "PASS",
+  "authorizedExistingFileEdit": ".github/workflows/backend-ci.yml",
+  "originalWorkflowSavedAt": "artifacts/ratings/final-start/backend-ci.yml",
+  "originalWorkflowSha256": "38063e353d7095ee5117935804aeb48246d9d0cb4c3804ac8e0ea51c6a0f6da1",
+  "localAfterWorkflowSha256": "d118efaf0fc5af7ba42400817ae4eee7acb660dc5a86d73ed358a5063f9fa176",
+  "reviewedBeforeWorkflowSha256": "154ce81f160761fd87abf7b1eced7e8a29f0f76dfa196dc7ebd2b24b96fe386f",
+  "reviewedAfterWorkflowSha256": "5fcb2393059233ce46d7a54e1234b0ad529ac07b6b603e03d3eb9e37520fa8f9",
+  "unrelatedDrift": [],
+  "taskEditsToHistoricalOrRatingsMigrations": []
+}

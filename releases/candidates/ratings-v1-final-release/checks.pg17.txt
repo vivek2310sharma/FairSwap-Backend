@@ -1,0 +1,40 @@
+ok 1 - test: full ledger guard rejects incomplete ledger even when latest/count could be spoofed
+ok 2 - test: exact ledger comparison accepts equality and rejects same-count name/hash/version drift
+ok 3 - test: exact environment preflight rejects foreign target
+ok 4 - test: HDR-03 reviewed SQL recreates installed contract fingerprint including ACL/RLS/triggers/publication
+ok 5 - test: HDR-03 historical exception accepts only reviewed NULL row and exact contract
+ok 6 - test: HDR-03 exception denies changed name, version, non-NULL statements and foreign project
+ok 7 - test: HDR-03 exception denies RPC body/grant/overload and trigger drift
+ok 8 - test: HDR-03 exception denies RLS/policy/column/constraint/publication drift
+ok 9 - test: HDR-03 remains NULL; exception does not change ledger or apply permissions
+ok 10 - test: all six apply after onboarding and mobile foundation, flags default OFF
+ok 11 - test: sold, staff helper, Admin wrapper and all mobile functions/ACLs remain exact
+ok 12 - test: inactive schedules retry safely and preserve unrelated active job
+ok 13 - test: owner export retains private_details, appends ratings and audits once
+ok 14 - test: outsider, moderator AAL2 and administrator AAL1 cannot export another account
+ok 15 - test: administrator AAL2 export succeeds without restoring direct private base access
+ok 16 - test: staff helper denies AAL1 and Ratings staff flag OFF, allows only role/AAL2 when separately enabled in fixture
+ok 17 - test: mobile posting category and guard coexist with sold transition and Ratings OFF
+ok 18 - test: environment rollback leaves unrelated cron active and onboarding erasure works with flags OFF
+PASS 18 hosted-readiness assumptions on disposable PG17 (test); real pg_cron/Storage/Auth/87-71 full chains NOT RUN
+Disposable run artifacts: C:\Users\VivekKumar\OneDrive - Nobly A S\Documents\FairSwap-ClaudeCodex\FairSwap-Backend\artifacts\ratings\hosted-925468f3f1fb42258678acb3b511b0a8
+ok 1 - production: full ledger guard rejects incomplete ledger even when latest/count could be spoofed
+ok 2 - production: exact ledger comparison accepts equality and rejects same-count name/hash/version drift
+ok 3 - production: exact environment preflight rejects foreign target
+ok 4 - production: HDR-03 reviewed SQL recreates installed contract fingerprint including ACL/RLS/triggers/publication
+ok 5 - production: HDR-03 historical exception accepts only reviewed NULL row and exact contract
+ok 6 - production: HDR-03 exception denies changed name, version, non-NULL statements and foreign project
+ok 7 - production: HDR-03 exception denies RPC body/grant/overload and trigger drift
+ok 8 - production: HDR-03 exception denies RLS/policy/column/constraint/publication drift
+ok 9 - production: HDR-03 remains NULL; exception does not change ledger or apply permissions
+ok 10 - production: all six apply after onboarding and mobile foundation, flags default OFF
+ok 11 - production: sold, staff helper, Admin wrapper and all mobile functions/ACLs remain exact
+ok 12 - production: inactive schedules retry safely and preserve unrelated active job
+ok 13 - production: owner export retains private_details, appends ratings and audits once
+ok 14 - production: outsider, moderator AAL2 and administrator AAL1 cannot export another account
+ok 15 - production: administrator AAL2 export succeeds without restoring direct private base access
+ok 16 - production: staff helper denies AAL1 and Ratings staff flag OFF, allows only role/AAL2 when separately enabled in fixture
+ok 17 - production: mobile posting category and guard coexist with sold transition and Ratings OFF
+ok 18 - production: environment rollback leaves unrelated cron active and onboarding erasure works with flags OFF
+PASS 18 hosted-readiness assumptions on disposable PG17 (production); real pg_cron/Storage/Auth/87-71 full chains NOT RUN
+Disposable run artifacts: C:\Users\VivekKumar\OneDrive - Nobly A S\Documents\FairSwap-ClaudeCodex\FairSwap-Backend\artifacts\ratings\hosted-00d25b18f81b4428aa9bdc8aea991f40

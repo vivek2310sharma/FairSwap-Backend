@@ -1,0 +1,19 @@
+{
+  "release": "Ratings V1",
+  "environment": "production",
+  "projectRef": "kriuhwppxgxsyyrbjsau",
+  "status": "NOT_EXECUTED",
+  "backupRestore": {
+    "status": "WAIVED_BY_OWNER",
+    "release": "Ratings V1 only",
+    "ownerInstructionDate": "2026-10-27 Europe/Copenhagen",
+    "backupVerification": "WAIVED_BY_OWNER",
+    "isolatedRestoreVerification": "WAIVED_BY_OWNER",
+    "backupExists": "NOT_VERIFIED",
+    "restoreTestPassed": false,
+    "risk": "Owner accepts irreversible data loss, downtime and limited recovery options; no guaranteed point-in-time recovery. No other gate is waived."
+  },
+  "operatorAuthority": "BLOCKED_NOT_PROVEN",
+  "historicalProvenance": "BLOCKED_EXCEPT_RECONCILED_HDR03_AND_SIX_RATINGS_FILES",
+  "reviewedPrHead": "5d3378a9d35c734193bbfcf421864d3b91865947"
+}
