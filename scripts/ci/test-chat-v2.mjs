@@ -6,6 +6,7 @@ import {readFileSync} from 'node:fs';
 import {resolve,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
+import {canonicalDispatchFunctions} from '../../tests/chat-v2/privilege-fixture.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 const db=new PGlite();
 let checks=0;
@@ -20,30 +21,7 @@ const inbox=async(args={})=>scalar(`select public.chat_v2_inbox($1,$2,$3,$4,$5,$
 const messages=async(args={})=>scalar(`select public.chat_v2_messages($1,$2,$3,$4)`,[
   args.conversation??conversation,args.size??50,args.at??null,args.id??null]);
 try {
-  await db.exec(`
-    create role anon; create role authenticated; create role service_role bypassrls;
-    create schema auth; create schema app_security;
-    grant usage on schema public,auth,app_security to anon,authenticated,service_role;
-    create table auth.users(id uuid primary key,status text not null default 'active');
-    create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.user',true),'')::uuid$$;
-    create function app_security.get_account_status(uuid) returns text language sql stable security definer as $$select status from auth.users where id=$1$$;
-    create table public.profiles(id uuid primary key references auth.users,display_name text);
-    create table public.listings(id uuid primary key,seller_id uuid references auth.users,title text,slug text,price_paise integer,status text,cover_photo_id uuid);
-    create function app_security.is_listing_publicly_visible(uuid) returns boolean language sql stable security definer as $$select status='active' from public.listings where id=$1$$;
-    create function app_security.create_notification(uuid,text,text,text,text) returns void language plpgsql as $$begin end$$;
-    -- Extension surfaces below are explicit fixtures, not Vault encryption/pg_net execution.
-    create schema vault; create schema net; create schema cron; create schema extensions;
-    create table vault.secrets_fixture(id uuid default gen_random_uuid(),name text,decrypted_secret text);
-    create view vault.decrypted_secrets as select * from vault.secrets_fixture;
-    create function vault.create_secret(secret text,name text) returns uuid language plpgsql as $$declare v_id uuid;begin insert into vault.secrets_fixture(name,decrypted_secret) values(name,secret) returning id into v_id;return v_id;end$$;
-    create function extensions.gen_random_bytes(integer) returns bytea language sql as $$select decode(repeat(md5(random()::text),2),'hex')$$;
-    create table cron.job(jobid bigserial primary key,jobname text unique,schedule text,command text,active boolean default true);
-    create function cron.schedule(job_name text,job_schedule text,job_command text) returns bigint language plpgsql as $$declare v_id bigint;begin insert into cron.job(jobname,schedule,command) values(job_name,job_schedule,job_command) on conflict(jobname) do update set schedule=excluded.schedule,command=excluded.command returning jobid into v_id;return v_id;end$$;
-    create function cron.alter_job(job_id bigint,active boolean) returns void language sql as $$update cron.job set active=$2 where jobid=$1$$;
-    create table net.http_request_queue(id bigserial,url text,headers jsonb,body jsonb,timeout_milliseconds integer);
-    grant select on net.http_request_queue to public;
-    create function net.http_post(url text,headers jsonb,body jsonb,timeout_milliseconds integer) returns bigint language plpgsql as $$declare v_id bigint;begin insert into net.http_request_queue(url,headers,body,timeout_milliseconds) values($1,$2,$3,$4) returning id into v_id;return v_id;end$$;
-  `);
+  await db.exec(readFileSync(resolve(root,'tests/chat-v2/bootstrap.sql'),'utf8'));
   // Real baseline communication tables, RLS and RPC bodies; only publication removed
   // because this in-memory engine has no Supabase Realtime process.
   await db.exec(readFileSync(resolve(root,'supabase/migrations/20260914000011_create_communication.sql'),'utf8')
@@ -51,6 +29,10 @@ try {
   const migration=readFileSync(resolve(root,'supabase/forward-migrations/chat-v2/supabase/migrations/20261025204922_chat_v2_inbox_and_safety.sql'),'utf8');
   await db.exec(migration);
   await db.exec(readFileSync(resolve(root,'supabase/forward-migrations/chat-v2/supabase/migrations/20261026073143_chat_safety_worker_infrastructure.sql'),'utf8'));
+  await db.exec(readFileSync(resolve(root,'tests/chat-v2/legacy-dispatch-tables.sql'),'utf8'));
+  await db.exec(canonicalDispatchFunctions(root));
+  const privileges=await db.exec(readFileSync(resolve(root,'tests/chat-v2/net-privileges.test.sql'),'utf8'));
+  console.log(privileges.at(-1).rows[0].result);
   for(const u of [seller,buyer,outsider]) await db.query(`insert into auth.users(id) values($1)`,[u]);
   await db.query(`insert into public.profiles values($1,'Seller'),($2,'Buyer'),($3,'Outsider')`,[seller,buyer,outsider]);
   await db.query(`insert into public.listings values($1,$2,'Bicycle','bicycle',150000,'active',null)`,[listing,seller]);
@@ -212,7 +194,7 @@ try {
     const metrics=await scalar('select public.chat_safety_metrics()');
     assert(metrics.pending>0);assert(metrics.leased>0);assert(metrics.exhausted>0);
     assert(metrics.recovery.recovered_total>0);assert(metrics.recovery.last_scan_size<=100);
-    assert.deepEqual(Object.keys(metrics).sort(),['completed','due','exhausted','leased','pending','recovery']);
+    assert.deepEqual(Object.keys(metrics).sort(),['completed','dispatch','due','exhausted','leased','pending','recovery']);
     assert(!JSON.stringify(metrics).includes('content'));assert(!JSON.stringify(metrics).includes('message_id'));
     await db.exec('reset role');
   });
@@ -234,6 +216,8 @@ try {
       await rejects('select public.chat_safety_metrics()');await rejects(`select public.verify_chat_safety_worker_secret($1)`,['a'.repeat(64)]);
       await rejects('select * from app_security.chat_safety_recovery_state');await rejects('select * from app_security.chat_safety_runtime');
       await rejects('select app_security.chat_safety_recover()');await rejects('select app_security.dispatch_chat_safety()');
+      await rejects(`select app_security.provision_chat_safety_project_url('wpppxlnbzqynvhpeuavd')`);
+      await rejects(`select app_security.chat_safety_release_preflight('wpppxlnbzqynvhpeuavd')`);
       await rejects(`select app_security.configure_chat_safety_inactive('wpppxlnbzqynvhpeuavd')`);
       await db.exec('reset role');
     }
@@ -276,7 +260,11 @@ try {
   for(const [environment,ref] of [['fairswaptest','wpppxlnbzqynvhpeuavd'],['fairswapprod','kriuhwppxgxsyyrbjsau']]){
     await test(`${environment} release setup is idempotent and commits an inactive schedule`,async()=>{
       await db.exec(`update app_security.chat_safety_runtime set project_ref=null,dispatch_enabled=false; delete from vault.secrets_fixture where name='project_url'`);
-      await db.query(`insert into vault.secrets_fixture(name,decrypted_secret) values('project_url',$1)`,['https://'+ref+'.supabase.co']);
+      await db.query(`update vault.secrets_fixture set decrypted_secret=$1 where name='email_outbox_worker_url'`,['https://'+ref+'.supabase.co/functions/v1/process-email-outbox']);
+      await db.query(`update vault.secrets_fixture set decrypted_secret=$1 where name='moderation_worker_url'`,['https://'+ref+'.supabase.co/functions/v1/process-listing-moderation']);
+      const prerequisite=readFileSync(resolve(root,`supabase/forward-migrations/chat-v2/release/${environment}.vault-prerequisite.sql`),'utf8');
+      await db.exec(prerequisite);const vaultId=await scalar(`select id from vault.secrets_fixture where name='project_url'`);
+      await db.exec(prerequisite);assert.equal(await scalar(`select id from vault.secrets_fixture where name='project_url'`),vaultId);
       const setup=readFileSync(resolve(root,`supabase/forward-migrations/chat-v2/release/${environment}.inactive.sql`),'utf8');
       const messageCount=await scalar('select count(*)::int from public.messages');
       await db.exec(setup);const secret=await scalar(`select decrypted_secret from vault.decrypted_secrets where name='chat_safety_worker_secret'`);
@@ -292,6 +280,25 @@ try {
     const before=await scalar('select count(*)::int from cron.job');
     await rejects(`select app_security.configure_chat_safety_inactive('wpppxlnbzqynvhpeuavd')`);
     assert.equal(await scalar('select count(*)::int from cron.job'),before);
+  });
+  await test('Vault prerequisite refuses mismatched, absent and duplicate trusted anchors',async()=>{
+    await db.exec(`delete from vault.secrets_fixture where name='project_url'; update app_security.chat_safety_runtime set project_ref=null`);
+    await rejects(`select app_security.provision_chat_safety_project_url('wpppxlnbzqynvhpeuavd')`);
+    assert.equal(await scalar(`select count(*)::int from vault.secrets_fixture where name='project_url'`),0);
+    const saved=(await db.query(`select name,decrypted_secret from vault.secrets_fixture where name in ('email_outbox_worker_url','moderation_worker_url')`)).rows;
+    await db.exec(`delete from vault.secrets_fixture where name in ('email_outbox_worker_url','moderation_worker_url')`);
+    await rejects(`select app_security.provision_chat_safety_project_url('kriuhwppxgxsyyrbjsau')`);
+    for(const anchor of saved)await db.query(`insert into vault.secrets_fixture(name,decrypted_secret) values($1,$2)`,[anchor.name,anchor.decrypted_secret]);
+    await db.query(`insert into vault.secrets_fixture(name,decrypted_secret) values($1,$2)`,[saved[0].name,saved[0].decrypted_secret]);
+    await rejects(`select app_security.provision_chat_safety_project_url('kriuhwppxgxsyyrbjsau')`);
+    await db.exec(`delete from vault.secrets_fixture where name in ('email_outbox_worker_url','moderation_worker_url')`);
+    for(const anchor of saved)await db.query(`insert into vault.secrets_fixture(name,decrypted_secret) values($1,$2)`,[anchor.name,anchor.decrypted_secret]);
+    await db.exec(`select app_security.provision_chat_safety_project_url('kriuhwppxgxsyyrbjsau')`);
+    const secretId=await scalar(`select id from vault.secrets_fixture where name='project_url'`);
+    await db.exec(`update vault.secrets_fixture set decrypted_secret='https://wrong.invalid' where name='project_url'`);
+    await rejects(`select app_security.provision_chat_safety_project_url('kriuhwppxgxsyyrbjsau')`);
+    assert.equal(await scalar(`select id from vault.secrets_fixture where name='project_url'`),secretId);
+    await db.exec(`update vault.secrets_fixture set decrypted_secret='https://kriuhwppxgxsyyrbjsau.supabase.co' where name='project_url'; update app_security.chat_safety_runtime set project_ref='kriuhwppxgxsyyrbjsau'`);
   });
   await test('disabled dispatch never submits a request; cron commands hold no tokens',async()=>{
     await db.exec('select app_security.dispatch_chat_safety()');assert.equal(await scalar('select count(*)::int from net.http_request_queue'),0);

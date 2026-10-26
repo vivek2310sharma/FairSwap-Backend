@@ -1,5 +1,125 @@
 # Chat V2 — Phase 1B local infrastructure candidate
 
+## Security correction — release remains blocked
+
+26 October 2026; [blocker comment 6411236044](https://github.com/vivek2310sharma/FairSwap-Backend/pull/58#issuecomment-6411236044).
+That comment reports Phase 1B integration at `2ceab16e447a0f94c130ef347a64fe7036e8c262`
+and green GitHub CI, but identifies the missing Vault URL and unsafe shared queue
+ACL change. Those are comment-reported facts; this correction did not inspect or
+change either hosted database. Local HEAD remains the older observed `213b57c`.
+
+The previous global queue `REVOKE` was unsafe. `net.http_post` is an invoker,
+the queue/sequence belong to `supabase_admin`, and hosted `postgres` may have only
+inherited PUBLIC rights. **The application migration now makes no extension ACL,
+ownership or event-trigger change.** This preserves email/moderation/webhook and
+worker access rather than attempting a non-owner revoke or an unsupported repair.
+[Supabase's current guidance](https://supabase.com/kb/troubleshooting/revoking-access-to-pg_net-objects-has-no-effect)
+says individual-project pg_net grant changes are unsupported. No operator role
+membership/escalation, managed-trigger replacement or destructive extension
+recreation is proposed as a workaround.
+
+`assert_chat_safety_net_privileges()` is a read-only fail-closed boundary. It
+requires the expected extension owner and invoker signature, producer INSERT,
+return-column/background-worker SELECT, worker DELETE, sequence USAGE and schema/
+function access for `postgres`. It checks effective client, login-role, and direct
+queue ACL access; unknown exposed configurations are denied. Trusted superusers
+are inherently outside the credential isolation boundary. Existing Database
+Webhooks require INSERT, sequence access and SELECT(id), without SELECT(headers).
+An unknown pg_net worker role blocks release. The application functions must be
+created as `postgres`; the migration rejects another application owner.
+
+Release configuration, Vault prerequisite provisioning and every enabled Chat
+dispatch call run this boundary check. It executes **before** reading a dispatch
+token or enqueueing a request. An exposed queue or ACL drift blocks Chat Safety;
+`dispatch_failures`, `last_dispatch_status`, and a fixed generic warning make the
+failure observable without logging tokens, URLs, message bodies or SQLERRM.
+Other runtime errors record `failed`; successful enqueue records `queued`.
+Service-only `chat_safety_metrics()` returns those aggregate dispatch signals.
+
+**Unresolved blocker:** there is no verified provider-supported protected enqueue
+path or owner-authorized grant mechanism for these projects. Default exposed
+queue grants cannot satisfy this check. Do not merge/promote for release, apply
+the candidate migrations, provision Vault entries or create schedules until
+ChatGPT has a supported solution and protected release authority. The code does
+not claim the existing shared queue became private. It prevents new Chat Safety
+credentials from entering it and leaves other dispatchers unchanged. If Supabase
+cannot provide a supported route, choose a separately reviewed transport that
+does not put a reusable credential in the public-grant queue; do not weaken the
+guard. No new service-role key contract is introduced: `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` remain unchanged, with all five flags off.
+
+### Vault prerequisite and preflight artifacts
+
+- `release/pg-net.preflight.sql` is read-only metadata plus the boundary assertion.
+  It prints owners/privilege booleans and the managed pg_net event-trigger function
+  fingerprint, not headers, Vault values or function bodies. ChatGPT must review
+  `issue_pg_net_access` / `extensions.grant_pg_net_access`, worker identity,
+  actual producer ownership, and effective grants with the provider. Extension
+  upgrades or managed trigger events can restore grants; do not alter those
+  triggers locally. The per-dispatch boundary also fails closed after grant drift.
+- `release/fairswaptest.vault-prerequisite.sql` and the separate Prod equivalent
+  call owner-only `provision_chat_safety_project_url`. They create a missing
+  `project_url` only after transport and inactivity preflight passes. The value is
+  derived from a fixed environment allowlist; no credential literal or Vault
+  secret value is present in source or returned by provisioning.
+- Independent existing private Vault anchors (`email_outbox_worker_url` and/or
+  `moderation_worker_url`) must exactly match the selected environment and known
+  function path. Every present anchor must agree; at least one must already
+  exist. Missing, duplicate, cross-environment or unexpected anchors fail closed.
+  Do not manufacture/overwrite an anchor merely to pass this check. This is an
+  owner-controlled Vault identity check, not trust in a caller-set GUC or JWT.
+- Matching existing `project_url` is preserved, including its ID. A conflicting
+  or duplicate entry is rejected, never silently overwritten. Both inactive
+  setup files explicitly run the preflight before schedule/worker-secret setup.
+  Five flags, runtime dispatch and existing Chat cron jobs must all remain off.
+- Provisioning is prepared, not executed. The currently missing entries remain a
+  hosted prerequisite; transport ownership blocks these scripts too. Only after
+  that blocker is resolved and release authorization is obtained: verify exact
+  Test ledger/target and preflight, provision Test URL, run Test inactive setup
+  and automated acceptance, then repeat the independent Prod steps. Never push
+  the raw historical migration chain or ask for manual predeployment testing.
+
+### Automated privilege evidence and CI
+
+`tests/chat-v2/bootstrap.sql` now models the actual ACL boundary: non-superuser
+`postgres`, separate `supabase_admin` queue/sequence/function ownership, invoker
+HTTP function using INSERT/RETURNING and a sequence, plus inherited PUBLIC ACLs.
+The PGlite initial bootstrap superuser is renamed **only inside the disposable
+fixture** so its implicit privileges cannot conceal the bug.
+
+`net-privileges.test.sql` runs 19 counted assertions plus negative exception
+checks. It proves a non-owner revoke is ineffective, unsafe setup is denied,
+missing INSERT/SELECT/sequence privileges prevent enqueue, and drift blocks new
+Chat dispatch observably. The actual immutable historical bodies of both email
+and moderation immediate/retry functions are extracted and exercised before and
+after a **hypothetical fixture-only owner repair**; no replacement dispatcher is
+substituted. This demonstrates required semantics, not hosted repair authority.
+Fixture-only GRANT/REVOKE/SET ROLE statements must never be applied to a project.
+
+The same SQL fixture is emitted by `scripts/ci/emit-chat-net-privileges-sql.mjs`
+and run by `run-chat-net-privileges-pg15.sh` as an additional required step of the
+existing Chat V2 CI job. It reuses the exact existing PostgreSQL image digest,
+asserts PG 15.8 (`150008`), uses a fresh unprivileged OS-user container, no host
+ports, `--network none`, Unix sockets only, no credentials or hosted connection
+parameters, and cleanup of only that container. This is a real PostgreSQL ACL
+regression with fake net/Vault/cron surfaces, not real pg_net HTTP delivery.
+Native Linux PG15 execution is **NOT RUN on Windows**; GitHub CI must execute it
+after ChatGPT integration. PGlite executes the same privilege fixture locally.
+
+The PGlite harness also covers idempotent Test/Prod provisioning and rejection of
+missing, duplicate and mismatched anchors, wrong URL and unauthorized clients.
+Node infrastructure guards require the native CI step and prohibit extension ACL
+mutations in the application migration. Existing five-file/93-case unit gates,
+no-network digest, canonical 58 migrations/checksums and unrelated features stay
+unchanged. Actual results and environment limitations are recorded in the ZIP.
+
+Rollback: keep flags/runtime/cron off; revert the Edge/consumer release if later
+deployed; retain additive state and evidence. Do not revoke shared pg_net grants,
+remove managed triggers, delete shared `project_url`, or roll back a provider's
+grant policy without a separate cross-dispatch review. No hosted action occurred.
+
+The security section above supersedes conflicting pre-correction notes below.
+
 26 October 2026. **No hosted operations, deployment, schedule activation or flag activation.**
 Contract: [PR #58 comment 6405221297](https://github.com/vivek2310sharma/FairSwap-Backend/pull/58#issuecomment-6405221297).
 Local observed HEAD remains `213b57c84e2b3767e3ab3499846dd280bf3315c3`;
@@ -105,10 +225,12 @@ index creation itself may require a controlled lock window on a large table.
 Legacy delivery never fails because a warning enqueue failed; a safe counter
 records that event and the bounded sweep repairs missing jobs.
 
-`pg_net` temporarily stores the dispatch credential in its request queue; the
-migration revokes client/service access to `net.http_request_queue`. The dispatcher
+`pg_net` temporarily stores the dispatch credential in its request queue. The
+application migration does not change extension-owned grants; a read-only guard
+blocks new Chat dispatch/provisioning while that queue is exposed. The dispatcher
 is owner-only, builds its URL from a two-value environment allowlist, and reads
-the token only from Vault. Review actual hosted net/schema grants before release;
+the token only after the guard succeeds. Resolve the provider-supported protected
+transport blocker before release;
 do not log request headers, DB RPC parameters, Vault data or net queue contents.
 
 ## Phase 1B automated checks and release constraints

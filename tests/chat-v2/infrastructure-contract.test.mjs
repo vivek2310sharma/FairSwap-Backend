@@ -34,5 +34,21 @@ test('environment release artifacts contain no activation or credential literals
   for(const env of ['fairswaptest','fairswapprod']){
     const sql=read(`supabase/forward-migrations/chat-v2/release/${env}.inactive.sql`);
     assert(sql.includes('configure_chat_safety_inactive'));assert(!/enabled\s*=\s*true|active\s*[:=]+\s*true|Bearer|sb_secret_|[a-f0-9]{64}/i.test(sql));
+    const prerequisite=read(`supabase/forward-migrations/chat-v2/release/${env}.vault-prerequisite.sql`);
+    assert(prerequisite.includes('provision_chat_safety_project_url'));assert(!/sb_secret_|Bearer|[a-f0-9]{64}/.test(prerequisite));
   }
+});
+test('migration never mutates extension-owned ACLs or hides dispatch failures',()=>{
+  const sql=read('supabase/forward-migrations/chat-v2/supabase/migrations/20261026073143_chat_safety_worker_infrastructure.sql');
+  assert(!/(?:revoke|grant)\s+[^;]+\bon\s+(?:table\s+)?net\./i.test(sql));
+  assert(sql.includes('assert_chat_safety_net_privileges()'));assert(sql.includes("last_dispatch_status='blocked'"));
+  assert(sql.includes('CHAT_SAFETY_DISPATCH_FAILED'));assert(!/raise warning[^;]*(SQLERRM|v_token)/i.test(sql));
+  assert(sql.indexOf('perform app_security.assert_chat_safety_net_privileges();',sql.indexOf('create function app_security.dispatch_chat_safety'))<sql.indexOf('select count(*),min(decrypted_secret)',sql.indexOf('create function app_security.dispatch_chat_safety')));
+});
+test('native PG15 privilege regression is required and isolated with the existing digest pin',()=>{
+  const script=read('scripts/ci/run-chat-net-privileges-pg15.sh'),ci=read('.github/workflows/backend-ci.yml');
+  assert(ci.includes('bash scripts/ci/run-chat-net-privileges-pg15.sh'));assert(script.includes('--network none'));
+  assert(script.includes('150008'));assert(script.includes('p.digest'));assert(!script.includes('--network host'));
+  const fixtures=read('tests/chat-v2/bootstrap.sql');assert(fixtures.includes('create role postgres bypassrls'));
+  assert(fixtures.includes('owner to supabase_admin'));assert(fixtures.includes('create function net.http_post'));
 });

@@ -173,7 +173,7 @@ jobs:
 
   chat-v2:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         shell: bash --noprofile --norc -euo pipefail {0}
@@ -197,6 +197,7 @@ jobs:
           test -f tests/chat-v2/edge-auth.test.mjs
           test -f tests/chat-v2/infrastructure-contract.test.mjs
           test -f tests/chat-v2/offline-guard.mjs
+          test -f tests/chat-v2/net-privileges.test.sql
           env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
             node --test tests/chat-v2/*.test.mjs
       - name: Strictly typecheck worker and Edge transport
@@ -210,6 +211,11 @@ jobs:
         run: |
           env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
             node scripts/ci/test-chat-v2.mjs
+      - name: Execute native PG15 extension-owner and dispatch privilege regressions
+        timeout-minutes: 8
+        run: |
+          bash -n scripts/ci/run-chat-net-privileges-pg15.sh
+          timeout --signal=TERM --kill-after=30s 7m bash scripts/ci/run-chat-net-privileges-pg15.sh
 
   backend-ci-success:
     needs: [unit-integrity, database-pg15, chat-v2]
