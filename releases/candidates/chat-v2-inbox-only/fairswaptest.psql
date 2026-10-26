@@ -1,0 +1,4 @@
+\set ON_ERROR_STOP on
+-- Generated file is created offline from this environment's reviewed ledger.
+-- Missing generated file fails before any connection write. Never use Prod here.
+\ir prepared/fairswaptest.apply.sql

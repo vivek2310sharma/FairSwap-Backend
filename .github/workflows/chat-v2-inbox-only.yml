@@ -1,0 +1,70 @@
+name: Chat V2 inbox-only isolated CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chat-v2-inbox-only-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inbox-only-contracts:
+    name: Chat inbox source, RLS and release contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout immutable reviewed source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Use pinned Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+
+      - name: Verify and install locked Backend dependencies
+        run: |
+          node --version
+          test "$(corepack pnpm --version)" = "10.12.1"
+          corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+
+      - name: Verify immutable canonical migrations and release source
+        run: |
+          test -f releases/candidates/chat-v2-inbox-only/manifest.json
+          test -f releases/candidates/chat-v2-inbox-only/supabase/migrations/20261025204922_chat_v2_inbox_and_safety.sql
+          test -f scripts/ci/test-chat-v2-inbox-only.mjs
+          test -f scripts/release/chat-v2-inbox-only.mjs
+          test -f tests/chat-v2-inbox-only/renderer.test.mjs
+          node scripts/ci/verify-baseline.mjs
+          node --check scripts/ci/test-chat-v2-inbox-only.mjs
+          node --check scripts/release/chat-v2-inbox-only.mjs
+
+      - name: Install isolated pinned PostgreSQL-in-WASM test engine
+        run: |
+          corepack pnpm --dir tests/chat-v2-inbox-only install --frozen-lockfile --ignore-scripts --engine-strict
+
+      - name: Require all inbox-only PostgreSQL security and compatibility checks
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            node scripts/ci/test-chat-v2-inbox-only.mjs | tee "$RUNNER_TEMP/chat-v2-inbox-only-tests.log"
+          grep -Fq "PASS 34 independent Chat V2 inbox-only PostgreSQL checks." "$RUNNER_TEMP/chat-v2-inbox-only-tests.log"
+
+      - name: Require all four isolated release renderer tests
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            node --test --test-reporter=tap tests/chat-v2-inbox-only/renderer.test.mjs | tee "$RUNNER_TEMP/chat-v2-renderer-tests.log"
+          grep -Eq '^# tests 4$' "$RUNNER_TEMP/chat-v2-renderer-tests.log"
+          grep -Eq '^# pass 4$' "$RUNNER_TEMP/chat-v2-renderer-tests.log"
+          grep -Eq '^# fail 0$' "$RUNNER_TEMP/chat-v2-renderer-tests.log"
+          grep -Eq '^# skipped 0$' "$RUNNER_TEMP/chat-v2-renderer-tests.log"

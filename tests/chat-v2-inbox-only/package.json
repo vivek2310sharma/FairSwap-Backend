@@ -1,0 +1,7 @@
+{
+  "name": "fairswap-chat-v2-inbox-disposable-tests",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.12.1",
+  "devDependencies": { "@electric-sql/pglite": "0.5.8" }
+}
