@@ -9,6 +9,7 @@ insert into public.listings values('00000000-0000-4000-8000-000000000004','00000
 insert into public.conversations(id,listing_id,seller_id,buyer_id) values('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002');
 select set_config('request.user','00000000-0000-4000-8000-000000000002',false);
 set role authenticated;
+select public.inbox_assert(current_user='authenticated' and not (select rolsuper or rolbypassrls from pg_roles where rolname=current_user),'client role cannot bypass RLS');
 do $$begin perform public.chat_v2_inbox();raise exception 'disabled reader allowed';exception when sqlstate '55000' then null;end$$;
 reset role;set role postgres;
 update app_security.chat_v2_flags set enabled=true where name='inbox';

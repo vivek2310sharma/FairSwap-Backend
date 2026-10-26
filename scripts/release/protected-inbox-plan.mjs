@@ -4,6 +4,20 @@ import {resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {candidate,manifest,render,validateSnapshot,stateGuard,catalogGuard,identityGuard} from './chat-v2-inbox-only.mjs';
 export const hash=value=>createHash('sha256').update(value).digest('hex');
+// Diagnostic fields are a closed vocabulary; never forward upstream message text.
+export function diagnoseCliFailure(output){
+ const text=String(output??'').replace(/\u001b\[[0-9;]*m/g,'');
+ const code=text.match(/SQLSTATE\s*[:=]?\s*([0-9A-Z]{5})\b/i)?.[1]?.toUpperCase()
+  ??text.match(/(?:^|[,{\s])["']?code["']?\s*[:=]\s*["']([0-9A-Z]{5})["']/im)?.[1]?.toUpperCase()
+  ??text.match(/ERROR:\s+([0-9A-Z]{5}):/i)?.[1]?.toUpperCase();
+ const states=new Set(['P0001','42501','42601','42702','42703','42P01','42704','42883','25001','25P01','25P02','2D000','0A000','40P01','55P03','23505','28P01','08001','08006']);
+ const statement=text.match(/(?:^|\n)At statement:\s*(\d{1,3})\s*(?:\n|$)/)?.[1];
+ const sql=text.split(/(?:^|\n)At statement:\s*\d{1,3}[ \t]*\r?\n/)[1]?.trimStart()??'';
+ const category=classifyCliFailure(output);
+ const stages=[[/^(?:lock table supabase_migrations\.schema_migrations\b|do \$chat_cli_lock\$)/i,'MIGRATION_HISTORY_LOCK'],[/^do \$chat_identity\$/i,'IDENTITY_GUARD'],[/^do \$chat_ledger\$/i,'LEDGER_GUARD'],[/^do \$chat_dependencies\$/i,'DEPENDENCY_GUARD'],[/^do \$chat_state\$/i,'STATE_GUARD'],[/^do \$chat_catalog\$/i,'CATALOG_GUARD']];
+ const stage=category==='EXPECTED_SQL_ROLLBACK'?'ROLLBACK_SENTINEL':/permission denied to set role "(?:anon|authenticated|service_role)"/i.test(text)?'FIXTURE_ROLE_SWITCH':stages.find(([pattern])=>pattern.test(sql))?.[1]??'OTHER_OR_UNKNOWN';
+ return {category,sqlstate:states.has(code)?code:'OTHER_OR_UNKNOWN',statement:statement===undefined?null:Number(statement),stage};
+}
 // Return only a closed vocabulary. Never return a log fragment, SQL or connection URI.
 export function classifyCliFailure(output){
  const text=String(output??'').replace(/\u001b\[[0-9;]*m/g,'');
@@ -19,7 +33,7 @@ export function classifyCliFailure(output){
  if(/inserted before the last migration|ErrMissingRemote/i.test(text))return 'MIGRATION_ORDER_FAILURE';
  if(state==='42501'||/permission denied|must be owner/i.test(text))return 'ROLE_PERMISSION_FAILURE';
  if(/invalid config|failed to parse config|unknown flag|unrecognized option|invalid connection|invalid database url|project is not linked/i.test(text))return 'CLI_CONFIGURATION_FAILURE';
- const sentinelMessage=/(?:^|\n)[^\n]*(?:ERROR|PostgresError):\s*(?:P0001:\s*)?CHAT_FIXTURE_ROLLBACK(?:\s|\(|$)/i.test(text)
+ const sentinelMessage=/(?:^|\n)(?:psql:[^\n]*?:\s*)?(?:ERROR|PostgresError):[ \t]*(?:P0001:[ \t]*)?CHAT_FIXTURE_ROLLBACK(?:[ \t]+\(SQLSTATE[ \t]+P0001\))?[ \t]*$/m.test(text)
   ||/(?:^|[,{\s])["']?message["']?\s*:\s*["']CHAT_FIXTURE_ROLLBACK["']/m.test(text);
  if(state==='P0001'&&sentinelMessage)return 'EXPECTED_SQL_ROLLBACK';
  if(state)return 'UNEXPECTED_SQL_FAILURE';
@@ -45,7 +59,13 @@ export function buildPlan(environment,input,now=Date.now()){
  const start=legacy.indexOf('do $chat_apply$'),end=legacy.indexOf('end $chat_apply$;')+'end $chat_apply$;'.length;
  if(start<0||end<start)throw Error('CHAT_GUARD_BOUNDARY_CHANGED');
  const prefix=legacy.slice(0,start).replace('\nbegin;\n','\n');
- const baseExecution=prefix+candidate().body+legacy.slice(end).replace(/commit;\n$/,'');
+ // PG17 rejects a top-level LOCK TABLE in the CLI's implicit transaction
+ // (25P01). A DO block keeps the same transaction-scoped lock while letting
+ // the CLI own the atomic batch, including its genuine history insert.
+ const lock='lock table supabase_migrations.schema_migrations in share row exclusive mode;';
+ if(prefix.split(lock).length!==2)throw Error('CHAT_LOCK_BOUNDARY_CHANGED');
+ const cliPrefix=prefix.replace(lock,`do $chat_cli_lock$ begin ${lock} end $chat_cli_lock$;`);
+ const baseExecution=cliPrefix+candidate().body+legacy.slice(end).replace(/commit;\n$/,'');
  const executionMarker=hash(baseExecution);
  const execution=baseExecution+`select '${executionMarker}'::text as chat_inbox_execution_marker;\n`;
  if(/insert into supabase_migrations/i.test(execution))throw Error('CHAT_CUSTOM_HISTORY_WRITE_FORBIDDEN');
@@ -66,10 +86,10 @@ end $post$;
 select jsonb_build_object('flagsOff',5,'version',version,'postgresVersionNum',current_setting('server_version_num')::integer,'historySha256',encode(sha256(convert_to(to_jsonb(statements)::text,'UTF8')),'hex')) from supabase_migrations.schema_migrations where version=${literal(manifest.version)};
 commit;
 `;
- return {execution,preflight:prefix+'rollback;\n',postflight,rollback:render(environment,input,now).rollback,
+ return {execution,preflight:'begin;\n'+prefix+'rollback;\n',postflight,rollback:render(environment,input,now).rollback,
   sourceSha256:manifest.sha256,executionSha256:hash(execution),ledgerSha256:hash(JSON.stringify(snapshot.ledger))};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- try{if(process.argv.length!==4||process.argv[2]!=='classify')throw Error('invalid classifier arguments');console.log(classifyCliFailure(readFileSync(process.argv[3],'utf8')));}
+ try{if(process.argv.length!==4||!['classify','diagnose'].includes(process.argv[2]))throw Error('invalid classifier arguments');const output=readFileSync(process.argv[3],'utf8');console.log(process.argv[2]==='diagnose'?JSON.stringify(diagnoseCliFailure(output)):classifyCliFailure(output));}
  catch{console.log('UNCLASSIFIED_CLI_FAILURE');process.exitCode=1;}
 }

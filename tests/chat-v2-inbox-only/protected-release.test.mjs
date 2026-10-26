@@ -7,12 +7,22 @@ import {join,resolve,basename} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {auditProtection} from '../../scripts/release/inbox-protection.mjs';
-import {buildPlan,hash,classifyCliFailure,verifyHistoryWorkspace} from '../../scripts/release/protected-inbox-plan.mjs';
+import {buildPlan,hash,classifyCliFailure,diagnoseCliFailure,verifyHistoryWorkspace} from '../../scripts/release/protected-inbox-plan.mjs';
 import {verifyTestReceipt} from '../../scripts/release/protected-inbox-release.mjs';
 import {manifest} from '../../scripts/release/chat-v2-inbox-only.mjs';
 const input={projectRef:manifest.environments.fairswaptest.projectRef,baseCommit:manifest.baseCommit,observedAt:new Date().toISOString(),reviewEvidence:'https://github.com/vivek2310sharma/FairSwap-Backend/pull/60',ledger:[{version:'20260914000011',name:'create_communication',statementsSha256:hash(JSON.stringify(['fixture baseline']))}]};
 test('hosted execution removes custom history writes and keeps exact source identity',()=>{
  const plan=buildPlan('fairswaptest',input);assert(!/insert into supabase_migrations/i.test(plan.execution));assert(plan.execution.includes('CHAT_EXACT_LEDGER_MISMATCH'));assert(plan.postflight.includes('CHAT_CLI_HISTORY_REQUIRED'));assert.equal(plan.sourceSha256,manifest.sha256);assert.equal(plan.executionSha256,hash(plan.execution));
+});
+
+test('CLI implicit transaction uses a procedural history lock; psql preflight owns an explicit transaction',()=>{
+ const plan=buildPlan('fairswaptest',input);
+ assert(plan.execution.includes('do $chat_cli_lock$ begin lock table supabase_migrations.schema_migrations in share row exclusive mode; end $chat_cli_lock$;'));
+ assert(!/^lock table /m.test(plan.execution));
+ assert(!/^\s*(?:begin|commit|rollback);/im.test(plan.execution));
+ assert(plan.execution.includes("pg_advisory_xact_lock(hashtextextended('chat-v2-foundation-release',0))"));
+ assert(plan.preflight.startsWith('begin;\n'));assert(plan.preflight.endsWith('rollback;\n'));
+ assert(plan.preflight.includes('\nlock table supabase_migrations.schema_migrations in share row exclusive mode;'));
 });
 test('existing foundation must use a protected recovery receipt, never silent history repair',()=>{
  assert.throws(()=>buildPlan('fairswaptest',{...input,ledger:[...input.ledger,{version:manifest.version,name:manifest.name,statementsSha256:hash(JSON.stringify([readFileSync(new URL('../../releases/candidates/chat-v2-inbox-only/supabase/migrations/20261025204922_chat_v2_inbox_and_safety.sql',import.meta.url),'utf8')]))}]}),/PROTECTED_RECOVERY/);
@@ -52,7 +62,22 @@ test('only the explicit PostgreSQL rollback sentinel is an expected negative res
  assert.equal(classifyCliFailure('query: CHAT_FIXTURE_ROLLBACK; syntax error (SQLSTATE 42601)'),'UNEXPECTED_SQL_FAILURE');
  assert.equal(classifyCliFailure("ERROR: CHAT_EXACT_LEDGER_MISMATCH (SQLSTATE P0001)\nquery: do $$begin raise exception 'CHAT_FIXTURE_ROLLBACK';end$$;"),'UNEXPECTED_SQL_FAILURE');
  assert.equal(classifyCliFailure('CHAT_FIXTURE_ROLLBACK'),'UNCLASSIFIED_CLI_FAILURE');
+ assert.equal(classifyCliFailure('ERROR: CHAT_FIXTURE_ROLLBACK suffix (SQLSTATE P0001)'),'UNEXPECTED_SQL_FAILURE');
+ assert.equal(classifyCliFailure('ERROR: CHAT_FIXTURE_ROLLBACK_SUFFIX (SQLSTATE P0001)'),'UNEXPECTED_SQL_FAILURE');
+ assert.equal(classifyCliFailure('ERROR: chat_fixture_rollback (SQLSTATE P0001)'),'UNEXPECTED_SQL_FAILURE');
+ assert.equal(classifyCliFailure('ERROR: CHAT_FIXTURE_ROLLBACK (SQLSTATE 42601)'),'UNEXPECTED_SQL_FAILURE');
+ assert.equal(classifyCliFailure('query: ERROR: CHAT_FIXTURE_ROLLBACK (SQLSTATE P0001)'),'UNEXPECTED_SQL_FAILURE');
  assert.equal(classifyCliFailure('CHAT_FIXTURE_ROLLBACK (SQLSTATE P0001) password authentication failed'),'AUTHENTICATION_FAILURE');
+});
+
+test('native SQL diagnostics expose only allowlisted states and bounded statement indexes',()=>{
+ assert.deepEqual(diagnoseCliFailure('ERROR: ambiguous column (SQLSTATE 42702)\nAt statement: 6\nselect private_sql;'),{category:'UNEXPECTED_SQL_FAILURE',sqlstate:'42702',statement:6,stage:'OTHER_OR_UNKNOWN'});
+ assert.deepEqual(diagnoseCliFailure('ERROR: transaction required (SQLSTATE 25P01)\nAt statement: 4\nlock table supabase_migrations.schema_migrations in share row exclusive mode;'),{category:'UNEXPECTED_SQL_FAILURE',sqlstate:'25P01',statement:4,stage:'MIGRATION_HISTORY_LOCK'});
+ assert.deepEqual(diagnoseCliFailure('ERROR: 42501: permission denied to set role "authenticated"'),{category:'ROLE_PERMISSION_FAILURE',sqlstate:'42501',statement:null,stage:'FIXTURE_ROLE_SWITCH'});
+ assert.deepEqual(diagnoseCliFailure('ERROR: CHAT_FIXTURE_ROLLBACK (SQLSTATE P0001)\nAt statement: 72\ndo private_sql;'),{category:'EXPECTED_SQL_ROLLBACK',sqlstate:'P0001',statement:72,stage:'ROLLBACK_SENTINEL'});
+ const result=diagnoseCliFailure('ERROR: private-value (SQLSTATE ABCDE)\nAt statement: 123456\npostgres://private-user:private-password@host/db');
+ assert.deepEqual(result,{category:'UNEXPECTED_SQL_FAILURE',sqlstate:'OTHER_OR_UNKNOWN',statement:null,stage:'OTHER_OR_UNKNOWN'});
+ assert(!JSON.stringify(result).includes('private'));
 });
 test('CLI error classification is allowlisted and never echoes SQL, URLs or credentials',()=>{
  assert.equal(classifyCliFailure('CHAT_HISTORY_WORKSPACE_MISMATCH'),'LOCAL_HISTORY_WORKSPACE_FAILURE');
@@ -79,7 +104,7 @@ test('native negative and hosted positive paths reconcile history without repair
  const native=readFileSync(new URL('../../scripts/ci/run-chat-inbox-pg17.sh',import.meta.url),'utf8');
  const hosted=readFileSync(new URL('../../scripts/release/protected-inbox-release.mjs',import.meta.url),'utf8');
  assert(native.includes('task_negative_class != EXPECTED_SQL_ROLLBACK'));
- assert(native.includes('migration fetch'));assert(native.includes('schema_migrations where version='));
+ assert(native.includes('migration fetch'));assert(native.includes('rollback-check.sql'));
  assert(hosted.includes("['migration','fetch'"));assert(hosted.includes('verifyHistoryWorkspace(isolated,approvedLedger,{pending:true})'));
  assert(!/migration['", ]+repair/.test(hosted));assert(!/insert into supabase_migrations/.test(hosted));
 });
@@ -89,6 +114,8 @@ test('native fixture generation records genuine seed migrations before planning 
  try{
   assert.equal(run('seed').status,0);
   const prepare=readFileSync(join(directory,'prepare.sql'),'utf8');assert(!prepare.includes('insert into supabase_migrations.schema_migrations'));
+  assert(prepare.includes('grant anon, authenticated to postgres with inherit false, set true;'));
+  assert(!prepare.includes('alter role postgres superuser'));
   const names=readdirSync(join(directory,'seed/supabase/migrations')).sort();assert.equal(names.length,2);
   const ledger=names.map(name=>{const body=readFileSync(join(directory,'seed/supabase/migrations',name),'utf8');assert(body.includes('create table app_security.inbox_cli_'));return {version:name.slice(0,14),name:name.slice(15,-4),statementsSha256:hash(JSON.stringify([body]))};});
   writeFileSync(join(directory,'history.json'),JSON.stringify(ledger));
@@ -97,6 +124,12 @@ test('native fixture generation records genuine seed migrations before planning 
   assert.equal(run('plan').status,0);
   assert.equal(verifyHistoryWorkspace(directory,ledger,{pending:true}),3);
   assert(!readFileSync(join(directory,'approved.sql'),'utf8').includes('insert into supabase_migrations'));
+  const rollback=readFileSync(join(directory,'rollback-check.sql'),'utf8');
+  assert.equal((rollback.match(/to_regclass\(/g)??[]).length,8);
+  assert(rollback.includes('pg_trigger'));assert(rollback.includes('app_security.chat_v2_flags'));
+  assert(rollback.includes('pg_proc'));assert(rollback.includes(JSON.stringify(ledger)));
+  assert(rollback.includes('inbox_cli_baseline_fixture'));assert(rollback.includes('inbox_cli_later_fixture'));
+  assert(rollback.startsWith('begin transaction read only;'));
  }finally{
   assert.equal(resolve(directory),directory);assert.equal(resolve(directory,'..'),resolve(tmpdir()));assert(basename(directory).startsWith('chat-inbox-native.'));
   rmSync(directory,{recursive:true,force:true});
