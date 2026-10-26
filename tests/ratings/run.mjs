@@ -1,14 +1,15 @@
 import './offline-guard.mjs';
 const nativePort=process.argv.find(x=>x.startsWith('--native-port='))?.split('=')[1];
-const {PGlite}=await import('@electric-sql/pglite');
-const {NativeDatabase}=await import('./native-adapter.mjs');
 import {readFileSync,readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 import {consumerContractChecks} from './consumer-contract.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const read=p=>readFileSync(root+p,'utf8');
-const db=nativePort?new NativeDatabase(nativePort):new PGlite();
+// Load only the selected engine: native adapter path validation is platform-specific.
+const db=nativePort===undefined
+ ?new (await import('@electric-sql/pglite')).PGlite()
+ :new (await import('./native-adapter.mjs')).NativeDatabase(nativePort);
 let checks=0;
 const q=async(sql,args=[])=>Object.values((await db.query(sql,args)).rows[0]??{})[0];
 const test=async(name,fn)=>{await fn();console.log(`ok ${++checks} - ${name}`);};

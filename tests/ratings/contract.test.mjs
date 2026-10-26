@@ -1,8 +1,38 @@
 import './offline-guard.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {ratingScore} from '../../src/lib/ratings/score.ts';
 import {submitReviewSchema,tradeEventSchema,ratingSummarySchema,reviewSchema,givenHistoryEntrySchema,ratingCaseQueueSchema,conversationTradeSchema,pageSchema} from '../../src/lib/ratings/contract.ts';
+
+const runner=fileURLToPath(new URL('./run.mjs',import.meta.url));
+const runRatings=(args)=>spawnSync(process.execPath,[runner,...args],{
+ encoding:'utf8',windowsHide:true,timeout:60000,maxBuffer:8*1024*1024,
+});
+test('PGlite startup needs no native path, including a path invalid on every platform',()=>{
+ for(const args of [[],['--pg-bin=relative-native-path']]){
+  const result=runRatings(args);
+  assert.ifError(result.error);
+  assert.equal(result.status,0,result.stdout+result.stderr);
+  assert.match(result.stdout,/Engine: PostgreSQL .*PGlite/);
+  assert.match(result.stdout,/PASS \d+ automated database checks/);
+  assert(!result.stderr.includes('Absolute native PostgreSQL bin directory required'));
+ }
+});
+test('native startup still rejects relative paths and ports outside the disposable range',()=>{
+ for(const [args,message] of [
+  [['--native-port=49152','--pg-bin=relative-native-path'],/Absolute native PostgreSQL bin directory required/],
+  [['--native-port=49151',`--pg-bin=${fileURLToPath(new URL('.',import.meta.url))}`],/Disposable port required/],
+  [['--native-port=65536',`--pg-bin=${fileURLToPath(new URL('.',import.meta.url))}`],/Disposable port required/],
+  [['--native-port=',`--pg-bin=${fileURLToPath(new URL('.',import.meta.url))}`],/Disposable port required/],
+ ]){
+  const result=runRatings(args);
+  assert.ifError(result.error);
+  assert.notEqual(result.status,0);
+  assert.match(result.stderr,message);
+ }
+});
 test('all 64 face combinations and required score examples',()=>{
  for(let a=1;a<=4;a++)for(let b=1;b<=4;b++)for(let c=1;c<=4;c++)assert.equal(ratingScore(a,b,c),Math.round((((a+b+c)/3-1)/3*10)*10)/10);
  assert.equal(ratingScore(1,1,1),0);assert.equal(ratingScore(3,3,4),7.8);assert.equal(ratingScore(4,4,4),10);
