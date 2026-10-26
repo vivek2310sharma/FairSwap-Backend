@@ -47,3 +47,4 @@ if ! docker exec -i "$chat_cid" psql -X -Atq -v ON_ERROR_STOP=1 -h /tmp -p 5432 
   exit 1
 fi
 grep -E '^PASS [0-9]+ owner/invoker queue privilege checks' "$chat_tmp/result.log"
+grep -E '^PASS [0-9]+ external scheduler idempotency/authentication/isolation checks' "$chat_tmp/result.log"

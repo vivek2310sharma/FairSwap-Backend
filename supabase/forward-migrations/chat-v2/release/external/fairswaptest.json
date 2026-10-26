@@ -1,0 +1,14 @@
+{
+  "provider": "github-actions",
+  "target": "test",
+  "project_ref": "wpppxlnbzqynvhpeuavd",
+  "github_environment": "chat-safety-test",
+  "repository_enable_variable": "CHAT_SAFETY_TEST_SCHEDULER_ENABLED",
+  "environment_secret_name": "CHAT_SAFETY_WORKER_SECRET",
+  "enabled": false,
+  "cron_utc": "19 * * * *",
+  "attempts": 3,
+  "request_timeout_ms": 15000,
+  "backoff_ms": [1000, 3000],
+  "github_job_timeout_minutes": 2
+}

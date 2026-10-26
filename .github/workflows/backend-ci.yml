@@ -198,6 +198,9 @@ jobs:
           test -f tests/chat-v2/infrastructure-contract.test.mjs
           test -f tests/chat-v2/offline-guard.mjs
           test -f tests/chat-v2/net-privileges.test.sql
+          test -f tests/chat-v2/protected-scheduler.test.mjs
+          test -f tests/chat-v2/external-scheduler.test.sql
+          test -f .github/workflows/chat-safety-scheduler.yml
           env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
             node --test tests/chat-v2/*.test.mjs
       - name: Strictly typecheck worker and Edge transport

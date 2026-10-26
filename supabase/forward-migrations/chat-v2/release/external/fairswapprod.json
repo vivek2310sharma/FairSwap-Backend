@@ -1,0 +1,14 @@
+{
+  "provider": "github-actions",
+  "target": "prod",
+  "project_ref": "kriuhwppxgxsyyrbjsau",
+  "github_environment": "chat-safety-prod",
+  "repository_enable_variable": "CHAT_SAFETY_PROD_SCHEDULER_ENABLED",
+  "environment_secret_name": "CHAT_SAFETY_WORKER_SECRET",
+  "enabled": false,
+  "cron_utc": "2,7,12,17,22,27,32,37,42,47,52,57 * * * *",
+  "attempts": 3,
+  "request_timeout_ms": 15000,
+  "backoff_ms": [1000, 3000],
+  "github_job_timeout_minutes": 2
+}

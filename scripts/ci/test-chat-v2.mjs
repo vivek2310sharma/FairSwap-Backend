@@ -321,4 +321,8 @@ try {
     await db.exec(`update app_security.chat_safety_runtime set dispatch_enabled=false; update app_security.chat_v2_flags set enabled=false`);
   });
   console.log(`PASS ${checks} Chat V2 disposable PostgreSQL checks. Fixture account/listing/Vault/cron/net helpers; no hosted/realtime acceptance.`);
+  await db.exec('set role postgres');
+  await db.exec(readFileSync(resolve(root,'supabase/forward-migrations/chat-v2/supabase/migrations/20261026093748_chat_safety_external_scheduler.sql'),'utf8'));
+  const external=await db.exec(readFileSync(resolve(root,'tests/chat-v2/external-scheduler.test.sql'),'utf8'));
+  console.log(external.at(-1).rows[0].result);
 } finally {await db.close();}

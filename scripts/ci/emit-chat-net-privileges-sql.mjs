@@ -14,4 +14,6 @@ process.stdout.write([
   read('tests/chat-v2/legacy-dispatch-tables.sql'),
   canonicalDispatchFunctions(root),
   read('tests/chat-v2/net-privileges.test.sql'),
+  read('supabase/forward-migrations/chat-v2/supabase/migrations/20261026093748_chat_safety_external_scheduler.sql'),
+  read('tests/chat-v2/external-scheduler.test.sql'),
 ].join('\n'));
