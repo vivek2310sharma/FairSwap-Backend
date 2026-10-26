@@ -1,5 +1,5 @@
 // Offline only: render reviewed, environment-specific SQL; never open a connection.
-import {readFileSync,writeFileSync,mkdirSync,existsSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import {resolve,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
@@ -32,7 +32,7 @@ export function validateSnapshot(environment,input,now=Date.now()){
  if(foundation&&foundation.statementsSha256!==sha(JSON.stringify([candidate().sql])))throw Error('CHAT_FOUNDATION_LEDGER_REVIEW_MISMATCH');
  return {...snapshot,ledger:[...snapshot.ledger].sort((a,b)=>a.version.localeCompare(b.version))};
 }
-function identityGuard(ref){return `
+export function identityGuard(ref){return `
 do $chat_identity$
 declare v record; n integer; value text; anchors integer:=0;
 begin
@@ -46,7 +46,7 @@ begin
  if anchors=0 then raise exception 'CHAT_TRUSTED_IDENTITY_REQUIRED';end if;
 end $chat_identity$;
 `;}
-function stateGuard(){return `
+export function stateGuard(){return `
 do $chat_state$
 begin
  if (select count(*) from app_security.chat_v2_flags)<>5 or exists(select 1 from app_security.chat_v2_flags where enabled)
@@ -57,7 +57,7 @@ begin
   or to_regclass('app_security.chat_safety_scheduler_runs') is not null then raise exception 'CHAT_WORKER_RELEASE_ALREADY_PRESENT';end if;
 end $chat_state$;
 `;}
-function catalogGuard(sql){
+export function catalogGuard(sql){
  const functions=[...sql.matchAll(/create function ([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\(([\s\S]*?)\)\s*returns[\s\S]*?\bas \$\$([\s\S]*?)\$\$;/gi)];
  if(functions.length!==10)throw Error('CHAT_FUNCTION_INVENTORY_CHANGED');
  const rows=functions.map(match=>`(${literal(match[1])},${literal(match[2])},${literal(match[4])},${match[1]==='app_security'?'true':'false'})`).join(',\n');
@@ -140,9 +140,7 @@ end $chat_apply$;
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  try{
   const [environment,inputPath,...extra]=process.argv.slice(2);if(!environment||!inputPath||extra.length)throw Error('Usage: node scripts/release/chat-v2-inbox-only.mjs fairswaptest|fairswapprod <reviewed-snapshot.json>');
-  const scripts=render(environment,JSON.parse(readFileSync(resolve(inputPath),'utf8'))),out=resolve(directory,'prepared');
-  for(const key of Object.keys(scripts))if(existsSync(resolve(out,`${environment}.${key}.sql`)))throw Error('CHAT_REFUSE_OVERWRITE_PREPARED_ARTIFACT');
-  mkdirSync(out,{recursive:true});for(const [key,content] of Object.entries(scripts))writeFileSync(resolve(out,`${environment}.${key}.sql`),'\\set ON_ERROR_STOP on\n'+content);
-  console.log(`PREPARED ${environment}: preflight/apply/rollback SQL only. No connection or deployment.`);
+  render(environment,JSON.parse(readFileSync(resolve(inputPath),'utf8')));
+  throw Error('CHAT_LEGACY_RENDERER_OFFLINE_ONLY');
  }catch(error){const message=error instanceof Error?error.message:'';console.error(/^CHAT_[A-Z_]+$/.test(message)?message:message.startsWith('Usage:')?'Usage: node scripts/release/chat-v2-inbox-only.mjs fairswaptest|fairswapprod <reviewed-snapshot.json>':'CHAT_PREPARATION_FAILED');process.exitCode=1;}
 }

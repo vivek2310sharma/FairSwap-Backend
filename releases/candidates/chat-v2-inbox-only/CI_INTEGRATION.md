@@ -24,3 +24,9 @@ host or environment arguments. Native PG execution and hosted release acceptance
 remain separate requirements; PGlite is not a replacement for existing native gates.
 The release renderer can be syntax-checked with `node --check` and is exercised for
 both environments by this same isolated test command.
+
+Protected-release follow-up: the additive chat-v2-inbox-pg17.yml workflow and manual
+chat-v2-inbox-release.yml now supplement these existing checks. Existing workflows,
+allowlists and test counts are untouched. Require chat-inbox-native-pg17 alongside
+every existing gate. See PROTECTED_RELEASE.md for native CLI atomicity/history,
+public-repository protections and current execution blockers.

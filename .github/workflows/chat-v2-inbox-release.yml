@@ -1,0 +1,134 @@
+name: Protected Chat inbox release
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        type: boolean
+        default: false
+        required: true
+      approved_sha:
+        type: string
+        required: true
+      bundle_sha256:
+        type: string
+        required: true
+      test_ledger_sha256:
+        type: string
+        required: true
+      prod_ledger_sha256:
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: protected-chat-inbox-release
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: >-
+      github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
+      inputs.deploy && vars.CHAT_INBOX_RELEASE_ENABLED == 'true' && inputs.approved_sha == github.sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+      - run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+      - run: bash scripts/ci/run-chat-inbox-pg17.sh
+      - run: node --test tests/chat-v2-inbox-only/protected-release.test.mjs
+      - name: Verify immutable reviewed bundle
+        env:
+          EXPECTED: ${{ inputs.bundle_sha256 }}
+        run: node --input-type=module -e 'import {bundleHash} from "./scripts/release/protected-inbox-release.mjs"; if(bundleHash()!==process.env.EXPECTED)process.exit(1)'
+  test:
+    needs: verify
+    if: ${{ needs.verify.result == 'success' }}
+    environment: FairSwapTest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      artifact_id: ${{ steps.receipt.outputs.artifact-id }}
+      receipt_sha: ${{ steps.proof.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+      - run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+      - run: bash scripts/release/install-inbox-cli.sh
+      - name: Separately authorized Test release and automatic postflight
+        env:
+          CHAT_RELEASE_ENABLED: ${{ vars.CHAT_INBOX_RELEASE_ENABLED }}
+          CHAT_ENVIRONMENT_ENABLED: ${{ vars.CHAT_INBOX_ENVIRONMENT_ENABLED }}
+          CHAT_WEB_FLAG_OFF_CONFIRMED: ${{ vars.CHAT_WEB_FLAG_OFF_CONFIRMED }}
+          CHAT_BACKEND_AUTHORITY_RECEIPT: ${{ vars.CHAT_BACKEND_AUTHORITY_RECEIPT }}
+          CHAT_APPROVED_LEDGER_JSON: ${{ vars.CHAT_APPROVED_LEDGER_JSON }}
+          CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
+          CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          LEDGER_SHA: ${{ inputs.test_ledger_sha256 }}
+          BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
+        run: node scripts/release/protected-inbox-release.mjs fairswaptest "$LEDGER_SHA" "$BUNDLE_SHA"
+      - id: proof
+        run: echo "sha256=$(sha256sum release-receipt/receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - id: receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: chat-inbox-test-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-receipt/
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+  production:
+    needs: [verify, test]
+    if: ${{ needs.verify.result == 'success' && needs.test.result == 'success' }}
+    environment: FairSwapProd
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+      - run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.test.outputs.artifact_id }}
+          path: test-evidence
+          merge-multiple: true
+      - run: cd test-evidence && sha256sum --check SHA256SUMS
+      - name: Bind receipt bytes to trusted Test job output
+        env:
+          EXPECTED_RECEIPT_SHA: ${{ needs.test.outputs.receipt_sha }}
+        run: cd test-evidence && printf '%s  receipt.json\n' "$EXPECTED_RECEIPT_SHA" | sha256sum --check --status
+      - run: bash scripts/release/install-inbox-cli.sh
+      - name: Independently approved Production release and automatic postflight
+        env:
+          CHAT_RELEASE_ENABLED: ${{ vars.CHAT_INBOX_RELEASE_ENABLED }}
+          CHAT_ENVIRONMENT_ENABLED: ${{ vars.CHAT_INBOX_ENVIRONMENT_ENABLED }}
+          CHAT_WEB_FLAG_OFF_CONFIRMED: ${{ vars.CHAT_WEB_FLAG_OFF_CONFIRMED }}
+          CHAT_BACKEND_AUTHORITY_RECEIPT: ${{ vars.CHAT_BACKEND_AUTHORITY_RECEIPT }}
+          CHAT_APPROVED_LEDGER_JSON: ${{ vars.CHAT_APPROVED_LEDGER_JSON }}
+          CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
+          CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          LEDGER_SHA: ${{ inputs.prod_ledger_sha256 }}
+          BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
+        run: node scripts/release/protected-inbox-release.mjs fairswapprod "$LEDGER_SHA" "$BUNDLE_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: chat-inbox-prod-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-receipt/
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
