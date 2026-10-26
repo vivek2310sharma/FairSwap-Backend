@@ -1,0 +1,435 @@
+{
+  "release": "ratings-v1-hosted-release",
+  "status": "BLOCKED_NOT_DEPLOYED",
+  "environment": "production",
+  "projectRef": "kriuhwppxgxsyyrbjsau",
+  "observedLedger": {
+    "capturedAt": "2026-10-26T19:24:36.529Z",
+    "count": 71,
+    "latest": "20261025201712",
+    "rows": [
+      {
+        "version": "20260914000001",
+        "name": "create_accounts_and_profiles",
+        "ledger_statements_json_sha256": "743c190971825ff10484a45b38715f76fb0aedb6a7612add22808098b9627451"
+      },
+      {
+        "version": "20260914000002",
+        "name": "create_staff_and_security",
+        "ledger_statements_json_sha256": "8bf7d9ef295d1d3cbd76acb26bf0a7a1d752b84070e6f30fa0d0da9d546e08fe"
+      },
+      {
+        "version": "20260914000003",
+        "name": "create_audit_and_privacy",
+        "ledger_statements_json_sha256": "e715be22aa0e6549fe524fbb82052813866102214a2f5b9a7215d87941d402aa"
+      },
+      {
+        "version": "20260914000004",
+        "name": "create_categories_and_locations",
+        "ledger_statements_json_sha256": "6464f6db720f92a64ce149d9ba4a6d4333825ea4dd18ed46ca4d3e87db2b01b1"
+      },
+      {
+        "version": "20260914000005",
+        "name": "create_listings",
+        "ledger_statements_json_sha256": "d41c0134270ef05a5e8e9edb0bdc9191cb73ecf977b91e265db4b59ec38c1bbf"
+      },
+      {
+        "version": "20260914000006",
+        "name": "create_listing_media",
+        "ledger_statements_json_sha256": "64070f3793c7ee31c37bc4c9143241e8505819880956c5800186c8fcee6390d9"
+      },
+      {
+        "version": "20260914000007",
+        "name": "create_storage_buckets_and_policies",
+        "ledger_statements_json_sha256": "c8d4b49490bb1ca716f446200f3d6103a042353a76909368bf479c6894636e11"
+      },
+      {
+        "version": "20260914000008",
+        "name": "create_listing_rpcs",
+        "ledger_statements_json_sha256": "2e40ec577fd9727562d27d96992ba58b0988b9b4d95db1911e92d51bf86a04ea"
+      },
+      {
+        "version": "20260914000009",
+        "name": "create_discovery_and_favourites",
+        "ledger_statements_json_sha256": "fdb3eddcfb9bf38a2435ba41673cd80cf0080222c0cb039b4e110d617aba0d0a"
+      },
+      {
+        "version": "20260914000010",
+        "name": "create_notifications",
+        "ledger_statements_json_sha256": "b37db3213c35ca108ca6aab88c161dcfa9eb714d19961747504bc629e1a99738"
+      },
+      {
+        "version": "20260914000011",
+        "name": "create_communication",
+        "ledger_statements_json_sha256": "2cee8e104b7bc0ce551f4dcf3cbcc48076d7bf3adff621a493fdb22024d49aa1"
+      },
+      {
+        "version": "20260914000012",
+        "name": "create_abuse_controls_and_reports",
+        "ledger_statements_json_sha256": "9dedd0b4891f236a73bc8735c0b30e1899a43c51f1afb0fad1ccf6e3937eb960"
+      },
+      {
+        "version": "20260914000013",
+        "name": "create_support_and_appeals",
+        "ledger_statements_json_sha256": "6215935aad52e020f6c4255dc62a8202fa3de546d0b280b605212985f0590fa3"
+      },
+      {
+        "version": "20260914000014",
+        "name": "create_privacy_fulfillment_and_fk_safety",
+        "ledger_statements_json_sha256": "b10c76462c2c5220021b893c72c83663fb858f3e206aba3ccfcc369a1fca0770"
+      },
+      {
+        "version": "20260914000015",
+        "name": "correct_report_notification_and_permissions",
+        "ledger_statements_json_sha256": "0950ef5bfc49c5c4adacdd1fdc6224d08a333a274735b79b9338b3c19b157862"
+      },
+      {
+        "version": "20260914000016",
+        "name": "staff_user_moderation_and_hardening",
+        "ledger_statements_json_sha256": "9431ff1dac7d87f3d99ee60d38bb3e7e92213b511476d2f0923e88429b90fa0b"
+      },
+      {
+        "version": "20260914000017",
+        "name": "fix_report_target_visibility",
+        "ledger_statements_json_sha256": "1187cac03f3b7154e2b41305e8016c5dce31c3a40f8aa681aff365f62e0fb173"
+      },
+      {
+        "version": "20260916000018",
+        "name": "performance_and_reliability_indexes",
+        "ledger_statements_json_sha256": "b466f5ff896330ab37e45984238e31a1b4b1b9a7a93e3a74a549f63f9a76e6a1"
+      },
+      {
+        "version": "20260916000019",
+        "name": "fix_public_rls_staff_helper_execution",
+        "ledger_statements_json_sha256": "acb396697e830d5c555efdd4851e961d44819755a844a64cbac325ea0b227ba6"
+      },
+      {
+        "version": "20260918000020",
+        "name": "legal_acceptance_and_age_audit",
+        "ledger_statements_json_sha256": "e21bd56bd4b282da710f4de97eac470e99882500aa7d5e30375f9c87eeee2961"
+      },
+      {
+        "version": "20260918000021",
+        "name": "policy_reacceptance_records",
+        "ledger_statements_json_sha256": "15367a9ccbe74b354572685444366942e49afa6d78c142c3791208fb28b1b8c6"
+      },
+      {
+        "version": "20260926000022",
+        "name": "listing_email_notifications",
+        "ledger_statements_json_sha256": "a257ae3624b8ae6c78d0793efc439d2903e96a25528c4669a8db39412aded4db"
+      },
+      {
+        "version": "20260926000023",
+        "name": "email_outbox_dispatch_runtime",
+        "ledger_statements_json_sha256": "9dca34ec1934c5a00b2e1c4c5c99b6c6c358c8d3db0047aa127ecf2de7d64c80"
+      },
+      {
+        "version": "20260926000024",
+        "name": "email_outbox_runtime_extensions",
+        "ledger_statements_json_sha256": "236d8537abcc27667829028d2c399656d056ac2d96b4671fd2832a44a4b447e1"
+      },
+      {
+        "version": "20260929000025",
+        "name": "india_postal_location_schema",
+        "ledger_statements_json_sha256": "6b1c522f8265468237c45d68080fdf532efcb86af4a8199f151ff670cc06f03b"
+      },
+      {
+        "version": "20260930000026",
+        "name": "fix_india_location_admin_and_lookup",
+        "ledger_statements_json_sha256": "2422787a2de97066e47c5cdd63055abd5a7abadb1a3ad91d51b0522541e3775e"
+      },
+      {
+        "version": "20260930000027",
+        "name": "support_multi_district_pincodes",
+        "ledger_statements_json_sha256": "f458157ec8627d63bb65ffda4da368a852e4db725259d3f2f5e917022bc11c4c"
+      },
+      {
+        "version": "20260930000028",
+        "name": "harden_official_postal_snapshot",
+        "ledger_statements_json_sha256": "dfaae4e1bf5f7dc312d613eac517c9330bec64e301ce475e518b64b42ae7761a"
+      },
+      {
+        "version": "20261001000029",
+        "name": "fix_listing_landmark_column_permissions",
+        "ledger_statements_json_sha256": "30246b4092e3a0a1ac51f1ae507bae6e4fb44233ce3ce33950deab539364d0d9"
+      },
+      {
+        "version": "20261001000030",
+        "name": "require_explicit_postal_source",
+        "ledger_statements_json_sha256": "68e7fdbcf855beaef5a070c0177febf6458d530cb0bb23ae5fac62e1b5ed4cd1"
+      },
+      {
+        "version": "20261001000031",
+        "name": "harden_public_listing_location_privacy",
+        "ledger_statements_json_sha256": "9621c73fd26bdb8a50cbe676979610de2403f427cdb3dd40a711cac5dcd27d6f"
+      },
+      {
+        "version": "20261001000032",
+        "name": "add_staff_private_listing_location_access",
+        "ledger_statements_json_sha256": "88ce26a1ebd2898d9f316fe167012f6db2cb892e839b57512733f58633f9fd36"
+      },
+      {
+        "version": "20261002000033",
+        "name": "seller_media_management",
+        "ledger_statements_json_sha256": "c665060335095a43a306f02a37f225fbbff82635b789e0685583b7c4d194d81c"
+      },
+      {
+        "version": "20261007153735",
+        "name": "admin_pending_medium_download",
+        "ledger_statements_json_sha256": "f65b90372822281d169c72433ae6eacd3342e6f558ace86548be2989850a66df"
+      },
+      {
+        "version": "20261007153744",
+        "name": "atomic_reviewed_moderation",
+        "ledger_statements_json_sha256": "9b826406770c51ed76f4f10ea3d24d9a941e57fa63e2cbe1963e1a6903cb94a6"
+      },
+      {
+        "version": "20261007161425",
+        "name": "admin_pending_medium_download_info",
+        "ledger_statements_json_sha256": "06efa301bc3dc26f04a97b20278c06c90288626caf262b46d83f10b22f6e1a4c"
+      },
+      {
+        "version": "20261008210921",
+        "name": "post_ad_category_metadata",
+        "ledger_statements_json_sha256": "f653d2b8b2eb86fcdc7f9457da1f0cc0f90e6545860566bb0e23dcffb43c592f"
+      },
+      {
+        "version": "20261009163210",
+        "name": "seller_listing_category_context",
+        "ledger_statements_json_sha256": "d95578545993fbe37c672f0ee592d4661db2ca484aced065ea63647e454de959"
+      },
+      {
+        "version": "20261010071050",
+        "name": "invalidate_pending_review_on_media_mutation",
+        "ledger_statements_json_sha256": "cf7705ae9ea8c743ef66185fc6bc65ff297d68328f5c243fbc814222322e806a"
+      },
+      {
+        "version": "20261010080000",
+        "name": "remediate_legacy_moderate_listing",
+        "ledger_statements_json_sha256": "6cfeccb8511ce287a18025c31353c1acc88d5f2cad20e2db4355eef7dc85b0fc"
+      },
+      {
+        "version": "20261010090000",
+        "name": "invalidate_resubmission_review_token",
+        "ledger_statements_json_sha256": "6c69d9832d86e3b0c234ac8135273bb85edd18f260f6c651e65cd32a78e39a27"
+      },
+      {
+        "version": "20261011000038",
+        "name": "create_moderation_queue_and_results",
+        "ledger_statements_json_sha256": "db32ed0f00bb1f342c99296d2378ffb1b11914a213c179f79062f0ee772ca68e"
+      },
+      {
+        "version": "20261011000039",
+        "name": "moderation_dispatch_and_killswitch",
+        "ledger_statements_json_sha256": "eb861e5cc7658998ae8f1f41d66ba9f534236085f0e4ec40e92c5b12e816bd8f"
+      },
+      {
+        "version": "20261013192336",
+        "name": "post_ad_listing_insert_category_guard",
+        "ledger_statements_json_sha256": "2cc0d28aad7510d5ed5c48fc5834abd7c2ef1f78792c9c7cb804e8b53f54d7c3"
+      },
+      {
+        "version": "20261013235311",
+        "name": "moderation_vault_dispatch_auth",
+        "ledger_statements_json_sha256": "eece8080effaf40ab9c41f99742e1f51013f49ca9647a7ccb780e86a269f9eb1"
+      },
+      {
+        "version": "20261017205755",
+        "name": "category_foundation_01_two_wheeler_draft_v1",
+        "ledger_statements_json_sha256": "1baa3b5febe49c073441eadc4f736ff35388a7c935124e0d065443b76f602dae"
+      },
+      {
+        "version": "20261017205757",
+        "name": "category_foundation_02_two_wheeler_catalogue_lookup",
+        "ledger_statements_json_sha256": "2c72c2b77cb2dfadc2f2b94439d3073468f2c40a12e9521586cddec47159a484"
+      },
+      {
+        "version": "20261017205759",
+        "name": "category_foundation_03_two_wheeler_unresolved_mapping_correction",
+        "ledger_statements_json_sha256": "b249c0ed8f3e62036a93a93fac8663446795bfbea5d868882d1ac0a17c3103c5"
+      },
+      {
+        "version": "20261017205801",
+        "name": "category_foundation_04_two_wheeler_reference_errors",
+        "ledger_statements_json_sha256": "15081839c99e2b156b247ce1252b9865fad18c95f962805e9807e49dd2db820d"
+      },
+      {
+        "version": "20261017205803",
+        "name": "category_foundation_05_car_draft_v1",
+        "ledger_statements_json_sha256": "d56f659668901f15f18f98c7edafe08b05bba3536a9d941ed7094f7fdb4e6c91"
+      },
+      {
+        "version": "20261017205805",
+        "name": "category_foundation_06_property_rental_draft_v1",
+        "ledger_statements_json_sha256": "99157aa7e9cc51a681f45aebf9b2c6e9e94494d851b74503c44756ec658dab25"
+      },
+      {
+        "version": "20261017205807",
+        "name": "category_foundation_07_property_scoped_draft_lock",
+        "ledger_statements_json_sha256": "900a92b79384a490ac3470fb67a5cbb405250a7420868fd87c2fd123a701e44a"
+      },
+      {
+        "version": "20261018172250",
+        "name": "moderation_v2_private_foundation",
+        "ledger_statements_json_sha256": "0a050e7a416980ded911daf3606cfc59879f93f88b40c78d1042af008b7069d5"
+      },
+      {
+        "version": "20261018182448",
+        "name": "moderation_v2_input_validation",
+        "ledger_statements_json_sha256": "13b9f06615608ec32a1476fff1f5bd45cb4633f0ae7b2335d4046a1f83281e2c"
+      },
+      {
+        "version": "20261019102255",
+        "name": "moderation_v2_input_lease",
+        "ledger_statements_json_sha256": "a147b77dfe4bd2fd0e0186015b4d78c7c4649652945fb38fc605c03b0bb36802"
+      },
+      {
+        "version": "20261022073602",
+        "name": "moderation_v1_openai_text_image_publication_gate",
+        "ledger_statements_json_sha256": "1c18590356e71814c868b1e7cd3deba8531a2dd0ae1b8c0aaf2c311017ae718e"
+      },
+      {
+        "version": "20261022110410",
+        "name": "production_family_submission_and_human_review_default_off_v1",
+        "ledger_statements_json_sha256": "8210b2b4042b0be2852fd2fc4b9df89154dc7ebb0536988c0129d59e3b103b8d"
+      },
+      {
+        "version": "20261023160752",
+        "name": "hdr03_production_unread_counts",
+        "ledger_statements_json_sha256": null
+      },
+      {
+        "version": "20261023193856",
+        "name": "support_ticket_state_v1",
+        "ledger_statements_json_sha256": "d741aef8e487ef2d6e2877367325814d3223c16307b651c5d13636eea68e823a"
+      },
+      {
+        "version": "20261024152633",
+        "name": "seller_profile_search_public_listings_20261024",
+        "ledger_statements_json_sha256": "488d6c0df0a9bf0d1211275f1cb5ec3d05251f6aee1c341f6cbd383c036204f9"
+      },
+      {
+        "version": "20261024230404",
+        "name": "india_goods_taxonomy_disabled_seed",
+        "ledger_statements_json_sha256": "c11681b3e2fe906bd10c7b88178a1b0e3aa301cee743f5e2e9bcf9bed1bdb2e4"
+      },
+      {
+        "version": "20261024230506",
+        "name": "activate_india_goods_taxonomy",
+        "ledger_statements_json_sha256": "2432987761443c4133761d290ddeaf76b968dad7ef04f3e1ec915eb214585c9b"
+      },
+      {
+        "version": "20261025134027",
+        "name": "profile_onboarding_20261025100001_user_private_details",
+        "ledger_statements_json_sha256": "bb3e197b61ca88805b2ad3526b20682ee8b54cea73e7a210aa292606e49a2148"
+      },
+      {
+        "version": "20261025134033",
+        "name": "profile_onboarding_20261025100002_profile_text_validation",
+        "ledger_statements_json_sha256": "58c98615b42e819959f6edd583b850d1262ccd7a5a19e4923fd37247376366cd"
+      },
+      {
+        "version": "20261025134040",
+        "name": "profile_onboarding_20261025100003_profile_rpcs",
+        "ledger_statements_json_sha256": "efb754642b9068b8d38c20cb043be97c1824fb4509300f22d4f426249ddfd7af"
+      },
+      {
+        "version": "20261025134047",
+        "name": "profile_onboarding_20261025100004_handle_new_user_hardening",
+        "ledger_statements_json_sha256": "8374ba7b7a402b7578b67a9e804fbe57095d656d644558ba2b1335994f86bc27"
+      },
+      {
+        "version": "20261025134053",
+        "name": "profile_onboarding_20261025100005_avatars_bucket_and_rpcs",
+        "ledger_statements_json_sha256": "d5b1992948770a074a60113847233d41c434f3212852b77e298fcb39e4a8844f"
+      },
+      {
+        "version": "20261025134059",
+        "name": "profile_onboarding_20261025100006_privacy_export_and_deletion",
+        "ledger_statements_json_sha256": "16aa61196c162e828e6b77ecc559c562769f08654371fb0ff9ead89efd283a18"
+      },
+      {
+        "version": "20261025134105",
+        "name": "profile_onboarding_20261025100008_atomic_profile_save",
+        "ledger_statements_json_sha256": "d9dfbf7eae28958d2affcfcc477edc59689e78a444f8bdef6c8dd9c55da4eb61"
+      },
+      {
+        "version": "20261025200401",
+        "name": "posting_v2_mobiles_foundation_20261025131116",
+        "ledger_statements_json_sha256": "699fcc46f429e9aebf162a97024bc210ede8f161fce57c5f622c43f6e62e6d4c"
+      },
+      {
+        "version": "20261025201712",
+        "name": "activate_posting_v2_mobiles_20261025135152",
+        "ledger_statements_json_sha256": "b3706661d9e8c3f3568249f781c4aa127d148db08d9a030db74b4acb4cca04bc"
+      }
+    ]
+  },
+  "postApplyCount": 77,
+  "startingHead": "213b57c84e2b3767e3ab3499846dd280bf3315c3",
+  "applyOrder": [
+    {
+      "version": "20261026083608",
+      "name": "ratings_schema",
+      "file": "20261026083608_ratings_schema.sql",
+      "source": "supabase/forward-migrations/ratings/20261026083608_ratings_schema.sql",
+      "sha256": "39ae5b18de395be9418da9457e573d09726a4e0a0b9b3fda966740336427d713"
+    },
+    {
+      "version": "20261026083610",
+      "name": "ratings_rpcs",
+      "file": "20261026083610_ratings_rpcs.sql",
+      "source": "supabase/forward-migrations/ratings/20261026083610_ratings_rpcs.sql",
+      "sha256": "063fce0e0237a735242e6d7868f1e8413dd3ac9fc176809063c031303345c9e2"
+    },
+    {
+      "version": "20261026083612",
+      "name": "ratings_reads",
+      "file": "20261026083612_ratings_reads.sql",
+      "source": "supabase/forward-migrations/ratings/20261026083612_ratings_reads.sql",
+      "sha256": "fd4ae35c340d972d48fd08757abc97555668e0fa1ae1d93e964f706bf9ede978"
+    },
+    {
+      "version": "20261026083613",
+      "name": "ratings_jobs",
+      "file": "20261026083613_ratings_jobs.sql",
+      "source": "supabase/forward-migrations/ratings/20261026083613_ratings_jobs.sql",
+      "sha256": "7ff58c16bfa452fcfdb1f58d34d4c86be8cd7bac59130ac31e2cf5a8c4919ff2"
+    },
+    {
+      "version": "20261026083614",
+      "name": "ratings_moderation_privacy",
+      "file": "20261026083614_ratings_moderation_privacy.sql",
+      "source": "supabase/forward-migrations/ratings/20261026083614_ratings_moderation_privacy.sql",
+      "sha256": "d02867f5679e0037dbab1c5b722d0902b4cef76bc38ecd05621e4c52e00aae18"
+    },
+    {
+      "version": "20261026094908",
+      "name": "ratings_consumer_contract",
+      "file": "20261026094908_ratings_consumer_contract.sql",
+      "source": "supabase/forward-migrations/ratings/20261026094908_ratings_consumer_contract.sql",
+      "sha256": "9ca7b29de88ce20f9ded46e2a5322308b917659d20e9dfec1834f10100231fc7"
+    }
+  ],
+  "isolatedWorkspace": "production/supabase/migrations",
+  "historyReplay": false,
+  "historySourceByteProvenance": "BLOCKED: complete reviewed per-environment source-byte mapping unavailable; ledger JSON hashes are NOT SQL-file hashes",
+  "missingLedgerStatements": [
+    "20261023160752"
+  ],
+  "gates": [
+    "exact isolated history/source provenance",
+    "exclusive Backend authority",
+    "current environment backup and demonstrated restore",
+    "PG17 regression and unchanged CI",
+    "fresh preflight matching full ledger and protected functions"
+  ],
+  "flags": {
+    "enabled": false,
+    "public_reads": false,
+    "jobs_enabled": false,
+    "staff_enabled": false
+  },
+  "newEnvironmentVariables": [],
+  "activation": "separate authorization"
+}

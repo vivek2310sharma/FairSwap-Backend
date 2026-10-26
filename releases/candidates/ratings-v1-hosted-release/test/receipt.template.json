@@ -1,0 +1,67 @@
+{
+  "status": "NOT_EXECUTED",
+  "environment": "test",
+  "projectRef": "wpppxlnbzqynvhpeuavd",
+  "startingHead": "213b57c84e2b3767e3ab3499846dd280bf3315c3",
+  "operatorIdentity": null,
+  "approvalEvidence": null,
+  "exclusiveAuthorityProof": null,
+  "backupRestoreEvidence": null,
+  "releaseWindow": null,
+  "preflightOutput": null,
+  "sourceHistoryMapping": null,
+  "dryRunSixOnly": null,
+  "migrations": [
+    {
+      "version": "20261026083608",
+      "reviewedFileSha256": "39ae5b18de395be9418da9457e573d09726a4e0a0b9b3fda966740336427d713",
+      "appliedAt": null,
+      "ledgerStatementsJsonSha256": null,
+      "operatorReceipt": null
+    },
+    {
+      "version": "20261026083610",
+      "reviewedFileSha256": "063fce0e0237a735242e6d7868f1e8413dd3ac9fc176809063c031303345c9e2",
+      "appliedAt": null,
+      "ledgerStatementsJsonSha256": null,
+      "operatorReceipt": null
+    },
+    {
+      "version": "20261026083612",
+      "reviewedFileSha256": "fd4ae35c340d972d48fd08757abc97555668e0fa1ae1d93e964f706bf9ede978",
+      "appliedAt": null,
+      "ledgerStatementsJsonSha256": null,
+      "operatorReceipt": null
+    },
+    {
+      "version": "20261026083613",
+      "reviewedFileSha256": "7ff58c16bfa452fcfdb1f58d34d4c86be8cd7bac59130ac31e2cf5a8c4919ff2",
+      "appliedAt": null,
+      "ledgerStatementsJsonSha256": null,
+      "operatorReceipt": null
+    },
+    {
+      "version": "20261026083614",
+      "reviewedFileSha256": "d02867f5679e0037dbab1c5b722d0902b4cef76bc38ecd05621e4c52e00aae18",
+      "appliedAt": null,
+      "ledgerStatementsJsonSha256": null,
+      "operatorReceipt": null
+    },
+    {
+      "version": "20261026094908",
+      "reviewedFileSha256": "9ca7b29de88ce20f9ded46e2a5322308b917659d20e9dfec1834f10100231fc7",
+      "appliedAt": null,
+      "ledgerStatementsJsonSha256": null,
+      "operatorReceipt": null
+    }
+  ],
+  "ledgerBefore": null,
+  "ledgerAfter": null,
+  "postflightOutput": null,
+  "flags": null,
+  "inactiveJobs": null,
+  "consumerBuilds": null,
+  "automatedAvailabilityChecks": null,
+  "rollbackDecision": null,
+  "activation": "NOT AUTHORIZED"
+}

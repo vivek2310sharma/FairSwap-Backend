@@ -1,0 +1,225 @@
+{
+  "startingHead": "213b57c84e2b3767e3ab3499846dd280bf3315c3",
+  "repository": "FairSwap-Backend",
+  "scope": "releases/candidates/ratings-v1-hosted-release/",
+  "files": [
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/BLOCKERS.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/HANDOFF.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/RELEASE.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/changed-files.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/checks.baseline.txt",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/checks.existing-ratings-pg17.txt",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/checks.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/checks.pg17.txt",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/ci-evidence.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/migration-order.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/package.mjs",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/pr59-evidence.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/prepare.mjs",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/preservation.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/RELEASE.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/hosted-evidence.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/inactive.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/installed-contracts.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/manifest.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/postflight.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/preflight.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/protected-functions.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/receipt.template.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/recovery.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/rollback-disable.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/supabase/migrations/20261026083608_ratings_schema.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/supabase/migrations/20261026083610_ratings_rpcs.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/supabase/migrations/20261026083612_ratings_reads.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/supabase/migrations/20261026083613_ratings_jobs.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/supabase/migrations/20261026083614_ratings_moderation_privacy.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/production/supabase/migrations/20261026094908_ratings_consumer_contract.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/regression.mjs",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/run-pg17.ps1",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/starting-state.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/RELEASE.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/hosted-evidence.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/inactive.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/installed-contracts.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/manifest.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/postflight.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/preflight.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/protected-functions.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/receipt.template.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/recovery.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/rollback-disable.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/supabase/migrations/20261026083608_ratings_schema.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/supabase/migrations/20261026083610_ratings_rpcs.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/supabase/migrations/20261026083612_ratings_reads.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/supabase/migrations/20261026083613_ratings_jobs.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/supabase/migrations/20261026083614_ratings_moderation_privacy.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/test/supabase/migrations/20261026094908_ratings_consumer_contract.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-hosted-release/verify.mjs",
+      "change": "ADDED"
+    }
+  ],
+  "derivedArtifacts": [
+    "scoped.diff",
+    "SHA256SUMS",
+    "ratings-v1-hosted-release-readiness.zip",
+    "ratings-v1-hosted-release-readiness.zip.sha256"
+  ],
+  "existingFileEdits": [],
+  "immutableMigrationEdits": [],
+  "workflowEdits": [],
+  "unrelatedDriftReceipt": "preservation.json"
+}

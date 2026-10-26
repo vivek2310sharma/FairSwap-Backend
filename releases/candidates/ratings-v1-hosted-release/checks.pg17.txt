@@ -1,0 +1,28 @@
+ok 1 - test: full ledger guard rejects incomplete ledger even when latest/count could be spoofed
+ok 2 - test: exact ledger comparison accepts equality and rejects same-count name/hash/version drift
+ok 3 - test: exact environment preflight rejects foreign target
+ok 4 - test: all six apply after onboarding and mobile foundation, flags default OFF
+ok 5 - test: sold, staff helper, Admin wrapper and all mobile functions/ACLs remain exact
+ok 6 - test: inactive schedules retry safely and preserve unrelated active job
+ok 7 - test: owner export retains private_details, appends ratings and audits once
+ok 8 - test: outsider, moderator AAL2 and administrator AAL1 cannot export another account
+ok 9 - test: administrator AAL2 export succeeds without restoring direct private base access
+ok 10 - test: staff helper denies AAL1 and Ratings staff flag OFF, allows only role/AAL2 when separately enabled in fixture
+ok 11 - test: mobile posting category and guard coexist with sold transition and Ratings OFF
+ok 12 - test: environment rollback leaves unrelated cron active and onboarding erasure works with flags OFF
+PASS 12 hosted-readiness assumptions on disposable PG17 (test); real pg_cron/Storage/Auth/87-71 full chains NOT RUN
+Disposable run artifacts: C:\Users\VivekKumar\OneDrive - Nobly A S\Documents\FairSwap-ClaudeCodex\FairSwap-Backend\artifacts\ratings\hosted-4df3111f51bd433ea123596839d5d558
+ok 1 - production: full ledger guard rejects incomplete ledger even when latest/count could be spoofed
+ok 2 - production: exact ledger comparison accepts equality and rejects same-count name/hash/version drift
+ok 3 - production: exact environment preflight rejects foreign target
+ok 4 - production: all six apply after onboarding and mobile foundation, flags default OFF
+ok 5 - production: sold, staff helper, Admin wrapper and all mobile functions/ACLs remain exact
+ok 6 - production: inactive schedules retry safely and preserve unrelated active job
+ok 7 - production: owner export retains private_details, appends ratings and audits once
+ok 8 - production: outsider, moderator AAL2 and administrator AAL1 cannot export another account
+ok 9 - production: administrator AAL2 export succeeds without restoring direct private base access
+ok 10 - production: staff helper denies AAL1 and Ratings staff flag OFF, allows only role/AAL2 when separately enabled in fixture
+ok 11 - production: mobile posting category and guard coexist with sold transition and Ratings OFF
+ok 12 - production: environment rollback leaves unrelated cron active and onboarding erasure works with flags OFF
+PASS 12 hosted-readiness assumptions on disposable PG17 (production); real pg_cron/Storage/Auth/87-71 full chains NOT RUN
+Disposable run artifacts: C:\Users\VivekKumar\OneDrive - Nobly A S\Documents\FairSwap-ClaudeCodex\FairSwap-Backend\artifacts\ratings\hosted-a037ff2a87d047039bd01e770cd0f3d4
