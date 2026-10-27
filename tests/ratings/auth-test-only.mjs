@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {pathToFileURL} from 'node:url';
+import {target,withSessions} from './auth-sessions.mjs';
 
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const testUrl='https://wpppxlnbzqynvhpeuavd.supabase.co';
@@ -19,20 +20,13 @@ function claims(token) {
  } catch {throw new Error('Invalid Test access-token input');}
 }
 
-// Read-only opt-in hosted smoke check. No login, fixture creation or database write.
+// Opt-in hosted smoke check. Password/TOTP mode creates Auth sessions only.
 // It intentionally cannot accept a Production URL. Supply only a publishable/anon
 // API key and existing user access tokens; no privileged key is needed.
 export function configuration(env) {
- assert.equal(env.RATINGS_AUTH_TARGET,'FairSwapTest','Explicit Test target required');
- assert.equal(env.RATINGS_AUTH_URL,'https://wpppxlnbzqynvhpeuavd.supabase.co','Only FairSwapTest is allowed');
+ target(env);
  const names=['RATINGS_AUTH_PUBLISHABLE_KEY','RATINGS_AUTH_SELLER_TOKEN','RATINGS_AUTH_BUYER_TOKEN','RATINGS_AUTH_OUTSIDER_TOKEN','RATINGS_AUTH_STAFF_AAL1_TOKEN','RATINGS_AUTH_STAFF_AAL2_TOKEN'];
  for(const name of names)assert(typeof env[name]==='string'&&env[name].trim()===env[name]&&env[name],`Missing or invalid ${name}`);
- const key=env[names[0]];
- if(!/^sb_publishable_[\w-]+$/.test(key)) {
-  // Legacy anon JWT keys are supported; privileged keys are never accepted.
-  try {const c=JSON.parse(Buffer.from(key.split('.')[1],'base64url').toString('utf8'));assert(c.role==='anon'&&c.ref==='wpppxlnbzqynvhpeuavd');}
-  catch {throw new Error('Test publishable/anon key required');}
- }
  const tokens=names.slice(1).map(n=>env[n]);
  const decoded=tokens.map(claims);
  assert(new Set(tokens).size===5,'Five distinct access tokens required');
@@ -74,8 +68,12 @@ async function run(env,transport) {
  }
  return {identities:4,tokens:5,directReadDenials:25};
 }
-export async function verifyAuth(env,transport=globalThis.fetch) {
- try {return await run(env,transport);}
+export async function verifyAuth(env,transport=globalThis.fetch,clientFactory) {
+ try {
+  assert(env.RATINGS_AUTH_MODE===undefined||['tokens','password-totp'].includes(env.RATINGS_AUTH_MODE),'Invalid Auth mode');
+  return env.RATINGS_AUTH_MODE==='password-totp'
+   ?await withSessions(env,e=>run(e,transport),clientFactory):await run(env,transport);
+ }
  catch {throw new Error('Test-only Auth acceptance failed (details suppressed)');}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
