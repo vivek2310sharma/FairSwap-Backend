@@ -1,0 +1,17 @@
+{
+  "release": "chat-v2-inbox-only",
+  "status": "PREPARED_NOT_AUTHORIZED_FOR_HOSTED_EXECUTION",
+  "baseCommit": "172abf80a20576d941a655a3726374b352570d6d",
+  "sourceCommit": "6320947671a0b0ebb1ea98285177e340c55cf025",
+  "version": "20261025204922",
+  "name": "chat_v2_inbox_and_safety",
+  "migration": "supabase/migrations/20261025204922_chat_v2_inbox_and_safety.sql",
+  "sha256": "f9807a4455601c14baff954836523c0cbd6ce3d478bed4071aeaca20ae67e852",
+  "gitBlob": "c27408d24436c7dbe6a2a9dde3d8716d91948fb3",
+  "flags": {"inbox": false, "safety_warnings": false, "rich_media": false, "meetup_pin": false, "seller_sale_flow": false},
+  "excludedVersions": ["20261026073143", "20261026093748"],
+  "environments": {
+    "fairswaptest": {"projectRef": "wpppxlnbzqynvhpeuavd", "name": "FairSwapTest"},
+    "fairswapprod": {"projectRef": "kriuhwppxgxsyyrbjsau", "name": "FairSwapProd"}
+  }
+}

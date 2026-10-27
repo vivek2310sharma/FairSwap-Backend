@@ -1,0 +1,4 @@
+# Fresh environment ledger approvals and rendered artifacts are release records,
+# not generic reusable migrations. Archive under the protected release receipt.
+prepared/
+*.reviewed-ledger.json
