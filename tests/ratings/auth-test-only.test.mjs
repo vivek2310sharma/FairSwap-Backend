@@ -56,3 +56,61 @@ test('transport failures cannot leak credentials through exported errors',async(
   assert.equal(e.message,'Test-only Auth acceptance failed (details suppressed)');assert.equal(e.cause,undefined);return true;
  });
 });
+
+const passwordEnv={...env,RATINGS_AUTH_MODE:'password-totp',RATINGS_AUTH_STAFF_FACTOR_ID:'factor',RATINGS_AUTH_STAFF_TOTP_SECRET:'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'};
+for(const role of ['SELLER','BUYER','OUTSIDER','STAFF'])for(const field of ['EMAIL','PASSWORD'])passwordEnv[`RATINGS_AUTH_${role}_${field}`]='offline-fixture';
+function sdkFlow(failure) {
+ let created=0,cleaned=0;const steps=[];
+ const factory=(url,key,options)=>{
+  const n=++created;
+  assert.equal(url,env.RATINGS_AUTH_URL);assert.equal(key,env.RATINGS_AUTH_PUBLISHABLE_KEY);
+  assert.deepEqual(options.auth,{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false});
+  return {auth:{
+   signInWithPassword:async input=>{
+    assert.deepEqual(input,{email:'offline-fixture',password:'offline-fixture'});steps.push('password');
+    if(failure==='login')throw Error('secret provider detail');
+    return {data:{session:{access_token:jwt(n)}}};
+   },
+   mfa:{
+    listFactors:async()=>{steps.push('factors');return {data:{totp:failure==='factor'?[]:[{id:'factor',status:'verified'}]}};},
+    challenge:async input=>{assert.deepEqual(input,{factorId:'factor'});steps.push('challenge');return {data:{id:'challenge'}};},
+    verify:async input=>{assert.equal(input.factorId,'factor');assert.equal(input.challengeId,'challenge');assert.match(input.code,/^\d{6}$/);steps.push('verify');return failure==='mfa'?{error:{message:'secret detail'}}:{data:{access_token:jwt(4,'aal2')}};}
+   },
+   signOut:async input=>{assert.deepEqual(input,{scope:'local'});cleaned++;if(failure==='cleanup-throw')throw Error('secret detail');return failure==='cleanup'?{error:{message:'secret detail'}}:{};}
+  }};
+ };
+ return {factory,steps,counts:()=>({created,cleaned})};
+}
+test('password mode preflights every credential and wrong-project key before SDK or HTTP',async()=>{
+ const fields=['RATINGS_AUTH_STAFF_FACTOR_ID','RATINGS_AUTH_STAFF_TOTP_SECRET',...['SELLER','BUYER','OUTSIDER','STAFF'].flatMap(r=>['EMAIL','PASSWORD'].map(f=>`RATINGS_AUTH_${r}_${f}`))];
+ const overrides=fields.flatMap(f=>[{[f]:undefined},{[f]:''},{[f]:'   '}]);
+ overrides.push({RATINGS_AUTH_MODE:'unexpected'},{RATINGS_AUTH_TARGET:'FairSwapProd'},
+  {RATINGS_AUTH_URL:'https://kriuhwppxgxsyyrbjsau.supabase.co'},
+  {RATINGS_AUTH_PUBLISHABLE_KEY:'sb_secret_fixture'},
+  {RATINGS_AUTH_PUBLISHABLE_KEY:jwt(1,'aal1',{role:'anon',ref:'kriuhwppxgxsyyrbjsau'})});
+ for(const override of overrides){let calls=0;await assert.rejects(()=>verifyAuth({...passwordEnv,...override},async()=>{calls++;},()=>{calls++;}),{message:'Test-only Auth acceptance failed (details suppressed)'});assert.equal(calls,0);}
+});
+test('password mode feeds SDK-issued sessions through the unchanged 42-request acceptance matrix',async()=>{
+ const sdk=sdkFlow();let requests=0;
+ assert.deepEqual(await verifyAuth(passwordEnv,transport(r=>{requests++;return r;}),sdk.factory),{identities:4,tokens:5,directReadDenials:25});
+ assert.equal(requests,42);assert.deepEqual(sdk.counts(),{created:4,cleaned:4});
+ assert.deepEqual(sdk.steps,['password','password','password','password','factors','challenge','verify']);
+});
+test('SDK failures and missing verified factors fail closed and clean acquired sessions',async()=>{
+ for(const failure of ['login','factor','mfa']) {
+  const sdk=sdkFlow(failure);let requests=0;
+  await assert.rejects(()=>verifyAuth(passwordEnv,async()=>{requests++;},sdk.factory),{message:'Test-only Auth acceptance failed (details suppressed)'});
+  assert.equal(requests,0);const counts=sdk.counts();assert.equal(counts.created,counts.cleaned);
+ }
+});
+test('cleanup errors fail acceptance and cannot expose provider details',async()=>{
+ for(const failure of ['cleanup','cleanup-throw']) {
+  const sdk=sdkFlow(failure);
+  await assert.rejects(()=>verifyAuth(passwordEnv,transport(),sdk.factory),e=>{assert.equal(e.message,'Test-only Auth acceptance failed (details suppressed)');assert.equal(e.cause,undefined);return true;});
+  assert.deepEqual(sdk.counts(),{created:4,cleaned:4});
+ }
+});
+test('acceptance failure still signs out all created sessions',async()=>{
+ const sdk=sdkFlow();await assert.rejects(()=>verifyAuth(passwordEnv,async()=>{throw Error('secret response');},sdk.factory),{message:'Test-only Auth acceptance failed (details suppressed)'});
+ assert.deepEqual(sdk.counts(),{created:4,cleaned:4});
+});

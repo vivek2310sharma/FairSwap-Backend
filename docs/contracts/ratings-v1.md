@@ -315,33 +315,59 @@ API/RLS grants, dependencies, runtime flags or CI workflow changes.
 ### Secure hosted Test run
 
 Invoke `node tests/ratings/auth-test-only.mjs` only in a trusted operator process
-with these environment variables injected by its secret store (never shell arguments,
-chat, files, logs, CI artifacts, browser bundles or copied JWTs):
+with credentials injected by its secret store (never shell arguments, chat, files,
+logs, CI artifacts or browser bundles). No environment files are loaded.
 
-- `RATINGS_AUTH_TARGET` and `RATINGS_AUTH_URL`: exact FairSwapTest target and endpoint.
-- `RATINGS_AUTH_PUBLISHABLE_KEY`: Test publishable key or project-bound legacy anon key.
-- `RATINGS_AUTH_SELLER_TOKEN`, `RATINGS_AUTH_BUYER_TOKEN`, `RATINGS_AUTH_OUTSIDER_TOKEN`.
-- `RATINGS_AUTH_STAFF_AAL1_TOKEN`, `RATINGS_AUTH_STAFF_AAL2_TOKEN`.
+Both modes require `RATINGS_AUTH_TARGET=FairSwapTest`, `RATINGS_AUTH_URL` equal to
+`https://wpppxlnbzqynvhpeuavd.supabase.co`, and `RATINGS_AUTH_PUBLISHABLE_KEY`
+(Test publishable key or project-bound legacy anon key). Privileged keys are rejected;
+legacy keys with another project ref fail before any request. Opaque publishable keys
+cannot be project-validated locally; the exact Test endpoint validates them server-side.
 
-Use five distinct existing short-lived access tokens, four distinct active users,
-and the same active moderator/administrator for both staff tokens. The staff tokens
-must carry AAL1 and AAL2 respectively. All tokens need more than 60 seconds remaining.
-No passwords, refresh tokens, service keys, DB credentials or Management API PATs
-are accepted as user credentials. No login, refresh, MFA enrollment or session
-creation is performed. Missing or malformed inputs fail before any HTTP request.
-Decoded JWT claims are untrusted preflight filters; unchanged tokens must separately
-pass Auth user validation and actual PostgREST authorization. This does not prove
-immediate session revocation, role freshness beyond server enforcement, or live MFA
-challenge completion. Credentials and response bodies never enter receipts/errors.
+Default mode (or `RATINGS_AUTH_MODE=tokens`) accepts the existing inputs:
+`RATINGS_AUTH_SELLER_TOKEN`, `RATINGS_AUTH_BUYER_TOKEN`, `RATINGS_AUTH_OUTSIDER_TOKEN`,
+`RATINGS_AUTH_STAFF_AAL1_TOKEN` and `RATINGS_AUTH_STAFF_AAL2_TOKEN`.
+Use five distinct short-lived access tokens for four distinct active users, with the
+same active moderator/administrator at AAL1 and AAL2. Tokens need more than 60 seconds
+remaining. This mode does not create sessions or prove live MFA challenge completion.
 
-The runner permits only the exact Test endpoint, rejects redirects, times out requests,
-and performs only Auth GETs, direct-table GET denials and read RPC POSTs. It verifies
-invalid-token rejection by Auth and PostgREST, disabled participant RPCs, all five
-identities' direct table denials and staff role/AAL/disabled boundaries with SQLSTATE
-and HTTP status checks. A pass returns counts only. It does not read private settings
-or prove all four flags/cron state; independently targeted operator monitoring must
-confirm those. Seller/buyer labels do not prove transaction ownership without fixtures.
-Keep hosted enabled-state writes outside this runner.
+Opt in to existing-account login with `RATINGS_AUTH_MODE=password-totp`. Supply
+`RATINGS_AUTH_{SELLER,BUYER,OUTSIDER,STAFF}_{EMAIL,PASSWORD}`,
+`RATINGS_AUTH_STAFF_FACTOR_ID` and `RATINGS_AUTH_STAFF_TOTP_SECRET` through the same
+secure operator environment. All required inputs are checked before SDK creation or
+HTTP. Use four authorized active Test accounts, an existing moderator/administrator
+assignment and that staff account's existing verified TOTP factor. No staff-role
+provisioning, account creation/modification, MFA enrollment or service key is used.
+The pinned Supabase SDK signs in each account with its password, retains the staff
+AAL1 bearer, then lists factors, challenges and verifies TOTP on the same client.
+The acquired bearers pass the unchanged Auth/PostgREST acceptance matrix. Token
+persistence, automatic refresh and URL session detection are disabled; SDK requests
+reject redirects and have a 15-second timeout. Passwords, TOTP seeds and SDK payloads
+never enter returned errors or receipts.
+
+Every created client is signed out with `scope: 'local'` in a finally block, including
+when acceptance fails; a cleanup error fails the run. Local-scoped sign-out revokes
+that session's refresh token and does not instantly invalidate an already issued
+access JWT: it may remain usable until expiry. It does not globally sign out other
+sessions. No enrolled factor is removed or changed.
+
+Decoded JWT claims remain untrusted preflight filters; unchanged bearers must pass
+Auth user validation and actual PostgREST authorization. The runner preserves Test
+issuer, audience, role, subject/session, expiry, distinct-identity and staff AAL checks.
+It verifies invalid-token rejection by Auth and PostgREST, 25 direct-table GET denials,
+disabled participant RPCs and staff role/AAL/disabled boundaries. SQLSTATE `55000`
+requires HTTP 500; authenticated `42501` staff denials require HTTP 403. A pass
+returns counts only. The runner does not read private settings or prove all four
+flags/cron state; independently targeted monitoring must confirm those. Seller/buyer
+labels do not prove transaction ownership without fixtures. Keep enabled-state writes
+outside this runner. No Production Auth operation is supported.
+
+Focused offline verification:
+`node --test tests/ratings/auth-sessions.test.mjs tests/ratings/auth-test-only.test.mjs`.
+Hosted execution requires all secure operator inputs; otherwise report
+**NOT RUN — CREDENTIALS UNAVAILABLE**. Integration and protected CI remain with ChatGPT,
+followed by Test → Production verification with Ratings disabled. Rollback is a
+protected Git revert; preserve all migration and audit history.
 
 ### Disposable scenarios and automated evidence
 
