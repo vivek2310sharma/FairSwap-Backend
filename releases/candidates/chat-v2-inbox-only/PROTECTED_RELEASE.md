@@ -9,8 +9,10 @@ Earlier private-repository plan restrictions in the initial runbook are obsolete
 Public repositories can use required deployment reviewers; availability is distinct
 from actual configuration. PR60 reports owner-only main updates active and the
 stronger protect-main ruleset disabled. This is PR-reported administration state,
-not an independent audit of all settings. Connected tooling cannot establish all
-reviewer/bypass/secret-scope controls; unavailable or forbidden APIs block execution.
+not an independent audit of all settings. Read-only ruleset responses may omit
+`bypass_actors`; absence never establishes zero bypass permission. Every audit now
+requires the separately reviewed, commit-bound administrative evidence described in
+[ADMIN_ATTESTATION.md](ADMIN_ATTESTATION.md). Forbidden or incomplete APIs still block.
 See [GitHub deployment review](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)
 and [branch protection](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
 
@@ -32,8 +34,9 @@ Before enabling anything, ChatGPT/owner must configure and independently verify:
   `CHAT_RELEASE_AUDIT_TOKEN`; neither name may exist at repository scope. The audit
   identity needs read-only administration/rules/environment and secret-name metadata
   access, never secret values. It must not have source/write/deploy permissions.
-  Missing scope, pagination beyond verified complete responses, 403/404, absent
-  reviewers or bypass rights are blockers, not optional checks.
+  Missing scope, incomplete pagination, 403/404 or absent reviewers remain blockers.
+  An omitted bypass list requires explicit empty bypass lists in the independently
+  approved attestation. A visible nonempty or malformed bypass list always vetoes.
 - Environment variables `CHAT_INBOX_ENVIRONMENT_ENABLED=true` only after authority
   transfer; `CHAT_WEB_FLAG_OFF_CONFIRMED=true` backed by immutable Web off-state
   evidence; `CHAT_BACKEND_AUTHORITY_RECEIPT` pointing to the reviewed cutover receipt;
@@ -45,6 +48,27 @@ default. Manual dispatch `deploy` defaults false. Dispatch must target main, and
 `approved_sha` must equal the immutable workflow SHA. Checkouts use that SHA with
 persisted credentials disabled. All Actions are SHA-pinned; dependency installs
 disable lifecycle scripts and precede the credential-bearing step.
+
+The only new environment configuration is the non-secret, independently approved
+`CHAT_RELEASE_ADMIN_ATTESTATION_JSON` reference, separately scoped to Test and Prod.
+It binds the exact workflow commit, bundle, effective main rules, environment
+approvals, secret-name scope, all effective ruleset versions and empty bypass lists.
+Both authors must be distinct current repository administrators; the GET-only audit
+checks their unedited statement/approval comments and exact payload digest. Evidence
+expires within 24 hours. No token requires Administration write permission.
+
+For protection verification only, dispatch `audit_only=true`, `deploy=false`, with
+the reviewed `approved_sha` and `bundle_sha256`; ledger hashes are unnecessary.
+`audit_verify` checks the immutable bundle and automated audit tests without secrets.
+`audit_test` and then `audit_production` each require their own protected environment
+approval and expose only that environment's audit token to the audit entrypoint.
+They never receive a database password, install the Supabase CLI, import a migration
+runner, access a database, change flags or produce a deployment receipt. The initial
+`UNAPPROVED_SNAPSHOT` digest output is preparation metadata, never verification. A
+missing attestation fails the job. Only the final `status=verified` result is a
+successful protection audit; it makes no claim about hosted database/Web flag state.
+Both dispatch modes default false and are mutually exclusive. A release still
+requires `deploy=true`, `audit_only=false` and every existing default-off release gate.
 
 Compute `bundleHash()` from `scripts/release/protected-inbox-release.mjs` at the
 final reviewed commit. `protected-files.json` binds the complete release/security
@@ -102,7 +126,8 @@ and all five flags false. No user/message data is exported.
 
 Only success creates an exclusive-create sanitized receipt and SHA256SUMS containing
 environment, workflow SHA/run/attempt, source/execution/bundle/ledger/history hashes,
-version and flags-off evidence. Artifact v4 uses unique run/attempt names, overwrite
+version, flags-off evidence and protection-snapshot/administrator-attestation hashes.
+Artifact v4 uses unique run/attempt names, overwrite
 false and 90-day retention. It is immutable within its artifact lifecycle, not
 permanent WORM storage; archive the digest/receipt under approved recovery retention.
 No credentials, SQL, raw ledger, logs, dumps or message contents are uploaded.
@@ -145,11 +170,12 @@ Worker/scheduler versions remain separate and are not deployed here.
 
 ## Local evidence and outstanding gates
 
-The handoff records actual local results. PG17 binaries on this Windows machine lack
-postgres.bki, so native initialization failed before SQL. Linux PG17/CLI verification
-is prepared but NOT RUN locally or on GitHub by this task; its mandatory success is
-a release blocker. SQL fixture emulation in PGlite is explicitly not native/CLI proof.
-Protected admin settings, credential provisioning, authority transfer, Web off-state,
+The handoff records actual local results. The Windows PG17 installation lacks
+postgres.bki. The separate disposable WSL Linux PG17.6/CLI 2.117.0 fixture has since
+passed rollback, real CLI history, positive migration, postflight and client RLS
+checks; that local result is not hosted deployment or GitHub CI evidence. SQL fixture
+emulation in PGlite is separately recorded and is not native/CLI proof.
+Protected admin settings, independent live administrative attestations, authority transfer, Web off-state,
 backup/recovery evidence and actual Test/Prod automated postflight remain unverified.
 No GitHub workflow dispatch/administration, hosted change or manual test occurred.
 
@@ -157,3 +183,10 @@ The guarded execution includes a source/ledger-bound marker statement. Postfligh
 requires that marker in CLI-recorded statements, rejecting a skipped or competing
 installation whose version/name alone matches. This is distinct from and recorded
 alongside the complete rendered execution SHA-256; it is not a credential.
+
+Audit-correction rollback is a Git revert of the audit/workflow correction, without
+changing database state. Any subsequent authorized release remains FairSwapTest then
+FairSwapProd. Production acceptance still requires automatic migration-history,
+RLS/catalog, existing messaging and disabled-flag verification. Future activation
+rollback remains Web flag OFF, then DB inbox OFF, retaining additive schema, history
+and messages. This source correction neither dispatches nor authorizes a release.

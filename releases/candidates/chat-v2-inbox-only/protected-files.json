@@ -36,5 +36,9 @@
   "tests/chat-v2-inbox-only/package.json",
   "tests/chat-v2-inbox-only/pnpm-lock.yaml",
   "tests/chat-v2-inbox-only/protected-release.test.mjs",
-  "tests/chat-v2-inbox-only/renderer.test.mjs"
+  "tests/chat-v2-inbox-only/renderer.test.mjs",
+  "scripts/release/audit-inbox-only.mjs",
+  "tests/chat-v2-inbox-only/audit-fixture.mjs",
+  "tests/chat-v2-inbox-only/readonly-audit.test.mjs",
+  "releases/candidates/chat-v2-inbox-only/ADMIN_ATTESTATION.md"
 ]

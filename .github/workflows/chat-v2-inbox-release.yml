@@ -6,6 +6,11 @@ on:
         type: boolean
         default: false
         required: true
+      audit_only:
+        description: Protected read-only audit; no database access
+        type: boolean
+        default: false
+        required: true
       approved_sha:
         type: string
         required: true
@@ -14,10 +19,10 @@ on:
         required: true
       test_ledger_sha256:
         type: string
-        required: true
+        required: false
       prod_ledger_sha256:
         type: string
-        required: true
+        required: false
 permissions:
   contents: read
   actions: read
@@ -28,7 +33,7 @@ jobs:
   verify:
     if: >-
       github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
-      inputs.deploy && vars.CHAT_INBOX_RELEASE_ENABLED == 'true' && inputs.approved_sha == github.sha
+      inputs.deploy && !inputs.audit_only && vars.CHAT_INBOX_RELEASE_ENABLED == 'true' && inputs.approved_sha == github.sha
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -41,7 +46,7 @@ jobs:
           node-version: '24.15.0'
       - run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
       - run: bash scripts/ci/run-chat-inbox-pg17.sh
-      - run: node --test tests/chat-v2-inbox-only/protected-release.test.mjs
+      - run: node --test tests/chat-v2-inbox-only/protected-release.test.mjs tests/chat-v2-inbox-only/readonly-audit.test.mjs
       - name: Verify immutable reviewed bundle
         env:
           EXPECTED: ${{ inputs.bundle_sha256 }}
@@ -74,6 +79,7 @@ jobs:
           CHAT_APPROVED_LEDGER_JSON: ${{ vars.CHAT_APPROVED_LEDGER_JSON }}
           CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
           CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          CHAT_RELEASE_ADMIN_ATTESTATION_JSON: ${{ vars.CHAT_RELEASE_ADMIN_ATTESTATION_JSON }}
           LEDGER_SHA: ${{ inputs.test_ledger_sha256 }}
           BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
         run: node scripts/release/protected-inbox-release.mjs fairswaptest "$LEDGER_SHA" "$BUNDLE_SHA"
@@ -122,6 +128,7 @@ jobs:
           CHAT_APPROVED_LEDGER_JSON: ${{ vars.CHAT_APPROVED_LEDGER_JSON }}
           CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
           CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          CHAT_RELEASE_ADMIN_ATTESTATION_JSON: ${{ vars.CHAT_RELEASE_ADMIN_ATTESTATION_JSON }}
           LEDGER_SHA: ${{ inputs.prod_ledger_sha256 }}
           BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
         run: node scripts/release/protected-inbox-release.mjs fairswapprod "$LEDGER_SHA" "$BUNDLE_SHA"
@@ -132,3 +139,65 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           overwrite: false
+  audit_verify:
+    if: >-
+      github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
+      inputs.audit_only && !inputs.deploy && inputs.approved_sha == github.sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+      - run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+      - run: node --test tests/chat-v2-inbox-only/protected-release.test.mjs tests/chat-v2-inbox-only/readonly-audit.test.mjs
+      - name: Verify immutable reviewed audit bundle
+        env:
+          EXPECTED: ${{ inputs.bundle_sha256 }}
+        run: node --input-type=module -e 'import {bundleHash} from "./scripts/release/inbox-protection.mjs"; if(bundleHash()!==process.env.EXPECTED)process.exit(1)'
+  audit_test:
+    needs: audit_verify
+    if: ${{ needs.audit_verify.result == 'success' }}
+    environment: FairSwapTest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+      - run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+      - name: Approved Test protection audit only
+        env:
+          CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          CHAT_RELEASE_ADMIN_ATTESTATION_JSON: ${{ vars.CHAT_RELEASE_ADMIN_ATTESTATION_JSON }}
+          BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
+        run: node scripts/release/audit-inbox-only.mjs FairSwapTest "$BUNDLE_SHA"
+  audit_production:
+    needs: audit_test
+    if: ${{ needs.audit_test.result == 'success' }}
+    environment: FairSwapProd
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+      - run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+      - name: Independently approved Production protection audit only
+        env:
+          CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          CHAT_RELEASE_ADMIN_ATTESTATION_JSON: ${{ vars.CHAT_RELEASE_ADMIN_ATTESTATION_JSON }}
+          BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
+        run: node scripts/release/audit-inbox-only.mjs FairSwapProd "$BUNDLE_SHA"
