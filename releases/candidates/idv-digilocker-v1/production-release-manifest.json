@@ -10,7 +10,7 @@
     "version": "20261026183000",
     "name": "idv_digilocker_foundation",
     "relative_path": "supabase/forward-migrations/idv/20261026183000_idv_digilocker_foundation.sql",
-    "sha256": "005d362ef0014556e5c9cc14619c05dc0603c5854ae132ec84946069998efd9b"
+    "sha256": "0cf8a2bca0df7543b1187484cd83abebc7d0789d4c9e18d0bb138aa0ac1d9947"
   },
   "tables_created": [
     "public.user_identity_verifications",

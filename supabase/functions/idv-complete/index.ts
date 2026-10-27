@@ -19,8 +19,8 @@ export const completeParameterSchema = z.object({
 export const completePayloadSchema = z.object({
   attemptId: z.string().uuid().optional(),
   state: z.string().min(16),
-  // No default document category! Must be explicitly specified
-  docCategory: z.enum(["aadhaar_kyc", "pan_card", "driving_licence"]),
+  // Optional on client request: authoritative category is resolved from original consented attempt
+  docCategory: z.enum(["aadhaar_kyc", "pan_card", "driving_licence"]).optional(),
   orgId: z.string().optional(),
   parameters: z.array(completeParameterSchema).optional().default([]),
 });
@@ -127,16 +127,27 @@ export async function handleIdvComplete(
     });
   }
 
-  // Bound category check: Ensure the completed category matches the explicit consent bound to the attempt
-  if (attempt.evidence_category && attempt.evidence_category !== docCategory) {
+  // Authoritative category resolution: resolve directly from server-created attempt
+  const authoritativeCategory = attempt.evidence_category;
+  if (!authoritativeCategory) {
+    return new Response(
+      JSON.stringify({ error: "ATTEMPT_CATEGORY_MISSING", message: "Attempt lacks an authoritative evidence category." }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  // Bound category check: If client provided a docCategory, verify it matches original consented attempt
+  if (docCategory && docCategory !== authoritativeCategory) {
     return new Response(
       JSON.stringify({
         error: "CATEGORY_CONSENT_MISMATCH",
-        message: `Attempt was consented for '${attempt.evidence_category}', cannot complete for '${docCategory}'.`,
+        message: `Attempt was consented for '${authoritativeCategory}', cannot complete for '${docCategory}'.`,
       }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
+
+  const effectiveCategory = authoritativeCategory as "aadhaar_kyc" | "pan_card" | "driving_licence";
 
   // Lifecycle check: only in_progress attempts can be completed
   if (attempt.status !== "in_progress") {
@@ -197,7 +208,7 @@ export async function handleIdvComplete(
   }
 
   // 2. Independently retrieve and validate issuer-backed document evidence
-  const catalogueSpec = SETU_DOCUMENT_CATALOGUE[docCategory];
+  const catalogueSpec = SETU_DOCUMENT_CATALOGUE[effectiveCategory];
   if (!catalogueSpec) {
     return new Response(
       JSON.stringify({
@@ -213,8 +224,8 @@ export async function handleIdvComplete(
     return new Response(
       JSON.stringify({
         error: "AUTHENTICATION_UNSUPPORTED_FOR_CATEGORY",
-        message: `Badge issuance is currently disabled for ${docCategory}. ${catalogueSpec.activationNote || ""}`,
-        category: docCategory,
+        message: `Badge issuance is currently disabled for ${effectiveCategory}. ${catalogueSpec.activationNote || ""}`,
+        category: effectiveCategory,
       }),
       { status: 422, headers: { "Content-Type": "application/json" } }
     );
@@ -225,7 +236,7 @@ export async function handleIdvComplete(
   const verifiedAuthority = catalogueSpec.issuerAuthority;
 
   try {
-    if (docCategory === "aadhaar_kyc") {
+    if (effectiveCategory === "aadhaar_kyc") {
       // Aadhaar flow per Setu official documentation:
       // Response includes status: "complete", aadhaar: { name, maskedNumber, verified: { signature }, xml: { fileUrl, validUntil } }
       const aadhaarRes = await setuClient.fetchAadhaar(attempt.provider_request_id);
@@ -327,7 +338,7 @@ export async function handleIdvComplete(
     {
       p_attempt_id: attempt.id,
       p_user_id: userId,
-      p_evidence_category: docCategory,
+      p_evidence_category: effectiveCategory,
       p_issuer_authority: verifiedAuthority,
       p_document_reference_hash: docHmac,
     }

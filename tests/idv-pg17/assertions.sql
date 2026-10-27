@@ -96,7 +96,8 @@ begin
     p_ttl_seconds := 900,
     p_consent_purpose := 'FairSwap India Peer-to-Peer Identity Verification V1',
     p_consent_acknowledged := true,
-    p_policy_version := 'v1.0'
+    p_policy_version := 'v1.0',
+    p_evidence_category := 'aadhaar_kyc'
   );
   perform public.idv_assert((v_res->>'success')::boolean is true, 'server_idv_start_attempt succeeds with named arguments');
 
@@ -123,7 +124,7 @@ begin
     p_user_id := '11111111-1111-4000-8000-000000000001'::uuid,
     p_evidence_category := 'aadhaar_kyc',
     p_issuer_authority := 'UIDAI',
-    p_document_reference_hash := 'hmac_digest_token_user1_aadhaar'
+    p_document_reference_hash := 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
   );
   perform public.idv_assert((v_res->>'success')::boolean is true, 'server_idv_complete_verification succeeds');
 
@@ -232,13 +233,14 @@ declare
 begin
   -- Seed an attempt with an expired lease
   insert into app_security.idv_verification_attempts (
-    id, user_id, request_state, provider_request_id, status, attempt_expires_at,
+    id, user_id, request_state, provider_request_id, evidence_category, status, attempt_expires_at,
     revocation_pending, next_retry_at, lease_token, lease_expires_at, token_revocation_retry_count
   ) values (
     '44444444-4444-4000-8000-000000000004'::uuid,
     '22222222-2222-4000-8000-000000000002'::uuid,
     'state_nonce_crash_recovery_004',
     'setu_req_crash_4004',
+    'aadhaar_kyc',
     'verified',
     clock_timestamp() + interval '1 day',
     true,
@@ -337,7 +339,7 @@ insert into app_security.idv_identity_records (
   '44444444-4444-4000-8000-000000000004'::uuid,
   'aadhaar_kyc',
   'UIDAI',
-  'hash_user2_doc',
+  'fa3b1604a11be0744cb4de8f4fae9b3cf2ddacba9bf1e4433d7b42023ee45c47',
   clock_timestamp() - interval '1 hour',
   'FairSwap India Peer-to-Peer Identity Verification V1',
   'v1.0',
@@ -426,7 +428,22 @@ begin
       end if;
   end;
 
+  -- Negative Case: Missing app_project_ref (fails closed)
+  delete from vault.decrypted_secrets where name = 'app_project_ref';
+  begin
+    perform app_security.idv_activate_revocation_scheduler();
+    raise exception 'FAIL: Missing project reference must fail closed';
+  exception
+    when others then
+      if sqlerrm not like '%trusted project reference configuration missing%' then
+        raise exception 'Unexpected error on missing project ref test: %', sqlerrm;
+      end if;
+  end;
+
   -- Restore clean staging secrets
+  insert into vault.decrypted_secrets (name, decrypted_secret) values
+    ('app_project_ref', 'wpppxlnbzqynvhpeuavd')
+  on conflict (name) do update set decrypted_secret = excluded.decrypted_secret;
   update vault.decrypted_secrets
   set decrypted_secret = 'https://wpppxlnbzqynvhpeuavd.supabase.co/functions/v1/idv-revocation-worker'
   where name = 'idv_revocation_worker_url';

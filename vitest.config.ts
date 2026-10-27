@@ -17,7 +17,6 @@ export default defineConfig({
       "src/__tests__/moderation-worker.test.ts",
       "src/__tests__/moderation-worker-vault-auth.test.ts",
       "tests/unit/email-outbox-worker.test.ts",
-      "tests/unit/idv-setu.test.ts",
     ],
   },
 });

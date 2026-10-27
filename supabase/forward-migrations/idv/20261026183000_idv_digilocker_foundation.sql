@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS app_security.idv_verification_attempts (
   request_state text NOT NULL UNIQUE, -- Single-use cryptographic nonce
   provider_request_id text, -- Setu DigiLocker request ID (opaque)
   provider_session_url text, -- Consent redirect URL
-  evidence_category public.idv_evidence_category_enum NOT NULL DEFAULT 'aadhaar_kyc',
+  evidence_category public.idv_evidence_category_enum NOT NULL,
   status public.idv_status_enum NOT NULL DEFAULT 'pending',
   attempt_expires_at timestamptz NOT NULL,
   consent_timestamp timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -182,7 +182,7 @@ CREATE OR REPLACE FUNCTION app_security.impl_idv_start_attempt(
   p_consent_purpose text DEFAULT 'FairSwap India Peer-to-Peer Identity Verification V1',
   p_consent_acknowledged boolean DEFAULT false,
   p_policy_version text DEFAULT 'v1.0',
-  p_evidence_category text DEFAULT 'aadhaar_kyc'
+  p_evidence_category text DEFAULT NULL
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -203,9 +203,14 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'error', 'INVALID_PARAMETERS');
   END IF;
 
+  -- Require explicit evidence category; implicit default is strictly disallowed
+  IF p_evidence_category IS NULL OR length(trim(p_evidence_category)) = 0 THEN
+    RETURN jsonb_build_object('success', false, 'error', 'EVIDENCE_CATEGORY_REQUIRED');
+  END IF;
+
   -- Validate evidence category
   BEGIN
-    v_category := coalesce(trim(p_evidence_category), 'aadhaar_kyc')::public.idv_evidence_category_enum;
+    v_category := trim(p_evidence_category)::public.idv_evidence_category_enum;
   EXCEPTION WHEN OTHERS THEN
     RETURN jsonb_build_object('success', false, 'error', 'INVALID_EVIDENCE_CATEGORY');
   END;
@@ -421,6 +426,11 @@ BEGIN
   -- Provider session must be bound
   IF v_attempt.provider_request_id IS NULL OR length(trim(v_attempt.provider_request_id)) = 0 THEN
     RETURN jsonb_build_object('success', false, 'error', 'PROVIDER_REQUEST_NOT_BOUND');
+  END IF;
+
+  -- Enforce that completion uses the exact same category stored on the original consented attempt
+  IF v_attempt.evidence_category IS DISTINCT FROM p_evidence_category THEN
+    RETURN jsonb_build_object('success', false, 'error', 'CATEGORY_CONSENT_MISMATCH', 'attempt_category', v_attempt.evidence_category, 'provided_category', p_evidence_category);
   END IF;
 
   -- 4. Apply explicit badge validity/renewal policy: default to 1 year bounded validity; never indefinite
@@ -777,7 +787,7 @@ CREATE OR REPLACE FUNCTION public.server_idv_start_attempt(
   p_consent_purpose text DEFAULT 'FairSwap India Peer-to-Peer Identity Verification V1',
   p_consent_acknowledged boolean DEFAULT false,
   p_policy_version text DEFAULT 'v1.0',
-  p_evidence_category text DEFAULT 'aadhaar_kyc'
+  p_evidence_category text DEFAULT NULL
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -1315,7 +1325,7 @@ BEGIN
     RAISE EXCEPTION 'IDV_ACTIVATION_FAILED: vault secret "idv_revocation_worker_url" is not a valid Supabase project worker endpoint: %', v_url;
   END IF;
 
-  -- Validate against trusted environment-specific configuration if present: cross-project activation must fail
+  -- Validate against trusted environment-specific configuration: activation must fail closed if missing or mismatched
   DECLARE
     v_expected_project text;
   BEGIN
@@ -1328,10 +1338,16 @@ BEGIN
       v_expected_project := pg_catalog.nullif(pg_catalog.current_setting('app.supabase_project_ref', true), '');
     END IF;
 
-    IF v_expected_project IS NOT NULL AND length(trim(v_expected_project)) > 0 THEN
-      IF v_url !~ ('^https://' || trim(v_expected_project) || '\.supabase\.co/functions/v1/idv-revocation-worker$') THEN
-        RAISE EXCEPTION 'IDV_ACTIVATION_FAILED: cross-project scheduler activation forbidden: worker URL does not match configured project "%": %', v_expected_project, v_url;
-      END IF;
+    IF v_expected_project IS NULL OR length(trim(v_expected_project)) = 0 THEN
+      RAISE EXCEPTION 'IDV_ACTIVATION_FAILED: trusted project reference configuration missing (must set vault secret "app_project_ref" or session setting "app.supabase_project_ref")';
+    END IF;
+
+    IF trim(v_expected_project) NOT IN ('wpppxlnbzqynvhpeuavd', 'kriuhwppxgxsyyrbjsau') THEN
+      RAISE EXCEPTION 'IDV_ACTIVATION_FAILED: unapproved configured project reference "%"', v_expected_project;
+    END IF;
+
+    IF v_url !~ ('^https://' || trim(v_expected_project) || '\.supabase\.co/functions/v1/idv-revocation-worker$') THEN
+      RAISE EXCEPTION 'IDV_ACTIVATION_FAILED: cross-project scheduler activation forbidden: worker URL does not match configured project "%": %', v_expected_project, v_url;
     END IF;
   END;
 

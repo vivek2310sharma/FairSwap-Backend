@@ -26,8 +26,9 @@
     "supabase/functions/_shared/listing-moderation-worker.ts",
     "supabase/functions/_shared/idv/*.ts",
     "supabase/functions/idv-*/*.ts",
-    "tests/unit/idv-setu.test.ts",
-    "vitest.config.ts"
+    "tests/idv/idv-setu.test.ts",
+    "vitest.config.ts",
+    "vitest.idv.config.ts"
   ],
   "exclude": ["node_modules", "supabase/functions/process-*/**"]
 }

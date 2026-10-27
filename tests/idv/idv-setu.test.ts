@@ -277,20 +277,19 @@ describe("Setu DigiLocker Client Adapter Contract", () => {
 });
 
 describe("IDV Security Gate & Lifecycle Remediation Checks", () => {
-  it("rejects payload without explicit docCategory", () => {
-    const invalidPayload = {
+  it("accepts completion payload without docCategory, allowing authoritative server resolution", () => {
+    const payloadWithoutCategory = {
       attemptId: "11111111-1111-1111-1111-111111111111",
       state: "state_nonce_1234567890",
-      // docCategory omitted
     };
-    const res = completePayloadSchema.safeParse(invalidPayload);
-    expect(res.success).toBe(false);
+    const res = completePayloadSchema.safeParse(payloadWithoutCategory);
+    expect(res.success).toBe(true);
+    expect(res.data?.docCategory).toBeUndefined();
   });
 
   it("accepts payload with omitted attemptId for secure session-bound state recovery", () => {
     const payloadWithoutAttempt = {
       state: "state_nonce_1234567890",
-      docCategory: "aadhaar_kyc",
     };
     const res = completePayloadSchema.safeParse(payloadWithoutAttempt);
     expect(res.success).toBe(true);
