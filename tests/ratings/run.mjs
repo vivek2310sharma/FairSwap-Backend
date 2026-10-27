@@ -4,6 +4,7 @@ import {readFileSync,readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 import {consumerContractChecks} from './consumer-contract.mjs';
+import {launchReadinessChecks} from './launch-readiness.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const read=p=>readFileSync(root+p,'utf8');
 // Load only the selected engine: native adapter path validation is platform-specific.
@@ -199,6 +200,6 @@ try {
  await test('account deletion erases text and removes reputation; physical deletion is FK safe',async()=>{await owner();await db.query(`update public.user_accounts set account_status='deletion_pending' where user_id=$1`,[buyer]);assert.equal((await summary(seller)).counted_review_count,0);assert.equal((await summary(seller)).completed_trades,0);assert.equal(await q(`select count(*)::int from public.rating_reviews where body is not null`),0);assert.equal(await q(`select count(*)::int from public.rating_replies where body<>'[redacted]'`),0);await db.query('delete from auth.users where id=$1',[buyer]);});
  await owner();await db.exec(read('supabase/forward-migrations/ratings/tests/security.sql'));
  await test('catalog security assertions pass',async()=>{});
- if(nativePort)await test('rollback kill switch disables only Ratings settings and jobs',async()=>{await db.exec(read('releases/candidates/ratings-v1/rollback-disable.sql'));assert.equal(await q(`select count(*)::int from app_security.ratings_settings where enabled or public_reads or jobs_enabled or staff_enabled`),0);assert.equal(await q(`select count(*)::int from cron.job where active`),0);assert.equal(await q('select app_security.publish_due_reviews()'),0);});
+ await launchReadinessChecks(db,test,read('releases/candidates/ratings-v1/rollback-disable.sql'));
  console.log(`PASS ${checks} automated database checks; no hosted or external network operations`);
 } catch(e) {console.error('FAIL',e.message,e.code??'',e.where??'');process.exitCode=1;} finally {await db.close();}
