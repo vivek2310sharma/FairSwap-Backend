@@ -46,7 +46,7 @@ test('workflow is manual/default-off and has separately gated Test and Productio
 test('complete protections pass; self approval, bypass, pagination and repository secrets fail',async()=>{
  const {responses,evidence}=await auditFixture();
  assert.equal((await auditProtection('FairSwapTest','fixture',fixtureApi(responses),evidence)).protected,true);
- for(const mutate of [x=>{x['/environments/FairSwapTest'].can_admins_bypass=true;},x=>{x['/actions/secrets?per_page=100']={total_count:1,secrets:[{name:'CHAT_DATABASE_PASSWORD'}]};},x=>{x['/actions/secrets?per_page=100'].total_count=999;},x=>{x['/rulesets/1'].bypass_actors=[{actor_id:1}];}]){
+ for(const mutate of [x=>{x['/environments/FairSwapTest'].can_admins_bypass=true;},x=>{x['/actions/secrets?per_page=100']={total_count:1,secrets:[{name:'CHAT_DATABASE_PASSWORD'}]};},x=>{x['/actions/secrets?per_page=100'].total_count=999;},x=>{x['/rulesets/25352225'].bypass_actors=[{actor_id:1}];}]){
   const copy=structuredClone(responses);mutate(copy);await assert.rejects(()=>auditProtection('FairSwapTest','fixture',fixtureApi(copy),evidence),/CHAT_/);
  }
 });

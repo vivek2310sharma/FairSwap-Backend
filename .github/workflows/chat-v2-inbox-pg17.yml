@@ -18,5 +18,5 @@ jobs:
         with:
           node-version: '24.15.0'
       - run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
-      - run: node --test tests/chat-v2-inbox-only/protected-release.test.mjs
+      - run: node --test tests/chat-v2-inbox-only/protected-release.test.mjs tests/chat-v2-inbox-only/readonly-audit.test.mjs
       - run: bash scripts/ci/run-chat-inbox-pg17.sh

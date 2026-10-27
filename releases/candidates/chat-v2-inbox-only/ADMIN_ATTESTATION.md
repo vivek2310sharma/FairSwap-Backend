@@ -7,10 +7,11 @@ No database migration, secret change or flag change is required by this correcti
 
 ## Trust and least privilege
 
-Each protected environment needs one new **non-secret environment variable**:
+Each protected environment continues using the existing **non-secret reference**:
 `CHAT_RELEASE_ADMIN_ATTESTATION_JSON`. This is an independently approved reference,
 not a repository variable, workflow source assertion or token. Configure it through
 the existing administrative approval process; this handoff creates no live evidence.
+This policy correction introduces no new environment variable or attestation field.
 Existing `CHAT_DATABASE_PASSWORD` and `CHAT_RELEASE_AUDIT_TOKEN` remain environment
 secrets, with distinct Test and Production values. Never expose their values.
 
@@ -38,9 +39,10 @@ and [permissions API](https://docs.github.com/en/rest/collaborators/collaborator
    an expected **failure**, not a passed audit. Neither environment job receives a
    database password. Test must pass before the Production audit job can proceed.
 3. An administrator independently inspects **every effective ruleset** listed in
-   that snapshot, including inherited rulesets, using existing administrative
-   settings/access. Confirm active enforcement, exact conditions/rules/version and
-   an explicitly empty complete bypass list for each. Also independently review
+   that snapshot using existing administrative settings/access. There must be
+   exactly the two recognized repository rulesets below; unexpected or inherited
+   effective rulesets block the audit. Confirm active enforcement, exact conditions/rules/version and
+   the exact complete bypass list required by the pinned policy below. Also independently review
    main reviews/CI, environment reviewer identities, self-review prevention,
    administrator bypass disabled, main-only branch policy and environment-only
    secret names. An unavailable complete administrative view is a blocker. Do not
@@ -60,7 +62,10 @@ and [permissions API](https://docs.github.com/en/rest/collaborators/collaborator
      "attestor": {"login": "ADMIN_LOGIN", "id": 0},
      "reviewer": {"login": "DIFFERENT_ADMIN_LOGIN", "id": 0},
      "reviewIssue": 60,
-     "rulesets": [{"id": 0, "policySha256": "EXACT_VISIBLE_POLICY_HASH", "updatedAt": "EXACT_RULESET_UPDATE_TIME", "bypassActors": []}]
+     "rulesets": [
+       {"id": 25352225, "policySha256": "EXACT_PROTECT_MAIN_POLICY_HASH", "updatedAt": "EXACT_RULESET_UPDATE_TIME", "bypassActors": []},
+       {"id": 25821687, "policySha256": "EXACT_OWNER_UPDATE_POLICY_HASH", "updatedAt": "EXACT_RULESET_UPDATE_TIME", "bypassActors": [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]}
+     ]
    }
    ```
 
@@ -90,8 +95,8 @@ and [permissions API](https://docs.github.com/en/rest/collaborators/collaborator
    reconstructs fixed repository API URLs and verifies author IDs/logins, current
    administrator permissions, issue identity, exact bodies, no edits, timestamps,
    expiry, source/bundle binding and the complete live snapshot. It rechecks live
-   protections after validating the comments. A visible nonempty/malformed bypass
-   list vetoes even a previously approved statement.
+   protections after validating the comments. A visible list differing from the
+   exact pinned policy, or any malformed list, vetoes an approved statement.
 8. Repeat the protected audit-only run and obtain `status=verified` for Test then
    independently approved Production. Only sanitized hashes/status are returned.
    No migration, hosted database/Web check, activation or release authority follows
@@ -106,7 +111,7 @@ the commit/bundle/protection snapshot/ruleset version or expiry blocks reuse. To
 correct evidence, issue new comments and replace the protected environment reference;
 do not edit a comment in place. Revoke by removing the environment reference or
 deleting an evidence comment. All effective rulesets require explicit attestation
-even if a response happens to contain an empty `bypass_actors` array. This is a
+even if a response happens to expose `bypass_actors`. This is a
 bounded administrative assertion, not cryptographic proof of hidden server state;
 its trust rests on two administrators, protected environment approvals and the short
 validity window. Settings can change after an audit; the actual release independently
@@ -116,3 +121,35 @@ No live administrative evidence is fabricated in this archive. Availability of t
 independent administrators, actual token scopes, protected environment configuration,
 live audit-only execution and applicability at the supplied remote HEAD remain
 unverified. This procedure does not ask for exploratory or owner database testing.
+
+## Exact owner-update exception and automatic CI
+
+The only recognized effective rulesets are repository-owned `protect-main`
+(`25352225`) and `main-owner-only-updates` (`25821687`), active on branch targets in
+this exact repository. Both must target only `main`: one include of
+`refs/heads/main`, or `~DEFAULT_BRANCH` while the live repository default is `main`,
+with no exclusions or additional condition kinds. The exact condition spelling,
+parameters, full rules and update times remain bound to the policy/snapshot digest.
+Changing any of them invalidates the previous signed evidence.
+
+Only `25821687` may have bypass actors. It must contain **exactly** the three rule
+types `deletion`, `non_fast_forward` and `update`, both in its policy and the live
+effective-main rules. Its complete bypass list must contain exactly
+`{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}`, with no
+additional actors or fields. This is the user-reported existing RepositoryRole
+exception, not a claim that actor 5 identifies an individual owner. It must be
+independently observed and explicitly included in the administrator payload.
+Omission from a read-only response is never proof of its contents.
+
+All PR approval and required CI rules must belong to `25352225`, which must retain
+zero bypass actors in both visible metadata (when supplied) and signed evidence.
+Moving either rule type onto the owner-update ruleset, adding either there, changing
+the exception's actor/type/mode, or introducing another ruleset is rejected. No live
+ruleset is changed by this code. Existing token scopes and both independent
+administrator approvals remain unchanged; source/bundle changes require fresh proof.
+
+The existing `chat-inbox-native-pg17` PR-triggered job now executes both protected
+release and read-only audit tests before its unchanged native database fixture.
+There is no path filter, conditional skip, new check name or reduced permission gate.
+Whether the live branch rules require this check is still audited from metadata;
+this local task makes no GitHub administration changes.

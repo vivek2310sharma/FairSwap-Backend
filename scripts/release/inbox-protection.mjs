@@ -23,6 +23,24 @@ const id=value=>Number.isSafeInteger(value)&&value>0;
 const sha=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 const iso=value=>typeof value==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value)&&Number.isFinite(Date.parse(value));
 const keys=(value,expected)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===[...expected].sort().join(',');
+const ownerRulesetId=25821687,approvalRulesetId=25352225;
+const ownerRuleTypes=['deletion','non_fast_forward','update'];
+function requiredBypassActors(rulesetId){
+ if(rulesetId===ownerRulesetId)return [{actor_id:5,actor_type:'RepositoryRole',bypass_mode:'always'}];
+ if(rulesetId===approvalRulesetId)return [];
+ fail('CHAT_RULESET_UNRECOGNIZED');
+}
+function verifyRulesetShape(policy,effectiveRules){
+ const owner=policy.id===ownerRulesetId;
+ requiredBypassActors(policy.id); // No other ruleset can inherit this exception.
+ const conditions=policy.conditions,ref=conditions?.ref_name;
+ if(policy.name!==(owner?'main-owner-only-updates':'protect-main')||policy.source_type!=='Repository'||policy.source!==repository||!keys(conditions,['ref_name'])||!keys(ref,['include','exclude'])||!Array.isArray(ref.include)||ref.include.length!==1||!['refs/heads/main','~DEFAULT_BRANCH'].includes(ref.include[0])||!Array.isArray(ref.exclude)||ref.exclude.length!==0)fail('CHAT_RULESET_SCOPE_MISMATCH');
+ if(!Array.isArray(policy.rules)||policy.rules.some(rule=>typeof rule?.type!=='string'))fail('CHAT_RULESET_RULES_MISMATCH');
+ const types=list=>list.map(rule=>rule.type).sort();
+ if(owner){
+  if(canonicalJson(types(policy.rules))!==canonicalJson(ownerRuleTypes)||canonicalJson(types(effectiveRules))!==canonicalJson(ownerRuleTypes))fail('CHAT_OWNER_UPDATE_RULESET_REQUIRED');
+ }else if(!['pull_request','required_status_checks'].every(type=>policy.rules.some(rule=>rule.type===type)))fail('CHAT_BRANCH_APPROVAL_AND_CHECKS_REQUIRED');
+}
 function client(token,fetcher){
  return async path=>{
   try{
@@ -55,11 +73,14 @@ export async function inspectProtection(environment,token,sourceCommit,fetcher=f
  if(!prs.length||prs.some(pr=>!Number.isSafeInteger(pr.parameters?.required_approving_review_count)||pr.parameters.required_approving_review_count<1||pr.parameters.dismiss_stale_reviews_on_push!==true)||!checks.includes('backend-ci-success')||!checks.includes('chat-inbox-native-pg17'))fail('CHAT_BRANCH_APPROVAL_AND_CHECKS_REQUIRED');
  if(rules.some(rule=>!id(rule.ruleset_id)))fail('CHAT_RULESET_METADATA_REQUIRED');
  const ids=[...new Set(rules.map(rule=>rule.ruleset_id))].sort((a,b)=>a-b),rulesets=[];
+ if(canonicalJson(ids)!==canonicalJson([approvalRulesetId,ownerRulesetId]))fail('CHAT_RULESET_UNRECOGNIZED');
+ if(rules.some(rule=>['pull_request','required_status_checks'].includes(rule.type)&&rule.ruleset_id!==approvalRulesetId))fail('CHAT_APPROVAL_RULESET_BYPASS_FORBIDDEN');
  for(const rulesetId of ids){
   const policy=await get(`/rulesets/${rulesetId}`);
   if(policy?.id!==rulesetId||policy.enforcement!=='active'||policy.target!=='branch'||!iso(policy.updated_at))fail('CHAT_RULESET_METADATA_REQUIRED');
-  // Present-but-nonempty/malformed lists always veto. Absence proves nothing.
-  if(Object.hasOwn(policy,'bypass_actors')&&(!Array.isArray(policy.bypass_actors)||policy.bypass_actors.length!==0))fail('CHAT_RULESET_BYPASS_FORBIDDEN');
+  verifyRulesetShape(policy,rules.filter(rule=>rule.ruleset_id===rulesetId));
+  // Absence proves nothing; visible and attested lists must match the pinned policy.
+  if(Object.hasOwn(policy,'bypass_actors')&&canonicalJson(policy.bypass_actors)!==canonicalJson(requiredBypassActors(rulesetId)))fail('CHAT_RULESET_BYPASS_FORBIDDEN');
   const {bypass_actors,_links,...visible}=policy;
   rulesets.push({id:rulesetId,policySha256:protectionHash(visible),updatedAt:policy.updated_at});
  }
@@ -77,7 +98,7 @@ export async function verifyAdministrativeAttestation(environment,token,evidence
  const person=value=>keys(value,['login','id'])&&id(value.id)&&typeof value.login==='string'&&/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(value.login);
  if(!keys(attestation,['payload','attestationCommentId','approvalCommentId'])||!keys(p,['schema','repository','environment','sourceCommit','bundleSha256','snapshotSha256','observedAt','expiresAt','attestor','reviewer','reviewIssue','rulesets'])||p.schema!==1||p.repository!==repository||p.environment!==environment||p.sourceCommit!==evidence.sourceCommit||!sha(p.bundleSha256)||p.bundleSha256!==evidence.bundleSha256||!sha(p.snapshotSha256)||p.snapshotSha256!==inspection.snapshotSha256||!person(p.attestor)||!person(p.reviewer)||p.attestor.id===p.reviewer.id||p.attestor.login.toLowerCase()===p.reviewer.login.toLowerCase()||!id(p.reviewIssue)||!id(attestation.attestationCommentId)||!id(attestation.approvalCommentId)||attestation.attestationCommentId===attestation.approvalCommentId)fail('CHAT_ADMIN_ATTESTATION_INVALID');
  if(!iso(p.observedAt)||!iso(p.expiresAt)||Date.parse(p.observedAt)>now||Date.parse(p.expiresAt)<=now||Date.parse(p.expiresAt)<=Date.parse(p.observedAt)||Date.parse(p.expiresAt)-Date.parse(p.observedAt)>86400000)fail('CHAT_ADMIN_ATTESTATION_STALE');
- if(!Array.isArray(p.rulesets)||p.rulesets.length!==inspection.rulesets.length||p.rulesets.some((rule,index)=>!keys(rule,['id','policySha256','updatedAt','bypassActors'])||!Array.isArray(rule.bypassActors)||rule.bypassActors.length!==0||Date.parse(rule.updatedAt)>Date.parse(p.observedAt)||canonicalJson({id:rule.id,policySha256:rule.policySha256,updatedAt:rule.updatedAt})!==canonicalJson(inspection.rulesets[index])))fail('CHAT_ADMIN_ATTESTATION_RULESET_MISMATCH');
+ if(!Array.isArray(p.rulesets)||p.rulesets.length!==inspection.rulesets.length||p.rulesets.some((rule,index)=>!keys(rule,['id','policySha256','updatedAt','bypassActors'])||rule.id!==inspection.rulesets[index].id||canonicalJson(rule.bypassActors)!==canonicalJson(requiredBypassActors(rule.id))||Date.parse(rule.updatedAt)>Date.parse(p.observedAt)||canonicalJson({id:rule.id,policySha256:rule.policySha256,updatedAt:rule.updatedAt})!==canonicalJson(inspection.rulesets[index])))fail('CHAT_ADMIN_ATTESTATION_RULESET_MISMATCH');
  const get=client(token,fetcher),attestationSha256=protectionHash(p);
  const [statement,approval,authorPermission,reviewerPermission]=await Promise.all([get(`/issues/comments/${attestation.attestationCommentId}`),get(`/issues/comments/${attestation.approvalCommentId}`),get(`/collaborators/${p.attestor.login}/permission`),get(`/collaborators/${p.reviewer.login}/permission`)]);
  for(const [comment,person,permission]of [[statement,p.attestor,authorPermission],[approval,p.reviewer,reviewerPermission]]){

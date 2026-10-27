@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {auditProtection,bundleHash} from '../../scripts/release/inbox-protection.mjs';
+import {auditProtection,bundleHash,inspectProtection} from '../../scripts/release/inbox-protection.mjs';
 import {auditOnly} from '../../scripts/release/audit-inbox-only.mjs';
 import {auditFixture,fixtureApi} from './audit-fixture.mjs';
 const run=fixture=>auditProtection('FairSwapTest','fixture-token',fixtureApi(fixture.responses),fixture.evidence);
@@ -12,9 +12,65 @@ const run=fixture=>auditProtection('FairSwapTest','fixture-token',fixtureApi(fix
 test('read-only omitted bypass lists require independently reviewed evidence even when explicitly empty',async()=>{
  const fixture=await auditFixture();
  assert.equal((await run(fixture)).protected,true);
- fixture.responses['/rulesets/1'].bypass_actors=[];
+ fixture.responses['/rulesets/25352225'].bypass_actors=[];
  assert.equal((await run(fixture)).protected,true);
  for(const attestationJson of [undefined,'','null','{}','private-token-not-json'])await assert.rejects(()=>auditProtection('FairSwapTest','fixture-token',fixtureApi(fixture.responses),{...fixture.evidence,attestationJson}),/CHAT_ADMIN_ATTESTATION/);
+});
+
+test('only the exact visible owner-update actor and independently attested actor are accepted',async()=>{
+ const fixture=await auditFixture();
+ fixture.responses['/rulesets/25821687'].bypass_actors=[{actor_id:5,actor_type:'RepositoryRole',bypass_mode:'always'}];
+ fixture.responses['/rulesets/25352225'].bypass_actors=[];
+ assert.equal((await run(fixture)).protected,true);
+ const owner=fixture.attestation.payload.rulesets.find(rule=>rule.id===25821687);
+ for(const bypassActors of [[],undefined,[{actor_id:4,actor_type:'RepositoryRole',bypass_mode:'always'}],[{actor_id:5,actor_type:'RepositoryRole',bypass_mode:'pull_request'}]]){
+  owner.bypassActors=bypassActors;fixture.evidence.attestationJson=JSON.stringify(fixture.attestation);
+  await assert.rejects(()=>run(fixture),/CHAT_ADMIN_ATTESTATION_RULESET_MISMATCH/);
+ }
+});
+
+const invalidOwnerPolicies={
+ 'wrong owner name':r=>{r['/rulesets/25821687'].name='another-name';},
+ 'wrong owner ID':r=>{r['/rulesets/25821687'].id=99;},
+ 'wrong owner source':r=>{r['/rulesets/25821687'].source='foreign/repository';},
+ 'inherited owner exception':r=>{r['/rulesets/25821687'].source_type='Organization';},
+ 'owner wildcard target':r=>{r['/rulesets/25821687'].conditions.ref_name.include=['refs/heads/*'];},
+ 'owner non-main target':r=>{r['/rulesets/25821687'].conditions.ref_name.include=['refs/heads/release'];},
+ 'owner additional target':r=>{r['/rulesets/25821687'].conditions.ref_name.include.push('refs/heads/release');},
+ 'owner exclusions':r=>{r['/rulesets/25821687'].conditions.ref_name.exclude=['refs/heads/main'];},
+ 'owner missing conditions':r=>{delete r['/rulesets/25821687'].conditions;},
+ 'owner extra condition':r=>{r['/rulesets/25821687'].conditions.repository_name={include:['*'],exclude:[]};},
+ 'owner removed deletion rule':r=>{r['/rulesets/25821687'].rules.shift();},
+ 'owner removed non-fast-forward rule':r=>{r['/rulesets/25821687'].rules.splice(1,1);},
+ 'owner removed update rule':r=>{r['/rulesets/25821687'].rules.pop();},
+ 'owner duplicate update rule':r=>{r['/rulesets/25821687'].rules.push({type:'update'});},
+ 'owner PR rule':r=>{r['/rulesets/25821687'].rules.push({type:'pull_request'});},
+ 'owner CI rule':r=>{r['/rulesets/25821687'].rules.push({type:'required_status_checks'});},
+ 'effective PR assigned to owner':r=>{r['/rules/branches/main?per_page=100'][0].ruleset_id=25821687;},
+ 'effective CI assigned to owner':r=>{r['/rules/branches/main?per_page=100'][1].ruleset_id=25821687;},
+ 'owner missing effective update':r=>{r['/rules/branches/main?per_page=100'].pop();},
+ 'unknown effective ruleset':r=>{r['/rules/branches/main?per_page=100'].push({type:'update',ruleset_id:99});},
+ 'owner changed actor':r=>{r['/rulesets/25821687'].bypass_actors=[{actor_id:4,actor_type:'RepositoryRole',bypass_mode:'always'}];},
+ 'owner string actor ID':r=>{r['/rulesets/25821687'].bypass_actors=[{actor_id:'5',actor_type:'RepositoryRole',bypass_mode:'always'}];},
+ 'owner extra actor field':r=>{r['/rulesets/25821687'].bypass_actors=[{actor_id:5,actor_type:'RepositoryRole',bypass_mode:'always',other:true}];},
+ 'owner changed actor type':r=>{r['/rulesets/25821687'].bypass_actors=[{actor_id:5,actor_type:'User',bypass_mode:'always'}];},
+ 'owner changed bypass mode':r=>{r['/rulesets/25821687'].bypass_actors=[{actor_id:5,actor_type:'RepositoryRole',bypass_mode:'pull_request'}];},
+ 'owner additional actor':r=>{r['/rulesets/25821687'].bypass_actors=[{actor_id:5,actor_type:'RepositoryRole',bypass_mode:'always'},{actor_id:6,actor_type:'RepositoryRole',bypass_mode:'always'}];},
+ 'owner empty visible list':r=>{r['/rulesets/25821687'].bypass_actors=[];},
+ 'owner malformed visible list':r=>{r['/rulesets/25821687'].bypass_actors=null;},
+ 'approval ruleset given owner actor':r=>{r['/rulesets/25352225'].bypass_actors=[{actor_id:5,actor_type:'RepositoryRole',bypass_mode:'always'}];},
+ 'approval ruleset renamed':r=>{r['/rulesets/25352225'].name='another-name';},
+ 'approval scope broadened':r=>{r['/rulesets/25352225'].conditions.ref_name.include=['refs/heads/*'];},
+};
+for(const [name,mutate]of Object.entries(invalidOwnerPolicies))test(`policy guard rejects ${name} before attestation`,async()=>{
+ const fixture=await auditFixture();mutate(fixture.responses);
+ await assert.rejects(()=>inspectProtection('FairSwapTest','fixture-token',fixture.evidence.sourceCommit,fixtureApi(fixture.responses)),/CHAT_/);
+});
+
+test('owner conditions and rule parameters remain bound to the exact reviewed snapshot',async()=>{
+ for(const mutate of [r=>{r['/rulesets/25821687'].conditions.ref_name.include=['~DEFAULT_BRANCH'];},r=>{r['/rulesets/25821687'].rules[2].parameters={update_allows_fetch_and_merge:true};}]){
+  const fixture=await auditFixture();mutate(fixture.responses);await assert.rejects(()=>run(fixture),/CHAT_ADMIN_ATTESTATION_INVALID/);
+ }
 });
 
 const invalidAttestations={
@@ -41,10 +97,10 @@ const changes={
  'changed required review count':r=>{r['/rules/branches/main?per_page=100'][0].parameters.required_approving_review_count=0;},
  'weakened stale review dismissal':r=>{r['/rules/branches/main?per_page=100'][0].parameters.dismiss_stale_reviews_on_push=false;},
  'missing required CI':r=>{r['/rules/branches/main?per_page=100'][1].parameters.required_status_checks=[];},
- 'ruleset changed after attestation':r=>{r['/rulesets/1'].updated_at=new Date().toISOString();},
- 'disabled ruleset':r=>{r['/rulesets/1'].enforcement='disabled';},
- 'visible bypass actors':r=>{r['/rulesets/1'].bypass_actors=[{actor_id:1}];},
- 'malformed visible bypass list':r=>{r['/rulesets/1'].bypass_actors=null;},
+ 'ruleset changed after attestation':r=>{r['/rulesets/25352225'].updated_at=new Date().toISOString();},
+ 'disabled ruleset':r=>{r['/rulesets/25352225'].enforcement='disabled';},
+ 'visible bypass actors':r=>{r['/rulesets/25352225'].bypass_actors=[{actor_id:1}];},
+ 'malformed visible bypass list':r=>{r['/rulesets/25352225'].bypass_actors=null;},
  'changed environment reviewer':r=>{r['/environments/FairSwapTest'].protection_rules[0].reviewers[0].reviewer.id=99;},
  'missing environment reviewers':r=>{r['/environments/FairSwapTest'].protection_rules[0].reviewers=[];},
  'self-review allowed':r=>{r['/environments/FairSwapTest'].protection_rules[0].prevent_self_review=false;},
@@ -72,7 +128,7 @@ for(const [name,mutate]of Object.entries(changes))test(`audit fails closed: ${na
 test('all denied endpoints, transport/JSON failures and pagination links fail closed without upstream text',async()=>{
  const fixture=await auditFixture();
  for(const path of Object.keys(fixture.responses))await assert.rejects(()=>auditProtection('FairSwapTest','fixture-token',fixtureApi(fixture.responses,{denied:[path]}),fixture.evidence),/CHAT_ADMIN_PROTECTION_UNVERIFIABLE/);
- for(const path of ['/rules/branches/main?per_page=100','/rulesets/1','/actions/secrets?per_page=100'])await assert.rejects(()=>auditProtection('FairSwapTest','fixture-token',fixtureApi(fixture.responses,{links:{[path]:'<https://api.github.com/next>; rel="next"'}}),fixture.evidence),/CHAT_ADMIN_PAGINATION_INCOMPLETE/);
+ for(const path of ['/rules/branches/main?per_page=100','/rulesets/25352225','/actions/secrets?per_page=100'])await assert.rejects(()=>auditProtection('FairSwapTest','fixture-token',fixtureApi(fixture.responses,{links:{[path]:'<https://api.github.com/next>; rel="next"'}}),fixture.evidence),/CHAT_ADMIN_PAGINATION_INCOMPLETE/);
  for(const fetcher of [async()=>{throw Error('private-upstream-token');},async()=>({ok:true,headers:new Headers(),json:async()=>{throw Error('private-upstream-token');}})])await assert.rejects(()=>auditProtection('FairSwapTest','fixture-token',fetcher,fixture.evidence),error=>error.message==='CHAT_ADMIN_PROTECTION_UNVERIFIABLE');
 });
 
@@ -120,6 +176,15 @@ test('audit workflow has independently protected sequential jobs and cannot reac
  assert(!/child_process|protected-inbox-release|protected-inbox-plan|supabase-js/.test(readFileSync(new URL('../../scripts/release/audit-inbox-only.mjs',import.meta.url),'utf8')));
  const protectedFiles=JSON.parse(readFileSync(new URL('../../releases/candidates/chat-v2-inbox-only/protected-files.json',import.meta.url),'utf8'));
  for(const file of ['scripts/release/audit-inbox-only.mjs','tests/chat-v2-inbox-only/readonly-audit.test.mjs','tests/chat-v2-inbox-only/audit-fixture.mjs'])assert(protectedFiles.includes(file));
+});
+
+test('the required native PG17 PR job runs the read-only audit suite without filters or conditional skips',()=>{
+ const workflow=readFileSync(new URL('../../.github/workflows/chat-v2-inbox-pg17.yml',import.meta.url),'utf8');
+ assert(/^  pull_request:\s*$/m.test(workflow));assert(/^  chat-inbox-native-pg17:\s*$/m.test(workflow));
+ assert(workflow.includes('- run: node --test tests/chat-v2-inbox-only/protected-release.test.mjs tests/chat-v2-inbox-only/readonly-audit.test.mjs'));
+ assert(workflow.includes('- run: bash scripts/ci/run-chat-inbox-pg17.sh'));
+ assert(!/^\s*(?:if|paths|paths-ignore):/m.test(workflow));assert(!/continue-on-error:|secrets\./.test(workflow));
+ assert(workflow.includes('contents: read'));assert(workflow.includes('persist-credentials: false'));
 });
 
 test('audit-only CLI rejects database credentials before any API and emits only a fixed failure',()=>{

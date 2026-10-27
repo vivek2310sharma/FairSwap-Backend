@@ -26,7 +26,10 @@ deployment approval. No normal Web runtime key is changed.
 Before enabling anything, ChatGPT/owner must configure and independently verify:
 
 - Required PR review/stale-approval dismissal, existing required CI gates plus
-  `chat-inbox-native-pg17`, no bypass actors for the relevant active main rulesets.
+  `chat-inbox-native-pg17`, zero bypass actors on `protect-main` (`25352225`).
+  The only exception is the exact independently attested existing RepositoryRole
+  actor 5 / always list on `main-owner-only-updates` (`25821687`), restricted to
+  deletion, non-fast-forward and update rules on main. No PR/CI rule may use it.
   Do not remove other required checks. No force or direct unreviewed main updates.
 - Environments named exactly `FairSwapTest` and `FairSwapProd`: required reviewers,
   prevent self-review, prevent admin bypass, only the `main` branch allowed.
@@ -35,8 +38,9 @@ Before enabling anything, ChatGPT/owner must configure and independently verify:
   identity needs read-only administration/rules/environment and secret-name metadata
   access, never secret values. It must not have source/write/deploy permissions.
   Missing scope, incomplete pagination, 403/404 or absent reviewers remain blockers.
-  An omitted bypass list requires explicit empty bypass lists in the independently
-  approved attestation. A visible nonempty or malformed bypass list always vetoes.
+  Omitted bypass lists require explicit independently approved lists: the exact
+  owner-update tuple above, and an empty list for `protect-main`. Unrecognized
+  rulesets, changed scope/rule types/actor/mode, or other bypasses are rejected.
 - Environment variables `CHAT_INBOX_ENVIRONMENT_ENABLED=true` only after authority
   transfer; `CHAT_WEB_FLAG_OFF_CONFIRMED=true` backed by immutable Web off-state
   evidence; `CHAT_BACKEND_AUTHORITY_RECEIPT` pointing to the reviewed cutover receipt;
@@ -49,13 +53,15 @@ default. Manual dispatch `deploy` defaults false. Dispatch must target main, and
 persisted credentials disabled. All Actions are SHA-pinned; dependency installs
 disable lifecycle scripts and precede the credential-bearing step.
 
-The only new environment configuration is the non-secret, independently approved
-`CHAT_RELEASE_ADMIN_ATTESTATION_JSON` reference, separately scoped to Test and Prod.
+The existing non-secret, independently approved reference remains
+`CHAT_RELEASE_ADMIN_ATTESTATION_JSON`, separately scoped to Test and Prod.
 It binds the exact workflow commit, bundle, effective main rules, environment
-approvals, secret-name scope, all effective ruleset versions and empty bypass lists.
+approvals, secret-name scope, all effective ruleset versions and exact allowed bypass lists.
 Both authors must be distinct current repository administrators; the GET-only audit
 checks their unedited statement/approval comments and exact payload digest. Evidence
 expires within 24 hours. No token requires Administration write permission.
+No database migration, environment variable or attestation schema is added by this
+final policy correction. See ADMIN_ATTESTATION.md for the exact policy and fresh-proof procedure.
 
 For protection verification only, dispatch `audit_only=true`, `deploy=false`, with
 the reviewed `approved_sha` and `bundle_sha256`; ledger hashes are unnecessary.
@@ -83,6 +89,9 @@ The new secret-free native lane is separate from every existing Backend workflow
 test count and package/toolchain pin. It builds PostgreSQL 17.6 from its pinned
 official archive/checksum into an ephemeral private directory. It initializes its
 own fixture cluster with loopback/private socket access, never a hosted target.
+The existing PR-triggered `chat-inbox-native-pg17` check also runs
+`readonly-audit.test.mjs` alongside its existing protected-release suite, without
+changing the check name, triggers, permissions or native database test step.
 
 It tests actual role/RLS denial, disabled flags, existing policy-aware send/read
 functions, idempotent retry, blocked sends/history, unread/peer cursors, seller
@@ -186,7 +195,8 @@ alongside the complete rendered execution SHA-256; it is not a credential.
 
 Audit-correction rollback is a Git revert of the audit/workflow correction, without
 changing database state. Any subsequent authorized release remains FairSwapTest then
-FairSwapProd. Production acceptance still requires automatic migration-history,
-RLS/catalog, existing messaging and disabled-flag verification. Future activation
+automated hosted verification, then FairSwapProd, followed only by independently
+authorized Web inbox activation. Production acceptance covers existing messages,
+participant RLS, migration history, unread/Seen and disabled safety features. Future activation
 rollback remains Web flag OFF, then DB inbox OFF, retaining additive schema, history
 and messages. This source correction neither dispatches nor authorizes a release.
