@@ -1,0 +1,194 @@
+[
+  {
+    "signature": "admin_fulfill_data_export(uuid)",
+    "definition": "CREATE OR REPLACE FUNCTION public.admin_fulfill_data_export(request_id uuid)\n RETURNS jsonb\n LANGUAGE plpgsql\n SET search_path TO ''\nAS $function$\nBEGIN\n  RETURN app_security.impl_fulfill_data_export(request_id);\nEND;\n$function$\n",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "signature": "admin_phone_catalogue(text,jsonb)",
+    "definition": "CREATE OR REPLACE FUNCTION public.admin_phone_catalogue(kind text, entry jsonb)\n RETURNS jsonb\n LANGUAGE sql\n SET search_path TO ''\nAS $function$ select app_security.impl_admin_phone_catalogue(kind,entry) $function$\n",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": false
+  },
+  {
+    "signature": "app_security.impl_admin_phone_catalogue(text,jsonb)",
+    "definition": "CREATE OR REPLACE FUNCTION app_security.impl_admin_phone_catalogue(p_kind text, p_entry jsonb)\n RETURNS jsonb\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\ndeclare target uuid:=coalesce((p_entry->>'id')::uuid,gen_random_uuid()); aliases text[]; begin\n if not app_security.is_active_staff_aal2('content_editor') or not app_security.has_current_policy_acceptance(auth.uid()) then raise exception using errcode='42501',message='Staff MFA and policy acceptance required'; end if;\n if p_kind not in ('brand','model') or p_entry-array['id','name','aliases','enabled','sort_order','brand_id','older_group','other']<>'{}'::jsonb then raise exception 'Invalid catalogue input'; end if;\n select coalesce(array_agg(trim(value)),'{}') into aliases from jsonb_array_elements_text(p_entry->'aliases');\n if exists(select 1 from unnest(aliases) a where length(a) not between 1 and 100) then raise exception 'Invalid alias'; end if;\n if p_kind='brand' then\n  insert into public.phone_brands(id,name,aliases,enabled,sort_order) values(target,trim(p_entry->>'name'),aliases,(p_entry->>'enabled')::boolean,(p_entry->>'sort_order')::integer)\n  on conflict(id) do update set name=excluded.name,aliases=excluded.aliases,enabled=excluded.enabled,sort_order=excluded.sort_order,updated_at=clock_timestamp();\n else\n  insert into public.phone_models(id,brand_id,name,aliases,enabled,sort_order,older_group,other) values(target,(p_entry->>'brand_id')::uuid,trim(p_entry->>'name'),aliases,(p_entry->>'enabled')::boolean,(p_entry->>'sort_order')::integer,(p_entry->>'older_group')::boolean,(p_entry->>'other')::boolean)\n  on conflict(id) do update set name=excluded.name,aliases=excluded.aliases,enabled=excluded.enabled,sort_order=excluded.sort_order,older_group=excluded.older_group,other=excluded.other,updated_at=clock_timestamp();\n end if;\n perform app_security.log_audit_event('catalogue.phone_updated','phone_'||p_kind,target,jsonb_build_object('enabled',p_entry->'enabled'));\n return jsonb_build_object('success',true);\nend $function$\n",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": false
+  },
+  {
+    "signature": "app_security.impl_fulfill_data_export_base(uuid)",
+    "definition": "CREATE OR REPLACE FUNCTION app_security.impl_fulfill_data_export_base(p_request_id uuid)\n RETURNS jsonb\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\r\nDECLARE\r\n  v_caller_id uuid;\r\n  v_req record;\r\n  v_target_user_id uuid;\r\n  v_profile jsonb;\r\n  v_account jsonb;\r\n  v_listings jsonb;\r\n  v_favourites jsonb;\r\n  v_reports jsonb;\r\n  v_support_tickets jsonb;\r\n  v_sent_messages jsonb;\r\n  v_policy_acceptances jsonb;\r\nBEGIN\r\n  v_caller_id := auth.uid();\r\n  IF v_caller_id IS NULL THEN\r\n    RAISE EXCEPTION 'Not authenticated';\r\n  END IF;\r\n\r\n  SELECT * INTO v_req\r\n  FROM public.privacy_requests\r\n  WHERE id = p_request_id AND request_type = 'export_data';\r\n\r\n  IF v_req IS NULL THEN\r\n    RAISE EXCEPTION 'Export privacy request not found';\r\n  END IF;\r\n\r\n  -- Caller must be owner OR active administrator with AAL2\r\n  IF v_req.user_id <> v_caller_id AND NOT app_security.is_active_staff_aal2('administrator') THEN\r\n    RAISE EXCEPTION 'Forbidden: not authorized to export this data';\r\n  END IF;\r\n\r\n  v_target_user_id := v_req.user_id;\r\n\r\n  -- 1. Profile Data\r\n  SELECT to_jsonb(p) INTO v_profile\r\n  FROM (\r\n    SELECT id, display_name, bio, city, state, created_at, updated_at\r\n    FROM public.profiles\r\n    WHERE id = v_target_user_id\r\n  ) p;\r\n\r\n  -- 2. Account Metadata with acceptance audit fields\r\n  SELECT to_jsonb(ua) INTO v_account\r\n  FROM (\r\n    SELECT user_id, terms_accepted_at, terms_version, privacy_policy_version,\r\n           acceptable_use_version, age_confirmed_at, minimum_age_confirmed,\r\n           notification_preferences, created_at\r\n    FROM public.user_accounts\r\n    WHERE user_id = v_target_user_id\r\n  ) ua;\r\n\r\n  -- 3. Listings Data\r\n  SELECT COALESCE(jsonb_agg(l), '[]'::jsonb) INTO v_listings\r\n  FROM (\r\n    SELECT id, title, description, condition, price_type, price_paise, status, category_attributes, created_at, published_at\r\n    FROM public.listings\r\n    WHERE seller_id = v_target_user_id\r\n    ORDER BY created_at DESC\r\n  ) l;\r\n\r\n  -- 4. Favourites Data\r\n  SELECT COALESCE(jsonb_agg(f), '[]'::jsonb) INTO v_favourites\r\n  FROM (\r\n    SELECT listing_id, created_at\r\n    FROM public.favourites\r\n    WHERE user_id = v_target_user_id\r\n    ORDER BY created_at DESC\r\n  ) f;\r\n\r\n  -- 5. User Submitted Reports\r\n  SELECT COALESCE(jsonb_agg(r), '[]'::jsonb) INTO v_reports\r\n  FROM (\r\n    SELECT id, target_type, target_id, reason, details, status, created_at, resolved_at\r\n    FROM public.reports\r\n    WHERE reporter_id = v_target_user_id\r\n    ORDER BY created_at DESC\r\n  ) r;\r\n\r\n  -- 6. User Support Tickets & Non-Internal Messages\r\n  SELECT COALESCE(jsonb_agg(t), '[]'::jsonb) INTO v_support_tickets\r\n  FROM (\r\n    SELECT st.id, st.category, st.subject, st.status, st.created_at,\r\n      (\r\n        SELECT COALESCE(jsonb_agg(m), '[]'::jsonb)\r\n        FROM (\r\n          SELECT id, sender_id, content, created_at\r\n          FROM public.support_messages sm\r\n          WHERE sm.ticket_id = st.id AND sm.is_internal_note = false\r\n          ORDER BY sm.created_at ASC\r\n        ) m\r\n      ) AS messages\r\n    FROM public.support_tickets st\r\n    WHERE st.user_id = v_target_user_id\r\n    ORDER BY st.created_at DESC\r\n  ) t;\r\n\r\n  -- 7. User Sent Messages (Counterparty details strictly redacted)\r\n  SELECT COALESCE(jsonb_agg(m), '[]'::jsonb) INTO v_sent_messages\r\n  FROM (\r\n    SELECT id, conversation_id, content, created_at\r\n    FROM public.messages\r\n    WHERE sender_id = v_target_user_id\r\n    ORDER BY created_at DESC\r\n  ) m;\r\n\r\n  -- 8. Historical Policy Re-acceptance Records\r\n  SELECT COALESCE(jsonb_agg(par), '[]'::jsonb) INTO v_policy_acceptances\r\n  FROM (\r\n    SELECT id, terms_version, privacy_policy_version, acceptable_use_version, minimum_age_confirmed, accepted_at\r\n    FROM public.policy_acceptance_records\r\n    WHERE user_id = v_target_user_id\r\n    ORDER BY accepted_at ASC\r\n  ) par;\r\n\r\n  -- Update request status to resolved\r\n  UPDATE public.privacy_requests\r\n  SET status = 'resolved',\r\n      resolved_at = pg_catalog.clock_timestamp(),\r\n      resolved_by = v_caller_id,\r\n      resolution_notes = 'Data export generated and delivered.'\r\n  WHERE id = p_request_id;\r\n\r\n  -- Log audit event\r\n  PERFORM app_security.log_audit_event(\r\n    'privacy.export_fulfilled',\r\n    'privacy_requests',\r\n    p_request_id,\r\n    jsonb_build_object('target_user_id', v_target_user_id, 'downloader', v_caller_id)\r\n  );\r\n\r\n  RETURN jsonb_build_object(\r\n    'export_id', p_request_id,\r\n    'generated_at', pg_catalog.clock_timestamp(),\r\n    'profile', v_profile,\r\n    'account', v_account,\r\n    'listings', v_listings,\r\n    'favourites', v_favourites,\r\n    'reports', v_reports,\r\n    'support_tickets', v_support_tickets,\r\n    'sent_messages', v_sent_messages,\r\n    'policy_acceptances', v_policy_acceptances\r\n  );\r\nEND;\r\n$function$\n",
+    "acl": "{postgres=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": false
+  },
+  {
+    "signature": "app_security.impl_posting_v2_cleanup(text,uuid)",
+    "definition": "CREATE OR REPLACE FUNCTION app_security.impl_posting_v2_cleanup(operation text, session_id uuid DEFAULT NULL::uuid)\n RETURNS jsonb\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\ndeclare s public.posting_upload_sessions; items jsonb:='[]'; begin\n if coalesce(auth.jwt()->>'role','')<>'service_role' then raise exception using errcode='42501',message='Cleanup service required'; end if;\n if operation='ack' then\n  delete from public.posting_upload_sessions where id=session_id and state in ('expired','submitted') and cleanup_after<=now();return '[]';\n elsif operation<>'claim' then raise exception 'Invalid cleanup operation'; end if;\n for s in select * from public.posting_upload_sessions where cleanup_after<=now() and state<>'cleaned' order by cleanup_after,id limit 50 for update skip locked loop\n  if s.state<>'submitted' then update public.posting_upload_sessions set state='expired' where id=s.id; end if;\n  items:=items||jsonb_build_array(jsonb_build_object('id',s.id,'owner_id',s.owner_id,'listing_id',s.listing_id,'submitted',s.state='submitted',\n   'attached',coalesce((select jsonb_agg(id) from public.listing_media where listing_id=s.listing_id),'[]'::jsonb),\n   'media',coalesce((select jsonb_agg(jsonb_build_object('id',id,'attempt',attempt)) from public.posting_staged_media where posting_staged_media.session_id=s.id),'[]'::jsonb)));\n end loop;\n return items;\nend $function$\n",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": true
+  },
+  {
+    "signature": "app_security.impl_posting_v2_media_ready(uuid,uuid,uuid,integer,integer,integer)",
+    "definition": "CREATE OR REPLACE FUNCTION app_security.impl_posting_v2_media_ready(session_id uuid, media_id uuid, attempt_id uuid, file_size integer, width integer, height integer)\n RETURNS boolean\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\ndeclare s public.posting_upload_sessions; m public.posting_staged_media; begin\n if coalesce(auth.jwt()->>'role','')<>'service_role' then raise exception using errcode='42501',message='Media service required'; end if;\n select * into s from public.posting_upload_sessions where id=session_id for update;\n if s.state is distinct from 'open' or s.expires_at<=now() then return false; end if;\n if exists(select 1 from public.posting_staged_media x where x.session_id=s.id and x.id=media_id and x.attempt=attempt_id and x.state='ready' and x.file_size=impl_posting_v2_media_ready.file_size and x.width=impl_posting_v2_media_ready.width and x.height=impl_posting_v2_media_ready.height) then return true; end if;\n update public.posting_staged_media x set state='ready',file_size=impl_posting_v2_media_ready.file_size,width=impl_posting_v2_media_ready.width,height=impl_posting_v2_media_ready.height\n where x.id=media_id and x.session_id=s.id and x.attempt=attempt_id and x.state='uploading' returning * into m;\n return m.id is not null;\nend $function$\n",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": true
+  },
+  {
+    "signature": "app_security.impl_posting_v2_session(uuid,text,uuid)",
+    "definition": "CREATE OR REPLACE FUNCTION app_security.impl_posting_v2_session(p_session_id uuid, p_operation text, p_media_id uuid DEFAULT NULL::uuid)\n RETURNS jsonb\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\ndeclare u uuid:=app_security.posting_v2_actor(); s public.posting_upload_sessions; m public.posting_staged_media; n integer;\nbegin\n if p_operation='create' then\n  perform pg_advisory_xact_lock(hashtextextended(u::text,2));\n  if not exists(select 1 from public.posting_category_definitions where category_key='mobiles' and subcategory_key='mobile-phones' and version=2 and enabled) then raise exception 'Posting unavailable'; end if;\n  if (select count(*) from public.posting_upload_sessions where owner_id=u and state in ('open','finalizing') and expires_at>now())>=5 and not exists(select 1 from public.posting_upload_sessions where id=p_session_id and owner_id=u) then raise exception 'Too many upload sessions'; end if;\n  insert into public.posting_upload_sessions(id,owner_id) values(p_session_id,u) on conflict(id) do nothing;\n end if;\n select * into s from public.posting_upload_sessions where id=p_session_id and owner_id=u for update;\n if s.id is null then raise exception using errcode='42501',message='Upload session unavailable'; end if;\n if s.state='submitted' then return jsonb_build_object('session',to_jsonb(s),'media','[]'::jsonb); end if;\n if s.expires_at<=now() or s.state in ('expired','cleaned') then raise exception 'Upload session expired'; end if;\n if p_operation in ('reserve','remove') then\n  if s.expires_at<now()+interval '5 minutes' then raise exception 'Upload session is expiring; start a new posting'; end if;\n  if s.state<>'open' then raise exception 'Submission is being finalized'; end if;\n  if p_operation='remove' then\n   update public.posting_staged_media set state='removed' where id=p_media_id and session_id=s.id;\n  else\n   select * into m from public.posting_staged_media where id=p_media_id and session_id=s.id for update;\n   if m.state='removed' then raise exception 'Photo removed'; end if;\n   if m.id is null then\n    select count(*) into n from public.posting_staged_media where session_id=s.id and state<>'removed';\n    if n>=8 then raise exception 'Maximum 8 photos'; end if;\n    insert into public.posting_staged_media(id,session_id) values(p_media_id,s.id) returning * into m;\n   elsif m.state='uploading' then\n    if m.lease_until>now() then raise exception using errcode='PT409',message='Upload in progress; retry shortly'; end if;\n    update public.posting_staged_media set attempt=gen_random_uuid(),lease_until=now()+interval '2 minutes' where id=m.id returning * into m;\n   end if;\n  end if;\n elsif p_operation='prepare' then\n  if exists(select 1 from public.posting_staged_media where session_id=s.id and state='uploading') then raise exception 'Finish or remove failed uploads first'; end if;\n  update public.posting_upload_sessions set state='finalizing',cleanup_after=greatest(cleanup_after,now()+interval '10 minutes') where id=s.id returning * into s;\n elsif p_operation not in ('create','read') then raise exception 'Invalid operation';\n end if;\n return jsonb_build_object('session',to_jsonb(s),'media',coalesce((select jsonb_agg(to_jsonb(x) order by x.created_at,x.id) from public.posting_staged_media x where x.session_id=s.id and x.state<>'removed'),'[]'::jsonb));\nend $function$\n",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": false
+  },
+  {
+    "signature": "app_security.impl_seller_transition_listing(uuid,text)",
+    "definition": "CREATE OR REPLACE FUNCTION app_security.impl_seller_transition_listing(p_listing_id uuid, p_action text)\n RETURNS jsonb\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\r\nDECLARE\r\n  v_caller_id uuid;\r\n  v_listing record;\r\n  v_new_status public.listing_status_enum;\r\n  v_renewal_limit constant integer := 3;\r\nBEGIN\r\n  v_caller_id := auth.uid();\r\n  IF v_caller_id IS NULL THEN\r\n    RAISE EXCEPTION 'not authenticated';\r\n  END IF;\r\n\r\n  IF app_security.get_account_status(v_caller_id) != 'active' THEN\r\n    RAISE EXCEPTION 'account is not active';\r\n  END IF;\r\n\r\n  IF NOT app_security.has_current_policy_acceptance(v_caller_id) THEN\r\n    RAISE EXCEPTION 'POLICY_ACCEPTANCE_REQUIRED: Re-acceptance of Public Beta policies is required';\r\n  END IF;\r\n\r\n  SELECT * INTO v_listing\r\n  FROM public.listings\r\n  WHERE id = p_listing_id\r\n  FOR UPDATE;\r\n\r\n  IF v_listing.id IS NULL THEN\r\n    RAISE EXCEPTION 'listing not found';\r\n  END IF;\r\n\r\n  IF v_listing.seller_id != v_caller_id THEN\r\n    RAISE EXCEPTION 'caller does not own this listing';\r\n  END IF;\r\n\r\n  CASE p_action\r\n    WHEN 'pause' THEN\r\n      IF v_listing.status != 'active' THEN\r\n        RAISE EXCEPTION 'only active listings can be paused (current: %)', v_listing.status;\r\n      END IF;\r\n      v_new_status := 'paused'::public.listing_status_enum;\r\n\r\n      UPDATE public.listings\r\n      SET status = v_new_status,\r\n          updated_at = pg_catalog.clock_timestamp()\r\n      WHERE id = p_listing_id;\r\n\r\n      PERFORM app_security.log_audit_event(\r\n        'listing.paused',\r\n        'listings',\r\n        p_listing_id,\r\n        jsonb_build_object('revision', v_listing.revision)\r\n      );\r\n\r\n    WHEN 'resume' THEN\r\n      IF v_listing.status != 'paused' THEN\r\n        RAISE EXCEPTION 'only paused listings can be resumed (current: %)', v_listing.status;\r\n      END IF;\r\n      IF v_listing.published_at IS NULL THEN\r\n        RAISE EXCEPTION 'unapproved listing cannot be resumed';\r\n      END IF;\r\n      IF v_listing.expires_at IS NOT NULL AND v_listing.expires_at <= pg_catalog.clock_timestamp() THEN\r\n        RAISE EXCEPTION 'expired listing cannot be resumed directly';\r\n      END IF;\r\n      v_new_status := 'active'::public.listing_status_enum;\r\n\r\n      UPDATE public.listings\r\n      SET status = v_new_status,\r\n          updated_at = pg_catalog.clock_timestamp()\r\n      WHERE id = p_listing_id;\r\n\r\n      PERFORM app_security.log_audit_event(\r\n        'listing.resumed',\r\n        'listings',\r\n        p_listing_id,\r\n        jsonb_build_object('revision', v_listing.revision)\r\n      );\r\n\r\n    WHEN 'reserve' THEN\r\n      IF v_listing.status != 'active' THEN\r\n        RAISE EXCEPTION 'only active listings can be reserved (current: %)', v_listing.status;\r\n      END IF;\r\n      v_new_status := 'reserved'::public.listing_status_enum;\r\n\r\n      UPDATE public.listings\r\n      SET status = v_new_status,\r\n          updated_at = pg_catalog.clock_timestamp()\r\n      WHERE id = p_listing_id;\r\n\r\n      PERFORM app_security.log_audit_event(\r\n        'listing.reserved',\r\n        'listings',\r\n        p_listing_id,\r\n        jsonb_build_object('revision', v_listing.revision)\r\n      );\r\n\r\n    WHEN 'unreserve' THEN\r\n      IF v_listing.status != 'reserved' THEN\r\n        RAISE EXCEPTION 'only reserved listings can be unreserved (current: %)', v_listing.status;\r\n      END IF;\r\n      v_new_status := 'active'::public.listing_status_enum;\r\n\r\n      UPDATE public.listings\r\n      SET status = v_new_status,\r\n          updated_at = pg_catalog.clock_timestamp()\r\n      WHERE id = p_listing_id;\r\n\r\n      PERFORM app_security.log_audit_event(\r\n        'listing.unreserved',\r\n        'listings',\r\n        p_listing_id,\r\n        jsonb_build_object('revision', v_listing.revision)\r\n      );\r\n\r\n    WHEN 'mark_sold' THEN\r\n      IF v_listing.status NOT IN ('active', 'reserved', 'paused') THEN\r\n        RAISE EXCEPTION 'listing in status % cannot be marked sold', v_listing.status;\r\n      END IF;\r\n      v_new_status := 'sold'::public.listing_status_enum;\r\n\r\n      UPDATE public.listings\r\n      SET status = v_new_status,\r\n          sold_at = pg_catalog.clock_timestamp(),\r\n          updated_at = pg_catalog.clock_timestamp()\r\n      WHERE id = p_listing_id;\r\n\r\n      PERFORM app_security.log_audit_event(\r\n        'listing.sold',\r\n        'listings',\r\n        p_listing_id,\r\n        jsonb_build_object('revision', v_listing.revision)\r\n      );\r\n\r\n    WHEN 'renew' THEN\r\n      IF v_listing.status != 'expired' THEN\r\n        RAISE EXCEPTION 'only expired listings can be renewed (current: %)', v_listing.status;\r\n      END IF;\r\n      IF v_listing.renewal_count >= v_renewal_limit THEN\r\n        RAISE EXCEPTION 'renewal limit of % reached', v_renewal_limit;\r\n      END IF;\r\n      v_new_status := 'pending_review'::public.listing_status_enum;\r\n\r\n      UPDATE public.listings\r\n      SET status = v_new_status,\r\n          renewal_count = v_listing.renewal_count + 1,\r\n          submitted_at = pg_catalog.clock_timestamp(),\r\n          updated_at = pg_catalog.clock_timestamp()\r\n      WHERE id = p_listing_id;\r\n\r\n      PERFORM app_security.log_audit_event(\r\n        'listing.renewed',\r\n        'listings',\r\n        p_listing_id,\r\n        jsonb_build_object('revision', v_listing.revision, 'renewal_count', v_listing.renewal_count + 1)\r\n      );\r\n\r\n    ELSE\r\n      RAISE EXCEPTION 'invalid transition action: %', p_action;\r\n  END CASE;\r\n\r\n  RETURN jsonb_build_object('success', true, 'new_status', v_new_status);\r\nEND;\r\n$function$\n",
+    "acl": null,
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": true,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "signature": "app_security.is_active_staff_aal2(staff_role_enum)",
+    "definition": "CREATE OR REPLACE FUNCTION app_security.is_active_staff_aal2(p_required_role staff_role_enum)\n RETURNS boolean\n LANGUAGE plpgsql\n STABLE SECURITY DEFINER\n SET search_path TO ''\nAS $function$\nDECLARE\n  v_user_id uuid;\n  v_user_role public.staff_role_enum;\n  v_status public.account_status_enum;\n  v_aal text;\nBEGIN\n  v_user_id := auth.uid();\n  IF v_user_id IS NULL THEN\n    RETURN false;\n  END IF;\n\n  -- 1. Check account status is active\n  SELECT account_status INTO v_status\n  FROM public.user_accounts\n  WHERE user_id = v_user_id;\n\n  IF v_status IS DISTINCT FROM 'active' THEN\n    RETURN false;\n  END IF;\n\n  -- 2. Check JWT assurance level claim is aal2\n  v_aal := (auth.jwt() ->> 'aal');\n  IF v_aal IS DISTINCT FROM 'aal2' THEN\n    RETURN false;\n  END IF;\n\n  -- 3. Check staff role assignment\n  SELECT role INTO v_user_role\n  FROM public.staff_roles\n  WHERE user_id = v_user_id;\n\n  IF v_user_role IS NULL THEN\n    RETURN false;\n  END IF;\n\n  -- Administrators satisfy all role requirements\n  IF v_user_role = 'administrator' THEN\n    RETURN true;\n  END IF;\n\n  RETURN v_user_role = p_required_role;\nEND;\n$function$\n",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres,anon=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": true,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "signature": "app_security.phone_content_guard(text)",
+    "definition": "CREATE OR REPLACE FUNCTION app_security.phone_content_guard(p_text text)\n RETURNS void\n LANGUAGE plpgsql\n SET search_path TO ''\nAS $function$ begin\n if p_text ~* '(\\+?91[ .-]?)?[6-9]([ .-]?[0-9]){9}([^0-9]|$)|wa\\.me/|t\\.me/|upi://|[[:alnum:]._-]{2,}@[[:alpha:]][[:alnum:].]{1,}|(paytm\\.me|rzp\\.io|pay\\.google\\.com)/' then raise exception using errcode='22023',message='Remove contact numbers, payment IDs and payment links; use FairSwap chat'; end if;\n if p_text ~* '(courier|shipping|delivery|कूरियर|डिलीवरी).{0,40}(fee|charge|advance|pay|शुल्क|पैसे)|(advance|पहले).{0,30}(upi|pay|payment|भुगतान)' then raise exception using errcode='22023',message='Pickup only: remove courier fees and advance payment requests'; end if;\nend $function$\n",
+    "acl": "{postgres=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": false
+  },
+  {
+    "signature": "app_security.posting_v2_actor()",
+    "definition": "CREATE OR REPLACE FUNCTION app_security.posting_v2_actor()\n RETURNS uuid\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\ndeclare u uuid:=auth.uid(); begin\n if u is null or app_security.get_account_status(u)::text is distinct from 'active' or not app_security.has_current_policy_acceptance(u) then raise exception using errcode='42501',message='Eligible account and current policies required'; end if;\n return u;\nend $function$\n",
+    "acl": "{postgres=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": false
+  },
+  {
+    "signature": "posting_v2_catalogue()",
+    "definition": "CREATE OR REPLACE FUNCTION public.posting_v2_catalogue()\n RETURNS jsonb\n LANGUAGE sql\n STABLE\n SET search_path TO ''\nAS $function$\n select jsonb_build_object('version',2,'revision',coalesce((select max(updated_at)::text from (select updated_at from public.phone_brands union all select updated_at from public.phone_models) r),'seed-v2'),\n 'selection',jsonb_build_object('category','mobiles','subcategory','mobile-phones','version',2),\n 'listing_category_id',(select listing_category_id from public.posting_category_definitions where category_key='mobiles' and subcategory_key='mobile-phones' and version=2),\n 'enabled',coalesce((select d.enabled and c.is_active from public.posting_category_definitions d join public.categories c on c.id=d.listing_category_id where category_key='mobiles' and subcategory_key='mobile-phones' and version=2),false),\n 'brands',coalesce((select jsonb_agg(jsonb_build_object('id',id,'name',name,'aliases',aliases,'sort_order',sort_order) order by sort_order,id) from public.phone_brands where enabled),'[]'::jsonb),\n 'models',coalesce((select jsonb_agg(jsonb_build_object('id',m.id,'brand_id',m.brand_id,'name',m.name,'aliases',m.aliases,'older_group',m.older_group,'other',m.other,'sort_order',m.sort_order) order by m.sort_order,m.id) from public.phone_models m join public.phone_brands b on b.id=m.brand_id where m.enabled and b.enabled),'[]'::jsonb))\n$function$\n",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "signature": "posting_v2_cleanup(text,uuid)",
+    "definition": "CREATE OR REPLACE FUNCTION public.posting_v2_cleanup(operation text, session_id uuid DEFAULT NULL::uuid)\n RETURNS jsonb\n LANGUAGE sql\n SET search_path TO ''\nAS $function$select app_security.impl_posting_v2_cleanup(operation,session_id)$function$\n",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": true
+  },
+  {
+    "signature": "posting_v2_media_ready(uuid,uuid,uuid,integer,integer,integer)",
+    "definition": "CREATE OR REPLACE FUNCTION public.posting_v2_media_ready(session_id uuid, media_id uuid, attempt_id uuid, file_size integer, width integer, height integer)\n RETURNS boolean\n LANGUAGE sql\n SET search_path TO ''\nAS $function$select app_security.impl_posting_v2_media_ready(session_id,media_id,attempt_id,file_size,width,height)$function$\n",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": true
+  },
+  {
+    "signature": "posting_v2_session(uuid,text,uuid)",
+    "definition": "CREATE OR REPLACE FUNCTION public.posting_v2_session(session_id uuid, operation text, media_id uuid DEFAULT NULL::uuid)\n RETURNS jsonb\n LANGUAGE sql\n SET search_path TO ''\nAS $function$ select app_security.impl_posting_v2_session(session_id,operation,media_id) $function$\n",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": false
+  },
+  {
+    "signature": "seller_transition_listing(uuid,text)",
+    "definition": "CREATE OR REPLACE FUNCTION public.seller_transition_listing(listing_id uuid, action text)\n RETURNS jsonb\n LANGUAGE plpgsql\n SET search_path TO ''\nAS $function$\nBEGIN\n  RETURN app_security.impl_seller_transition_listing(listing_id, action);\nEND;\n$function$\n",
+    "acl": "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": true,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  }
+]

@@ -1,0 +1,272 @@
+{
+  "capturedAt": "2026-10-26T23:15:59.189Z",
+  "projectRef": "kriuhwppxgxsyyrbjsau",
+  "source": "read-only pg_catalog query fingerprint.sql; source relation columns excluded outside HDR-owned table; no user rows",
+  "contract": {
+    "table": {
+      "acl": [
+        [
+          "authenticated",
+          "SELECT",
+          false
+        ],
+        [
+          "postgres",
+          "DELETE",
+          false
+        ],
+        [
+          "postgres",
+          "INSERT",
+          false
+        ],
+        [
+          "postgres",
+          "MAINTAIN",
+          false
+        ],
+        [
+          "postgres",
+          "REFERENCES",
+          false
+        ],
+        [
+          "postgres",
+          "SELECT",
+          false
+        ],
+        [
+          "postgres",
+          "TRIGGER",
+          false
+        ],
+        [
+          "postgres",
+          "TRUNCATE",
+          false
+        ],
+        [
+          "postgres",
+          "UPDATE",
+          false
+        ],
+        [
+          "service_role",
+          "DELETE",
+          false
+        ],
+        [
+          "service_role",
+          "INSERT",
+          false
+        ],
+        [
+          "service_role",
+          "MAINTAIN",
+          false
+        ],
+        [
+          "service_role",
+          "REFERENCES",
+          false
+        ],
+        [
+          "service_role",
+          "SELECT",
+          false
+        ],
+        [
+          "service_role",
+          "TRIGGER",
+          false
+        ],
+        [
+          "service_role",
+          "TRUNCATE",
+          false
+        ],
+        [
+          "service_role",
+          "UPDATE",
+          false
+        ]
+      ],
+      "rls": true,
+      "owner": "postgres",
+      "forceRls": true,
+      "replicaIdentity": "d"
+    },
+    "columns": [
+      {
+        "acl": null,
+        "name": "id",
+        "type": "uuid",
+        "default": "gen_random_uuid()",
+        "notNull": true
+      },
+      {
+        "acl": null,
+        "name": "user_id",
+        "type": "uuid",
+        "default": null,
+        "notNull": true
+      },
+      {
+        "acl": null,
+        "name": "revision",
+        "type": "bigint",
+        "default": "1",
+        "notNull": true
+      }
+    ],
+    "indexes": [
+      {
+        "name": "unread_count_signals_pkey",
+        "definition": "CREATE UNIQUE INDEX unread_count_signals_pkey ON public.unread_count_signals USING btree (id)"
+      },
+      {
+        "name": "unread_count_signals_user_id_key",
+        "definition": "CREATE UNIQUE INDEX unread_count_signals_user_id_key ON public.unread_count_signals USING btree (user_id)"
+      }
+    ],
+    "policies": [
+      {
+        "cmd": "SELECT",
+        "name": "unread_count_signals_owner_select",
+        "qual": "((user_id = ( SELECT auth.uid() AS uid)) AND (app_security.get_account_status(( SELECT auth.uid() AS uid)) = ANY (ARRAY['active'::account_status_enum, 'suspended'::account_status_enum])))",
+        "check": null,
+        "roles": [
+          "authenticated"
+        ],
+        "permissive": "PERMISSIVE"
+      }
+    ],
+    "triggers": [
+      {
+        "name": "hdr03_message_arrival",
+        "enabled": "O",
+        "definition": "CREATE TRIGGER hdr03_message_arrival AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION app_security.hdr03_signal_message()"
+      },
+      {
+        "name": "hdr03_read_state_insert",
+        "enabled": "O",
+        "definition": "CREATE TRIGGER hdr03_read_state_insert AFTER INSERT ON conversation_read_states FOR EACH ROW EXECUTE FUNCTION app_security.hdr03_signal_read_state()"
+      },
+      {
+        "name": "hdr03_read_state_update",
+        "enabled": "O",
+        "definition": "CREATE TRIGGER hdr03_read_state_update AFTER UPDATE OF last_read_message_id ON conversation_read_states FOR EACH ROW WHEN (old.last_read_message_id IS DISTINCT FROM new.last_read_message_id) EXECUTE FUNCTION app_security.hdr03_signal_read_state()"
+      }
+    ],
+    "functions": [
+      {
+        "acl": [
+          [
+            "postgres",
+            "EXECUTE",
+            false
+          ]
+        ],
+        "signature": "app_security.hdr03_signal_message()",
+        "definition": "CREATE OR REPLACE FUNCTION app_security.hdr03_signal_message()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\nbegin\n  insert into public.unread_count_signals as s (user_id)\n  select participant from public.conversations c\n  cross join lateral (values (c.buyer_id), (c.seller_id)) p(participant)\n  where c.id = new.conversation_id and participant is not null\n    and participant is distinct from new.sender_id\n  order by participant\n  on conflict (user_id) do update set revision = s.revision + 1;\n  return new;\nend;\n$function$\n"
+      },
+      {
+        "acl": [
+          [
+            "postgres",
+            "EXECUTE",
+            false
+          ]
+        ],
+        "signature": "app_security.hdr03_signal_read_state()",
+        "definition": "CREATE OR REPLACE FUNCTION app_security.hdr03_signal_read_state()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\nbegin\n  insert into public.unread_count_signals as s (user_id) values (new.user_id)\n  on conflict (user_id) do update set revision = s.revision + 1;\n  return new;\nend;\n$function$\n"
+      },
+      {
+        "acl": [
+          [
+            "authenticated",
+            "EXECUTE",
+            false
+          ],
+          [
+            "postgres",
+            "EXECUTE",
+            false
+          ],
+          [
+            "service_role",
+            "EXECUTE",
+            false
+          ]
+        ],
+        "signature": "get_unread_counts()",
+        "definition": "CREATE OR REPLACE FUNCTION public.get_unread_counts()\n RETURNS TABLE(unread_messages bigint, unread_notifications bigint)\n LANGUAGE plpgsql\n STABLE\n SET search_path TO ''\nAS $function$\ndeclare\n  v_uid uuid := auth.uid();\nbegin\n  if v_uid is null or coalesce(app_security.get_account_status(v_uid)::text, '') not in ('active', 'suspended') then\n    raise exception using errcode = '42501', message = 'Authentication or account access required';\n  end if;\n\n  -- Count messages, not conversations; never count the caller's own messages.\n  -- last_read_at is when a read was recorded, NOT the message ordering cursor.\n  select count(*) into unread_messages\n  from public.conversations c\n  join public.messages m on m.conversation_id = c.id\n  left join public.conversation_read_states r on r.conversation_id = c.id and r.user_id = v_uid\n  left join public.messages marker on marker.conversation_id = r.conversation_id and marker.id = r.last_read_message_id\n  where (c.buyer_id = v_uid or c.seller_id = v_uid)\n    and m.sender_id is distinct from v_uid\n    and (marker.id is null or (m.created_at, m.id) > (marker.created_at, marker.id));\n\n  select count(*) into unread_notifications\n  from public.notifications n where n.user_id = v_uid and n.read_at is null;\n\n  -- count(*) is non-negative bigint; reject values JS cannot represent exactly.\n  if unread_messages > 9007199254740991 or unread_notifications > 9007199254740991 then\n    raise exception using errcode = '22003', message = 'Unread count out of range';\n  end if;\n  return next;\nend;\n$function$\n"
+      }
+    ],
+    "overloads": 1,
+    "sourceRls": [
+      {
+        "rls": true,
+        "name": "conversation_read_states"
+      },
+      {
+        "rls": true,
+        "name": "conversations"
+      },
+      {
+        "rls": true,
+        "name": "messages"
+      },
+      {
+        "rls": true,
+        "name": "notifications"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "unread_count_signals_pkey",
+        "validated": true,
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "unread_count_signals_revision_check",
+        "validated": true,
+        "definition": "CHECK (revision > 0)"
+      },
+      {
+        "name": "unread_count_signals_user_id_fkey",
+        "validated": true,
+        "definition": "FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE"
+      },
+      {
+        "name": "unread_count_signals_user_id_key",
+        "validated": true,
+        "definition": "UNIQUE (user_id)"
+      }
+    ],
+    "publication": [
+      {
+        "table": "messages",
+        "schema": "public",
+        "columns": null,
+        "rowFilter": null
+      },
+      {
+        "table": "notifications",
+        "schema": "public",
+        "columns": null,
+        "rowFilter": null
+      },
+      {
+        "table": "unread_count_signals",
+        "schema": "public",
+        "columns": [
+          "id",
+          "user_id",
+          "revision"
+        ],
+        "rowFilter": null
+      }
+    ]
+  }
+}

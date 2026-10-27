@@ -1,0 +1,39 @@
+{
+  "disposition": "LOCAL_CHECKS_PASS_RELEASE_BLOCKED_NON_BACKUP_GATES",
+  "startingLocalHead": "213b57c84e2b3767e3ab3499846dd280bf3315c3",
+  "reviewedPrHead": "5d3378a9d35c734193bbfcf421864d3b91865947",
+  "backupRestoreBothEnvironments": "WAIVED_BY_OWNER",
+  "backupExists": "NOT_VERIFIED",
+  "isolatedRestorePassed": false,
+  "checks": [
+    {"name":"Disposable native PostgreSQL 17.6 hosted-readiness plus HDR-03 positive/negative regression", "status":"PASS", "testGroups":36, "perEnvironment":18, "log":"checks.pg17.txt", "command":"run-pg17.ps1 -PgBin <absolute embedded PG17.6 bin> -PsqlBin <absolute psql17 bin>"},
+    {"name":"Mandatory CI, preserved reviewed workflow, release-specific waiver, six reviewed raw SQL bytes and restricted historical exception", "status":"PASS", "tests":6, "log":"checks.ci-contract.txt", "command":"node --test releases/candidates/ratings-v1-final-release/ci-contract.test.mjs"},
+    {"name":"58 immutable historical Git blobs / working EOL representation", "status":"PASS", "log":"checks.baseline.txt", "command":"node tests/ratings/verify-baseline.mjs"},
+    {"name":"HDR-03 merged PR #49 source, receipt, immutable manifest and recreated installed contract parity", "status":"PASS", "sourceLfSha256":"818da324fdf625a25732bf8f70a297450e654aa4cb91fe5a34316777490f0a3f", "evidenceDirectory":"hdr03"},
+    {"name":"Fresh Test 87 / Production 71 full ledger read-only comparisons", "status":"PASS", "evidence":"test/fresh-ledger.json and production/fresh-ledger.json"},
+    {"name":"Fresh protected functions/ACLs/security/search paths", "status":"PASS", "perEnvironment":37, "evidence":"environment fresh-readonly-checks.json"},
+    {"name":"Full hosted preflight project identity", "status":"BLOCKED_BOTH_ENVIRONMENTS", "error":"RATINGS_ENVIRONMENT_MISMATCH", "evidence":"environment fresh-readonly-checks.json", "bypass":"NONE"},
+    {"name":"Existing Backend CI at reviewed PR head", "status":"PASS_REMOTE_PRIOR_GATE", "runId":40391229761, "evidence":"ci-evidence.json"},
+    {"name":"New mandatory GitHub hosted-readiness gate", "status":"NOT_RUN_NOT_PUSHED", "evidence":"ci-reviewed-head.after.yml and scoped workflow patch"},
+    {"name":"Linux shell syntax and JavaScript syntax", "status":"PASS", "limitation":"Actual Linux source build/job NOT RUN on Windows; Windows native tests ran"},
+    {"name":"Scoped diff applies to exact reviewed PR workflow and new candidate paths", "status":"PASS", "command":"git -c core.longpaths=true apply --check --directory=<disposable reviewed-source fixture> scoped.diff", "limitation":"Validation only; no patch applied to repository or GitHub"}
+  ],
+  "fixtureAssumptions": [
+    "Auth/JWT, policy provider, pg_cron, Storage buckets and postal prerequisites are explicit disposable fixtures.",
+    "HDR-03 uses the complete unmodified reviewed historical SQL and synthetic 57-row local ledger only to satisfy its historical guard; no hosted history changes occur.",
+    "Public-schema Supabase default service-role table/function grants are explicit in HDR fixture; private helper grants remain owner-only.",
+    "Fingerprint projection excludes unrelated source-table columns; owned HDR signal payload, memberships/filters and source RLS remain pinned."
+  ],
+  "initialCorrections": [
+    "Removed leading SQL comment before passing fingerprint SELECT through the existing native adapter's query-result path.",
+    "Restricted CI job parser to the jobs mapping, so trigger names are not misidentified as verification jobs.",
+    "Windows patch-check staging paths exceeded legacy path limits; repeated with per-command core.longpaths=true, without changing Git configuration."
+  ],
+  "notRun": [
+    "Any hosted writes, deployment, secret/config changes, activation or manual/exploratory testing",
+    "Backup verification or restore rehearsal (WAIVED_BY_OWNER, not passed)",
+    "Full 87/71 installed-chain reconstruction; complete source mapping remains unavailable",
+    "Real pg_cron/Auth/Storage/Data API and Web/Admin hosted compatibility, load/backlog qualification",
+    "Local full existing CI rerun or new remote mandatory gate; existing gates unchanged by scoped reviewed workflow diff"
+  ]
+}

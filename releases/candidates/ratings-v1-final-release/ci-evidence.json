@@ -1,0 +1,21 @@
+{
+  "reviewedPrHead": "5d3378a9d35c734193bbfcf421864d3b91865947",
+  "existingRemote": {
+    "workflow_runs": [
+      {
+        "id": 40391229761,
+        "name": "Backend independent CI",
+        "status": "completed",
+        "conclusion": "success",
+        "run_number": 232,
+        "jobs_url": "https://api.github.com/repos/vivek2310sharma/FairSwap-Backend/actions/runs/40391229761/jobs",
+        "logs_url": "https://api.github.com/repos/vivek2310sharma/FairSwap-Backend/actions/runs/40391229761/logs",
+        "workflow_id": 386609026
+      }
+    ]
+  },
+  "proposedNewGate": "ratings-hosted-readiness-pg17",
+  "newRemoteGateStatus": "NOT_RUN_NOT_PUSHED",
+  "localWorkflow": "Pre-existing local Chat V2 work preserved; scoped GitHub workflow diff is against exact reviewed PR file and retains existing Ratings native PG17 and all unit steps.",
+  "linuxSourceBuild": "NOT_RUN_ON_WINDOWS; checksum-pinned existing builder retained"
+}

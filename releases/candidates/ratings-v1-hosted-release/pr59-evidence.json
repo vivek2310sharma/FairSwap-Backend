@@ -1,0 +1,13 @@
+{
+  "source": "GitHub connector read-only PR metadata",
+  "capturedAt": "2026-10-26T19:37:38.955Z",
+  "url": "https://github.com/vivek2310sharma/FairSwap-Backend/pull/59",
+  "state": "open",
+  "draft": true,
+  "merged": false,
+  "baseSha": "172abf80a20576d941a655a3726374b352570d6d",
+  "headSha": "2c34f1135ae0ff59f4f8810b883980325ac96c84",
+  "localCheckoutHead": "213b57c84e2b3767e3ab3499846dd280bf3315c3",
+  "localMatchesPr": false,
+  "sourceByteComparison": "NOT RUN: no Git fetch/pull authorized; six local files pinned to prior handoff hashes"
+}

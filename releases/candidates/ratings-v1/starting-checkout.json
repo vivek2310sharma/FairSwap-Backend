@@ -1,0 +1,238 @@
+{
+  "head": "213b57c84e2b3767e3ab3499846dd280bf3315c3",
+  "branch": "main",
+  "status": [
+    " M .github/workflows/backend-ci.yml",
+    " M CLAUDE.md",
+    " M package.json",
+    " M pnpm-lock.yaml",
+    " M scripts/ci/db-verification.test.mjs",
+    " M scripts/ci/toolchain.json",
+    " M src/lib/moderation/v2/india-fraud.ts",
+    " M supabase/config.toml",
+    "?? docs/contracts/",
+    "?? scripts/ci/canonical-checkout.test.mjs",
+    "?? scripts/ci/run-profile-onboarding-db.sh",
+    "?? scripts/ci/run-profile-onboarding-tests.mjs",
+    "?? scripts/ci/test-chat-v2.mjs",
+    "?? scripts/ci/test-posting-v2.mjs",
+    "?? scripts/ci/verify-canonical-checkout.mjs",
+    "?? scripts/cleanup-posting-v2.mjs",
+    "?? src/lib/chat-v2/",
+    "?? supabase/forward-migrations/chat-v2/",
+    "?? supabase/forward-migrations/india-taxonomy/",
+    "?? supabase/forward-migrations/posting-v2/",
+    "?? supabase/forward-migrations/profile-onboarding/",
+    "?? supabase/forward-migrations/seller-profile/",
+    "?? supabase/functions/_shared/chat-safety-worker-handler.ts",
+    "?? supabase/functions/process-chat-safety/",
+    "?? supabase/tests/seller_public_listings_search.test.sql",
+    "?? tests/chat-v2/"
+  ],
+  "preserved_files": [
+    {
+      "path": ".github/workflows/backend-ci.yml",
+      "sha256": "c8b5d4a628fa889db0904c9047aee5c68d2204d5039cd867b405ce1a6de47dc8"
+    },
+    {
+      "path": "CLAUDE.md",
+      "sha256": "d4ca6d3a4c9ef247cd202276f46cf622ac02b34bb2a0e79a058aeda730a134e3"
+    },
+    {
+      "path": "docs/contracts/profile-onboarding-db-tests.workflow.yml.example",
+      "sha256": "0fde05cda849f2ac6642aea56fc298fd5616e9eb708ac012a712aa13e356bfdf"
+    },
+    {
+      "path": "docs/contracts/profile-public-private.md",
+      "sha256": "630b5201ce145a92cffb51166b47ee548d1d66a5359bdd5df79d18c114755b42"
+    },
+    {
+      "path": "package.json",
+      "sha256": "5ea7fb862c61375dac1a997f595d0de56bd1d78659c70da9a8eb23d9db40ba4c"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "sha256": "fdbda8cb7b8491d7d0d792b603145388509bdcef83a74e3b3d4674ebfbcd8709"
+    },
+    {
+      "path": "scripts/ci/canonical-checkout.test.mjs",
+      "sha256": "be0634b178b7582aab226062315640b20a7affbd25ef68e38ce870e09fca6471"
+    },
+    {
+      "path": "scripts/ci/db-verification.test.mjs",
+      "sha256": "a4d54f12798c61f53f5002ddddcb441a1e15a7fa69c712223b484b68049b1a3a"
+    },
+    {
+      "path": "scripts/ci/run-profile-onboarding-db.sh",
+      "sha256": "f3f1eace614186bb7e8267c85b9d661b130b3fd9b2e03d0ad7b746f752c0097e"
+    },
+    {
+      "path": "scripts/ci/run-profile-onboarding-tests.mjs",
+      "sha256": "b5c7eec090b21e7900a1e3a1c2d0eea1f4714a6a69d2db536ad2b639d0e693eb"
+    },
+    {
+      "path": "scripts/ci/test-chat-v2.mjs",
+      "sha256": "c4b77a36ea9b15964c66b0558cdb4d6b908e8b8fc37f6292dfe8a7b4b5ee226e"
+    },
+    {
+      "path": "scripts/ci/test-posting-v2.mjs",
+      "sha256": "98ebb1fa93939c0d7ec58dc1492ae2be3efa387f0967b8457fe9c4893d531214"
+    },
+    {
+      "path": "scripts/ci/toolchain.json",
+      "sha256": "2e098aa3d06892b391937bc59bbe3ea6300da0986c9ec899df167eea160366e1"
+    },
+    {
+      "path": "scripts/ci/verify-canonical-checkout.mjs",
+      "sha256": "8e7d09befdadfd8c9179360f8b1083d227313749926a889df63f8538a096109f"
+    },
+    {
+      "path": "scripts/cleanup-posting-v2.mjs",
+      "sha256": "530d019a3ef26b3d4d7053a2b3fb8a806ce157ee49f9ed856f45e852eacff585"
+    },
+    {
+      "path": "src/lib/chat-v2/safety-worker.ts",
+      "sha256": "9f8d971d0993feab5bf044a3b229a1cc8c5d83378bf7a7429c75f59d97da7b31"
+    },
+    {
+      "path": "src/lib/moderation/v2/india-fraud.ts",
+      "sha256": "f072e0fe8fde0b5ade23be41596db9b936dfeae20df5d4accc8ab614dd094182"
+    },
+    {
+      "path": "supabase/config.toml",
+      "sha256": "89496f30f5fe9bc0b9dff942a532cb974262d05a2f7290309fa91e3d6ec604b6"
+    },
+    {
+      "path": "supabase/forward-migrations/chat-v2/README.md",
+      "sha256": "67cc70ac5bfefd61d317baa784864372b0296e9b1eaeeeefc02de230cc8e4bb5"
+    },
+    {
+      "path": "supabase/forward-migrations/chat-v2/release/fairswapprod.inactive.sql",
+      "sha256": "7908de8ca61539165517e4655157068ba8f2b315a517278e8ef126319efed361"
+    },
+    {
+      "path": "supabase/forward-migrations/chat-v2/release/fairswapprod.vault-prerequisite.sql",
+      "sha256": "9af0b2e3c5865a1511a15c5f1b4b0c48973cb3fec62c4b76b96507d96c6461e3"
+    },
+    {
+      "path": "supabase/forward-migrations/chat-v2/release/fairswaptest.inactive.sql",
+      "sha256": "f6b76c59b87e14e7f4252d7aabfcc8ee04f99447b99cb4530c9fdc4fb91d13c7"
+    },
+    {
+      "path": "supabase/forward-migrations/chat-v2/release/fairswaptest.vault-prerequisite.sql",
+      "sha256": "7eaa7098dd026f5b20240e2061d539613d665d267b38357d12d09d26aee3582c"
+    },
+    {
+      "path": "supabase/forward-migrations/chat-v2/release/pg-net.preflight.sql",
+      "sha256": "7e52afa7af8132a5bca9776f5c0621ce196cb4bea5e95d3f9321beba933789f6"
+    },
+    {
+      "path": "supabase/forward-migrations/chat-v2/supabase/migrations/20261025204922_chat_v2_inbox_and_safety.sql",
+      "sha256": "f9807a4455601c14baff954836523c0cbd6ce3d478bed4071aeaca20ae67e852"
+    },
+    {
+      "path": "supabase/forward-migrations/chat-v2/supabase/migrations/20261026073143_chat_safety_worker_infrastructure.sql",
+      "sha256": "68e95a22fc4c91df854c07737e69ef482b46f8f80de6b54b6ace354578ba35b3"
+    },
+    {
+      "path": "supabase/forward-migrations/india-taxonomy/20261024213147_india_goods_taxonomy.sql",
+      "sha256": "c81e011fd960b7c3bb50f832f798074e76b54a3f722b68babd7535ab7241f21d"
+    },
+    {
+      "path": "supabase/forward-migrations/india-taxonomy/activation/20261024221855_activate_india_goods_taxonomy.sql",
+      "sha256": "d23782bb87ab8ce499a5d3fc2029b4b99bdeb458266385ed5d497a3307203a5b"
+    },
+    {
+      "path": "supabase/forward-migrations/india-taxonomy/deactivate.readwrite.sql",
+      "sha256": "e4a408e612b087cbf9d48aff0d5db285b3ae83824c470d1a3b563d9465f6caad"
+    },
+    {
+      "path": "supabase/forward-migrations/india-taxonomy/README.md",
+      "sha256": "f9d122a672d9ffeb5d9c20a2ed2a16ed358690d4eb3a86338b921c13a3a22867"
+    },
+    {
+      "path": "supabase/forward-migrations/posting-v2/activation/supabase/migrations/20261025135152_activate_posting_v2_mobiles.sql",
+      "sha256": "90646bad775c59d559cc8b6cbcd93c600c50816b5e2bbac66643c6061493f8a2"
+    },
+    {
+      "path": "supabase/forward-migrations/posting-v2/README.md",
+      "sha256": "07810b24370539bbfd140053a0fc9dee04b547e643b8ea26e9a31ad9255ab822"
+    },
+    {
+      "path": "supabase/forward-migrations/posting-v2/supabase/migrations/20261025131116_posting_v2_mobiles.sql",
+      "sha256": "5fc94530f76a21b04a71b8d6d85cd29b007f6b5e366b7d15b571a8e4d55c3a0a"
+    },
+    {
+      "path": "supabase/forward-migrations/profile-onboarding/20261025100001_user_private_details.sql",
+      "sha256": "18032643b77ab3e92a272d10ce5597a3e013ad8f40d13814a2f2728773b8b351"
+    },
+    {
+      "path": "supabase/forward-migrations/profile-onboarding/20261025100002_profile_text_validation.sql",
+      "sha256": "f2d8acd5b65a293469b4427db5218d2cd2be87ba562787244618bfeb3cec9640"
+    },
+    {
+      "path": "supabase/forward-migrations/profile-onboarding/20261025100003_profile_rpcs.sql",
+      "sha256": "87dab3aa8250ced92347e51d0cc3bec9f96a3df8bf5e633796a1695fcdb2463b"
+    },
+    {
+      "path": "supabase/forward-migrations/profile-onboarding/20261025100004_handle_new_user_hardening.sql",
+      "sha256": "6004e841fc3740a596959adb525c39719dca5b50486c524a7da540750ee87d9b"
+    },
+    {
+      "path": "supabase/forward-migrations/profile-onboarding/20261025100005_avatars_bucket_and_rpcs.sql",
+      "sha256": "e7afaba3172d0130e5b91f06364c4626f1591d173fe9e7972e827c326dd72f68"
+    },
+    {
+      "path": "supabase/forward-migrations/profile-onboarding/20261025100006_privacy_export_and_deletion.sql",
+      "sha256": "8cc9bdd8420dc70475b82e6f79f083c7ac94c34b8a4df11cc76e1026912edc4e"
+    },
+    {
+      "path": "supabase/forward-migrations/profile-onboarding/20261025100008_atomic_profile_save.sql",
+      "sha256": "38c304a9d27dedf5ed62617a87cb60b7d822f5ac9066d702fbaf261de097f614"
+    },
+    {
+      "path": "supabase/forward-migrations/profile-onboarding/tests/profile_onboarding.test.sql",
+      "sha256": "fd8d699966862b40a24fb5e60c19f5452711ae11e3bb023bb2336e5e4b5e2260"
+    },
+    {
+      "path": "supabase/forward-migrations/seller-profile/20261024100000_search_seller_public_listings.sql",
+      "sha256": "1d450895ae07e5c6f5ccea0506e5c9cff478994bb7c3166c138fe8d343949cb8"
+    },
+    {
+      "path": "supabase/functions/_shared/chat-safety-worker-handler.ts",
+      "sha256": "e34e4cee71d95581267331fd12fb3464469034da8df2935d60b458cdaa6672aa"
+    },
+    {
+      "path": "supabase/functions/process-chat-safety/deno.json",
+      "sha256": "1bafdeee3648e1691f6e59ea22afa2780fe6c2f87d08c860e7d9b4c5871aef81"
+    },
+    {
+      "path": "supabase/functions/process-chat-safety/index.ts",
+      "sha256": "aec389825c080bc785f95e296733f19b399ce14692bc40211ffe54592776e820"
+    },
+    {
+      "path": "supabase/tests/seller_public_listings_search.test.sql",
+      "sha256": "603bf381a3ead285432244d86537c26074aea37a3b287b786fb777d8211202aa"
+    },
+    {
+      "path": "tests/chat-v2/bootstrap.sql",
+      "sha256": "95c6de6f028de7a3a1cf691165654bcbf242b7246e12f1f44173ca291cc3bbb4"
+    },
+    {
+      "path": "tests/chat-v2/edge-auth.test.mjs",
+      "sha256": "013f85a236a3664f14525c28147a214af974be0203d2ba1a243f2a414a8e7915"
+    },
+    {
+      "path": "tests/chat-v2/infrastructure-contract.test.mjs",
+      "sha256": "1172f9dedc26b73ee6da50a10e8c126725848fe55ba239593b7022ef511173ff"
+    },
+    {
+      "path": "tests/chat-v2/offline-guard.mjs",
+      "sha256": "37567b06574eddf4cae55f26d6e0436e1c9bd26703c69e5433827212323c2b41"
+    },
+    {
+      "path": "tests/chat-v2/safety.test.mjs",
+      "sha256": "8065045506303045d6457e7bc2bf318b434865facef0dc5c05976fb71743c544"
+    }
+  ]
+}

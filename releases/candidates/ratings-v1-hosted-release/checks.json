@@ -1,0 +1,31 @@
+{
+  "status": "LOCAL_AUTOMATED_CHECKS_PASS_HOSTED_RELEASE_BLOCKED",
+  "startingHead": "213b57c84e2b3767e3ab3499846dd280bf3315c3",
+  "checks": [
+    {"check":"new disposable PostgreSQL 17.6 release assumptions", "status":"PASS", "assertions":24, "environments":{"test":12,"production":12}, "command":"./releases/candidates/ratings-v1-hosted-release/run-pg17.ps1 -PgBin <absolute embedded PG17.6 bin> -PsqlBin <absolute psql17 bin>", "evidence":"checks.pg17.txt"},
+    {"check":"existing Ratings native PG17.6 regression including independent-session races", "status":"PASS", "assertions":46, "command":"./tests/ratings/run-native.ps1 -PgBin <absolute embedded PG17.6 bin> -PsqlBin <absolute psql17 bin>", "evidence":"checks.existing-ratings-pg17.txt"},
+    {"check":"immutable historical Git blob manifest and working EOL representation", "status":"PASS", "files":58, "command":"node tests/ratings/verify-baseline.mjs", "evidence":"checks.baseline.txt"},
+    {"check":"six Ratings source hashes match prior reviewed contract-fix handoff and both copies", "status":"PASS", "command":"node releases/candidates/ratings-v1-hosted-release/prepare.mjs; node releases/candidates/ratings-v1-hosted-release/verify.mjs"},
+    {"check":"JavaScript syntax for candidate scripts", "status":"PASS", "command":"node --check <prepare.mjs, regression.mjs, verify.mjs, package.mjs>"},
+    {"check":"GitHub Backend CI at PR #59 head 2c34f1135ae0ff59f4f8810b883980325ac96c84", "status":"PASS_READ_ONLY_REMOTE_EVIDENCE", "run":40340690551, "evidence":"ci-evidence.json", "limitation":"first page of PR-triggered workflow runs; local source-to-PR file-byte comparison NOT RUN"},
+    {"check":"pre-existing unrelated checkout preservation", "status":"UNRELATED_CONCURRENT_DRIFT", "evidence":"preservation.json", "limitation":"Other files changed after initial snapshot without edits by this task; no clean-checkout or global byte-preservation claim"}
+  ],
+  "initialAttempts": [
+    "Sandbox initdb failed due restricted Windows token/account; rerun approved outside sandbox on disposable loopback-only clusters.",
+    "New fixture initially omitted actor for privacy-request insertion; corrected fixture identity.",
+    "New mobile negative fixture initially left price_type NULL; corrected explicit fixed price so guard rejection is meaningfully exercised. No migration change."
+  ],
+  "notRunOrBlocked": [
+    "Any hosted apply, provisioning, activation, write or deployment",
+    "Complete replay of all 87 Test / 71 Production histories (authoritative source-byte mapping unavailable)",
+    "Full generated pre/postflight against hosted targets; exact ledger guard is exercised with positive and negative PG17 fixtures, real hosted functions are captured separately",
+    "Real pg_cron extension scheduling, Supabase Auth/JWT, Storage service and Data API transport",
+    "Mobile posting activation source execution; installed ledger records captured, foundation and mobile guard regression executed",
+    "Performance/load qualification and Web/Admin/native hosted consumer acceptance",
+    "Current backup creation/restore or independent legacy-writer revocation/Backend protected authority",
+    "Local rerun of complete existing Backend CI, unit/typecheck/PGlite gates; remote workflow success recorded, no CI/config/dependency edits by task"
+  ],
+  "newEnvironmentVariables": [],
+  "hostedReads":"MCP schema_migrations and selected pg_proc definitions, ACLs and hashes only; no user rows, tokens, dumps or config values returned",
+  "manualOrExploratoryTesting":"NONE"
+}

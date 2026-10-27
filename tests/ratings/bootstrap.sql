@@ -1,0 +1,20 @@
+-- Disposable PostgreSQL engine only. Auth JWT/session and pg_cron are fixtures.
+create role ratings_fixture_admin superuser login;
+set session authorization ratings_fixture_admin;
+alter role postgres rename to pglite_bootstrap;
+create role postgres bypassrls;
+create role anon; create role authenticated; create role service_role bypassrls;
+grant create on database postgres to postgres;
+grant usage,create on schema public to postgres;
+set role postgres;
+create schema auth;
+grant usage on schema auth to anon,authenticated,service_role;
+create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb default '{}',created_at timestamptz default clock_timestamp());
+create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.user',true),'')::uuid$$;
+create function auth.jwt() returns jsonb language sql stable as $$select jsonb_build_object('aal',coalesce(nullif(current_setting('request.aal',true),''),'aal1'))$$;
+create schema cron;
+create schema vault;
+create table vault.decrypted_secrets(name text,decrypted_secret text);
+create table cron.job(jobid bigserial primary key,jobname text unique,schedule text,command text,active boolean default true);
+create function cron.schedule(text,text,text) returns bigint language plpgsql as $$declare j bigint; begin insert into cron.job(jobname,schedule,command) values($1,$2,$3) on conflict(jobname) do update set schedule=excluded.schedule,command=excluded.command returning jobid into j;return j;end$$;
+create function cron.alter_job(job_id bigint,active boolean) returns void language sql as $$update cron.job set active=$2 where jobid=$1$$;

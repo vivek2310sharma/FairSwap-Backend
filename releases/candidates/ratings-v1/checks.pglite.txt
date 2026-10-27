@@ -1,0 +1,36 @@
+Engine: PostgreSQL 18.3 (PGlite 0.5.8) on wasm32-unknown-emscripten, compiled by emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 3.1.74 (1092ec30a3fb1d46b1782ff1b4db5094d3d06ae5), 32-bit
+ok 1 - all activation flags default off and scheduler does nothing
+ok 2 - zero existing baseline; no historical sold backfill
+ok 3 - cron provisioning remains inactive on retries
+ok 4 - legacy sold listings cannot acquire invented trades
+ok 5 - new accounts receive zero baseline without phone/email gates
+ok 6 - legacy mark_sold preserves response and creates pending selection only
+ok 7 - valid buyer comes only from listing conversation and sell retries are idempotent
+ok 8 - arbitrary buyer, wrong-listing conversation, self and outsider denied atomically
+ok 9 - none choice closes unattributed without ratings
+ok 10 - existing policy acceptance gate survives additive sold integration
+ok 11 - buyer must explicitly confirm before review
+ok 12 - database score formula and private sealed author submission
+ok 13 - sealed counterpart is absent from Received, export and public projections
+ok 14 - confirmed trade counts with zero buyer reviews; repeat confirmation stable
+ok 15 - reciprocal submissions publish early and true 0.0 survives threshold masking
+ok 16 - duplicate submission exact replay returns same id, changed review rejected
+ok 17 - required integer faces, role vocabulary, max/duplicate tags, Unicode and HTML validation
+ok 18 - reply requires written published review and remains immutable
+ok 19 - reply rejects sealed or unwritten review, and inactive accounts cannot mutate
+ok 20 - expiry publishes seller-only review without inflating reputation or trades
+ok 21 - same pair counts across distinct listings without cooldown and score reaches 0.0
+ok 22 - buyer dispute freezes trade, removes aggregates and creates support evidence
+ok 23 - review reporting is durable, deduplicated, and linked to support case
+ok 24 - staff requires AAL2, role, enabled flag and audited explicit reason
+ok 25 - hide/restore recalculates counts, including threshold loss and recovery
+ok 26 - resolution and void recompute trade counts with immutable audit
+ok 27 - risk exclusion affects score and completed counts but reveals no internal flags
+ok 28 - outsider reads/writes and forged system events are denied by grants/RLS
+ok 29 - initial and day3/day10 reminders deduplicate; completed actions are excluded
+ok 30 - cursor pagination uses stable timestamp/UUID boundary and rejects partial cursor
+ok 31 - anonymous public APIs expose published visible content only
+ok 32 - privacy wrapper retains original authorization and does not grant base access
+ok 33 - account deletion erases text and removes reputation; physical deletion is FK safe
+ok 34 - catalog security assertions pass
+PASS 34 automated database checks; no hosted or external network operations

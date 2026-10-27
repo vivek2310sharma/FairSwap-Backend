@@ -1,0 +1,27 @@
+{
+  "status": "UNRELATED_CONCURRENT_DRIFT",
+  "taskEditsOutsideCandidate": [],
+  "note": "These paths changed after the snapshot without edits by this task; not overwritten, restored or included in scoped diff. Starting hashes retained.",
+  "drift": [
+    {
+      "path": "scripts/ci/prepare-chat-inbox-cli-fixture.mjs",
+      "sha256": "847312271be14bd2b54357629c86d8dd087c4018a8bf4e8976699eac4edd89ec",
+      "observedSha256": "c81c4aacff5d576652db2c6bbe62ef62aa56bf8f98ba32e1029d15c7bc939a66"
+    },
+    {
+      "path": "scripts/ci/run-chat-inbox-pg17.sh",
+      "sha256": "a3f381930dc77738194817f6d0aa4acbd02a2a83a4e257f8b53f9e22dc379678",
+      "observedSha256": "d8320b81235126e2a800d4b5488d8d695a1400b44fcbd1688323a1de89d7e6f9"
+    },
+    {
+      "path": "scripts/release/protected-inbox-plan.mjs",
+      "sha256": "b2a7cc1436faec00fdfef77c3714e62671655d06f94b01c7f62c900869183ec8",
+      "observedSha256": "27384117b5fff8b21f399203fba6137911101299ae5380507e9c3fbbf8232c3d"
+    },
+    {
+      "path": "tests/chat-v2-inbox-only/protected-release.test.mjs",
+      "sha256": "4aaf005761f6a3f4cc54881dfb2d0cf5877cca174b986e0d276523d9cfb75021",
+      "observedSha256": "d53774fd3d05d7edad4d80d633ed4b84e5017edcbeeec6e001b8edd226e81814"
+    }
+  ]
+}

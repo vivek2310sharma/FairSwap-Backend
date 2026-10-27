@@ -1,0 +1,309 @@
+{
+  "startingLocalHead": "213b57c84e2b3767e3ab3499846dd280bf3315c3",
+  "reviewedPrHead": "5d3378a9d35c734193bbfcf421864d3b91865947",
+  "synchronized": false,
+  "files": [
+    {
+      "path": ".github/workflows/backend-ci.yml",
+      "change": "MODIFIED",
+      "diffBase": "exact reviewed PR source, not old local HEAD",
+      "localOnlyDelta": "local-workflow.diff"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/BLOCKERS.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/HANDOFF.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/RELEASE.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/changed-files.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/checks.baseline.txt",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/checks.ci-contract.txt",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/checks.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/checks.pg17.txt",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/ci-contract.test.mjs",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/ci-evidence.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/ci-reviewed-head.after.yml",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/ci-reviewed-head.before.yml",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/ci-reviewed-head.patch",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/hdr03/expected-contract.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/hdr03/fingerprint.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/hdr03/installed-contract.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/hdr03/receipt.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/hdr03/regression.mjs",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/hdr03/reviewed-source.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/hdr03/verify-source.mjs",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/local-workflow.diff",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/migration-order.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/package.mjs",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/prepare.mjs",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/preservation.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/RELEASE.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/fresh-ledger.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/fresh-readonly-checks.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/hdr03-exception.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/hosted-evidence.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/inactive.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/installed-contracts.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/manifest.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/postflight.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/preflight.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/protected-functions.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/receipt.template.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/recovery.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/release-record.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/rollback-disable.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/supabase/migrations/20261026083608_ratings_schema.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/supabase/migrations/20261026083610_ratings_rpcs.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/supabase/migrations/20261026083612_ratings_reads.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/supabase/migrations/20261026083613_ratings_jobs.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/supabase/migrations/20261026083614_ratings_moderation_privacy.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/production/supabase/migrations/20261026094908_ratings_consumer_contract.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/regression.mjs",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/reviewed-ratings-source.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/run-pg17.ps1",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/run-pg17.sh",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/starting-state.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/RELEASE.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/fresh-ledger.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/fresh-readonly-checks.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/hosted-evidence.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/inactive.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/installed-contracts.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/manifest.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/postflight.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/preflight.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/protected-functions.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/receipt.template.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/recovery.md",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/release-record.json",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/rollback-disable.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/supabase/migrations/20261026083608_ratings_schema.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/supabase/migrations/20261026083610_ratings_rpcs.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/supabase/migrations/20261026083612_ratings_reads.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/supabase/migrations/20261026083613_ratings_jobs.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/supabase/migrations/20261026083614_ratings_moderation_privacy.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/test/supabase/migrations/20261026094908_ratings_consumer_contract.sql",
+      "change": "ADDED"
+    },
+    {
+      "path": "releases/candidates/ratings-v1-final-release/verify.mjs",
+      "change": "ADDED"
+    }
+  ],
+  "derivedArtifacts": [
+    "scoped.diff",
+    "SHA256SUMS",
+    "ratings-v1-final-release-handoff.zip",
+    "ratings-v1-final-release-handoff.zip.sha256"
+  ],
+  "immutableMigrationEdits": [],
+  "noHostedWrites": true
+}

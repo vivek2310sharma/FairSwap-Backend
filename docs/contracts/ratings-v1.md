@@ -1,0 +1,307 @@
+# Ratings V1 backend contract
+
+Candidate, 26 October 2026. Backend only; no hosted changes or consumer activation.
+Observed local base HEAD: `213b57c84e2b3767e3ab3499846dd280bf3315c3` on `main`.
+No fetch/pull or synchronization was authorized. Existing local work is inventoried in
+`releases/candidates/ratings-v1/starting-checkout.json`. The initial candidate adds five
+CLI-generated forward migrations. Consumer-contract completion adds
+`20261026094908_ratings_consumer_contract.sql` after those five, independently of
+Chat V2 PR #58. No initial migration bytes are changed. Separate release delta:
+`releases/candidates/ratings-v1-contract-fix/`.
+
+## Constants and eligibility
+
+The server owns the 14-day window, faces 1..4, 500 Unicode codepoints after NFC
+normalization, up to five unique validated tag codes, and score threshold three.
+All four private settings (`enabled`, `public_reads`, `jobs_enabled`, `staff_enabled`)
+start false. No client or service-role settings grants. No new environment variables.
+The existing Auth identity, active-account check and sold RPC's current-policy
+acceptance gate remain authoritative. No phone/email verification or account-pair
+restriction is added. Repeated mutually acknowledged transactions count across
+distinct listings, irrespective of how recently the same pair traded.
+
+Every existing/new profile has a zero stats row. No old sold listing is backfilled.
+Only future sold transitions while `enabled` is true produce pending trades. Turning
+the flag off also stops new sold-trigger trade capture. Existing legacy
+`seller_transition_listing(listing_id uuid, action text) -> jsonb` is unchanged,
+including response, status guards, legal acceptance, grants and audit behavior.
+The additional sold trigger creates only a `pending_selection` trade. Ratings API
+cannot attach a buyer to a historical sold listing without an existing trade.
+
+## State transitions
+
+```mermaid
+stateDiagram-v2
+  [*] --> pending_selection: future mark_sold
+  pending_selection --> pending_buyer: seller selects listing conversation
+  pending_selection --> unattributed: seller selects none
+  pending_selection --> expired_unconfirmed: deadline
+  pending_buyer --> confirmed: buyer opens Rate Seller / explicit confirm
+  pending_buyer --> disputed: buyer denies purchase before deadline
+  confirmed --> disputed: buyer denies purchase before deadline
+  pending_buyer --> expired_unconfirmed: deadline
+  disputed --> confirmed: case resolved with prior buyer acknowledgement
+  disputed --> pending_buyer: resolved before deadline without acknowledgement
+  disputed --> expired_unconfirmed: resolved after deadline without acknowledgement
+```
+
+`voided` and `risk_excluded` are private eligibility controls, absent from consumer
+DTOs. Voiding is final in V1. Resolving a dispute cannot invent buyer acknowledgement.
+Disputes freeze submissions, suppress public reviews and remove completed/countable
+reputation until resolution. Quick dispute closes exactly at the deadline; existing
+formal support/report APIs remain available afterward. Void prevents publication and
+counting. Risk exclusion prevents counting, while otherwise visible published content
+can remain visible. A fraud-related tag is an internal signal, never proof of fraud.
+
+Marking sold is atomic with trade creation/selection and typed events. Selection is
+by **conversation ID**, never a buyer UUID. The conversation must belong to the listing
+and seller, have an active buyer, and not be self-chat. One unique trade per listing;
+once selected the buyer cannot be replaced. `pending` means “Not now”; `none` closes
+unattributed and does not permit ratings. Selection never extends the original window.
+
+Consumers MUST call `ratings_buyer_action(trade_id,'confirm')` when opening Rate Seller,
+before rendering the optional review wizard. Confirmation persists if the wizard is
+abandoned. Buyers cannot submit until confirmed. Sellers may submit while buyer is
+pending. Completed trades require seller acknowledgement through sold/selection plus
+explicit buyer acknowledgement; zero submitted reviews is valid.
+
+## Write RPCs
+
+All public RPCs use `SECURITY INVOKER SET search_path=''` over private definer
+implementations. Only `authenticated` receives these grants. Every user mutation
+validates `auth.uid()` and active account status. Service credentials are not part of
+the client contract. Parameter names below are exact PostgREST JSON keys.
+
+| Signature | Request and response |
+| --- | --- |
+| `ratings_sell(listing_id uuid, choice text='pending', conversation_id uuid=NULL) -> jsonb` | `choice`: `select`, `pending`, `none`. `select` requires conversation; others require NULL. Returns `{trade_id:uuid,state:TradeState,deadline:timestamp}`. Calls existing sold implementation for unsold listing, preserving allowed statuses active/reserved/paused and current-policy acceptance. |
+| `ratings_buyer_action(trade_id uuid, action text) -> jsonb` | `confirm` or `dispute`; selected buyer only, before deadline. Returns `{trade_id:uuid,state:'confirmed'|'disputed'}`. |
+| `ratings_submit(trade_id uuid, communication integer, payment_item integer, meetup integer, body text=NULL, tags text[]='{}') -> uuid` | Required raw integer faces 1..4. Returns immutable review ID. Recipient and reviewer role are derived server-side. |
+| `ratings_reply(review_id uuid, body text) -> uuid` | Recipient only; published, visible, nonvoid review with written body required. One permanent nonblank reply. Returns review ID. |
+| `ratings_report(review_id uuid, reason text) -> uuid` | Visible published review only; cannot report own review. Reason 3..500 normalized codepoints. One report per reporter/review; ten new cases per rolling day. Returns private case ID; creates existing safety support ticket. |
+
+Repeated identical sell/confirm/dispute calls do not create duplicate rows. Review and
+reply retries with identical normalized text/faces/tags return the same ID; changing
+any immutable value fails. Tag order matters to exact replay. Submissions and buyer
+actions after deadline fail even if an earlier identical request succeeded. Clients
+recover uncertain late retries through private reads. Domain writes are serialized by
+a private transaction advisory lock, taken after the listing lock for sold operations.
+Aggregates recompute only the affected profiles in the same transaction. No network
+or worker operation is inside that transaction. V1 favors correctness over concurrent
+write throughput; load qualification remains a release gate. Retry whole idempotent
+requests on SQLSTATE `40P01`/`40001`, including privacy/listing lock contention.
+
+## Faces, tags and text
+
+Seller reviews buyer: Communication / Payment / Meeting-pickup.
+Buyer reviews seller: Communication / Item-as-described / Meeting-handover.
+The stable storage/API names are `communication`, `payment_item`, `meetup`.
+Faces: 1 Poor, 2 Fair, 3 Good, 4 Excellent.
+
+Database generated score:
+`round((((communication + payment_item + meetup) / 3.0) - 1) / 3.0 * 10, 1)`.
+`1,1,1=0.0`; `3,3,4=7.8`; `4,4,4=10.0`. TypeScript score is reference only.
+
+All text is NFC, trimmed of ASCII outer spaces, max 500 codepoints (not UTF-16 code
+units). NULL/empty review body means no written text. Reply and report reason require
+nonempty text. Reject C0/C1 controls, angle brackets and bidi overrides/isolates/BOM.
+Store/render as plain text; consumers must use escaped text nodes, never HTML parsing.
+The same validator covers body, reply and case reason; no external payment instructions
+or links can appear in server-generated event/notification templates.
+
+| Reviewer role | Enabled initial tags |
+| --- | --- |
+| Both | `on_time`, `polite`, `quick_replies`, `did_not_show_up`, `sent_payment_link` |
+| Seller | `paid_as_agreed`, `easy_pickup`, `delayed_payment` |
+| Buyer | `item_as_described`, `accurate_photos`, `smooth_handover`, `item_not_as_described`, `changed_price`, `asked_advance_payment` |
+
+Private `rating_tags` vocabulary is extensible by a reviewed server migration.
+`asked_advance_payment` and `sent_payment_link` are internal signals removed from all
+review DTO tag projections. Tags do not automatically change eligibility.
+
+## Publication and aggregates
+
+Authors see their own sealed submission in Given. Received and public projections
+contain no counterpart review until both submit or the deadline passes. Publication
+is independent of trade confirmation: seller-only review can publish on expiry, but
+unconfirmed trade adds zero counted reputation and zero completed trades.
+
+Private `publish_due_reviews() -> integer` processes up to 200 due trades per call,
+sets terminal closure metadata, publishes eligible submitted reviews and emits one
+expired event. Repeated runs are idempotent. Missing submission is derived as
+`not_rated` in trade state. Pending actions/count exclude expired trades immediately,
+even if the scheduler has not run. Reviews become public only on publication, so
+publication can lag the deadline by the job cadence/backlog. Disputed reviews stay
+sealed/suppressed until authorized case resolution; resolution republishes due content.
+
+`profile_rating_stats` stores published visible nonvoid/nondisputed review count,
+counted review count, mutually acknowledged valid completed trades, profile score,
+three dimension averages. Counted reviews additionally require a confirmed trade,
+buyer acknowledgement and no risk exclusion/redaction. Profile score is the arithmetic
+mean of the stored individual review scores, rounded to one decimal. Raw dimension
+averages are 1..4, rounded to two decimals. Below three counted reviews score and
+dimension averages are NULL. `score=0.0` is valid and `display_state='rated'`; consumers
+must test NULL, never truthiness. There are no paid ratings/badges/boosts.
+
+## Read RPCs and schemas
+
+All page sizes are fixed **20**, ordered descending by timestamp then UUID. Supply
+both `before_at` and `before_id` from `next_cursor`, or neither. Envelope:
+`{items:T[], has_more:boolean, next_cursor:{before_at:timestamp,before_id:uuid}|null}`.
+Maximum 21 rows are read for lookahead. Timestamps use RFC3339 offsets; UUID tuple
+comparison breaks timestamp ties. Cross-request mutations may remove rows, but the
+immutable ordering tuple avoids duplicate page rows. No page read changes state.
+
+| Exact signature | Row schema / authorization |
+| --- | --- |
+| `ratings_buyer_candidates(listing_id uuid,before_at timestamptz=NULL,before_id uuid=NULL) -> jsonb` | Seller only. `{id:conversation_uuid,buyer_id:uuid,display_name:text,created_at:timestamp}`. Own listing's active buyers only. |
+| `ratings_pending(before_at timestamptz=NULL,before_id uuid=NULL) -> jsonb` | Current active user only. `{id:trade_uuid,listing_id:uuid|null,sold_at:timestamp,deadline:timestamp,state:TradeState,action:'select_buyer'|'confirm_and_rate'|'rate'}`. Submitted reviews remove own action. |
+| `ratings_given(before_at timestamptz=NULL,before_id uuid=NULL) -> jsonb` | Current active author's reviews, including their sealed review. Review DTO below. |
+| `ratings_received(before_at timestamptz=NULL,before_id uuid=NULL) -> jsonb` | Current active recipient, published visible reviews only. Review DTO. |
+| `ratings_public_reviews(user_id uuid,before_at timestamptz=NULL,before_id uuid=NULL) -> jsonb` | `anon`/`authenticated`; `public_reads` flag required. Active recipient only; absent/nonactive returns empty page. Review DTO. |
+| `ratings_events(trade_id uuid,before_at timestamptz=NULL,before_id uuid=NULL) -> jsonb` | Active trade participant only. `{id:uuid,trade_id:uuid,kind:TradeEvent,created_at:timestamp}`. |
+| `ratings_summary(user_id uuid) -> jsonb` | `anon`/`authenticated`; `public_reads` required; NULL for absent/nonactive. `{user_id:uuid,published_review_count:int,counted_review_count:int,completed_trades:int,score:number|null,communication_average:number|null,payment_item_average:number|null,meetup_average:number|null,display_state:'rated'|'no_rating_yet'}`. |
+| `ratings_pending_count() -> integer` | Current active user's total outstanding actions, unpaginated count, including buyer selection. |
+| `ratings_trade(trade_id uuid) -> jsonb` | Active participant only. `{id:uuid,listing_id:uuid|null,conversation_id:uuid|null,state:TradeState,deadline:timestamp,buyer_confirmed:boolean,can_dispute:boolean,my_review_id:uuid|null,my_rating_status:'submitted'|'not_rated'|'pending'}`. |
+| `ratings_trade_for_conversation(conversation_id uuid) -> jsonb|null` | Active actual conversation participant AND trade participant only. Same Trade DTO as `ratings_trade`, including pending, confirmed, submitted/rated, disputed and expired trades. Existing conversation with no matching selected trade returns JSON null; missing/foreign conversation always `42501 RATINGS_ACCESS_DENIED`. Seller can retrieve an unselected `pending_selection` trade through their listing conversation; an unselected enquirer receives null. A submitted review is represented by `my_rating_status='submitted'`, not a new trade state. |
+| `ratings_given_history(before_at timestamptz=NULL,before_id uuid=NULL) -> jsonb` | Active current user only, enabled required. Typed Given-history entries below; existing `ratings_given` remains review-only. |
+
+Review DTO (all keys present): `{id:uuid,author_id:uuid|null,recipient_id:uuid|null,
+reviewer_role:'buyer'|'seller',communication:int,payment_item:int,meetup:int,score:number,
+author_display_name:text|null,recipient_display_name:text|null,context:RatingContext,
+body:text|null,tags:string[],submitted_at:timestamp,published_at:timestamp|null,
+reply:{body:text,created_at:timestamp}|null}`. Author ID is NULL for nonactive author.
+Recipient ID and each display name are also NULL when that identity is not active.
+`RatingContext` is `{trade_id:uuid,listing_id:uuid|null,listing_title:text,sold_at:timestamp}`.
+Only active/reserved/sold listings with an active seller supply ID/title; otherwise
+`listing_id=null,listing_title='Listing removed'`. No historical title snapshot,
+description, location, price, contact information or media is disclosed. `reviewer_role`
+identifies the author's buyer/seller role; the recipient has the opposite role. Render
+names/title/body as escaped plain text. New DTO keys require consumers using strict
+Zod validation to adopt the updated schema before activation.
+Private author DTO may show their own hidden submission; redacted text is never
+returned. Public profile route stays `/seller/{userId}`. No handles or contact fields.
+Client boundary schemas/reference calculation are under `src/lib/ratings/`.
+
+Given-history entry is a discriminated union (no mixed nullable review fields):
+
+- `{kind:'review',id:review_uuid,at:submitted_at,review:ReviewDTO}`
+- `{kind:'not_rated',id:trade_uuid,at:deadline,context:RatingContext,my_role:'buyer'|'seller'}`
+
+Not-rated entries require a selected buyer/seller, nonvoid trade, expired deadline,
+and no own submission. They include disputed and unconfirmed expired transactions;
+unattributed and never-selected trades are excluded. They appear immediately at the
+deadline, even before scheduler processing. They reveal no counterpart submission ID,
+existence, text, faces, tags or publication time. No synthetic review or reputation is
+created. Pagination is 20 entries plus one lookahead, descending `(at,id)` where review
+`at=submitted_at` and not-rated `at=deadline`; use the envelope cursor unchanged.
+No 90-day filter, new phone/OTP requirement or historical backfill is introduced.
+
+## Chat and notifications
+
+Dedicated protected `trade_system_events` is authoritative; legacy messages are
+unchanged. Fixed kinds: `buyer_selected`, `pending_buyer`, `confirmed`, `rated_buyer`,
+`rated_seller`, `disputed`, `expired`. Events contain only IDs, kind and timestamp.
+Clients fetch a separate projection, never infer official cards from message content.
+There is no `system_trade` insert API, event body, external URL, UPI request or OTP
+instruction. Event pagination is separate from Chat V2 messages; do not intermix the
+two cursors. Trade state supplies card actions. Buyer-selection events exist only in
+the selected conversation's trade and are never visible to other enquirers.
+
+Notification generation uses existing `create_notification`, existing account-status
+rules and fixed internal `/account/ratings` link. V1 reuses existing enum `support_reply`
+to avoid changing a shared notification enum/old consumers; compatible consumers must
+route by link until a separately coordinated notification type is introduced.
+Buyer selection/confirm-and-rate is one notification, seller pending rating is another.
+Day 3 and day 10 reminders apply only to outstanding rate/confirm actions. Select-buyer
+actions are not reminded. Private receipts deduplicate per trade/user/kind transactionally
+with the notification insert. Latest due reminder wins when delayed beyond day 10;
+old day-3 notification is not sent late. Both initial and reminder infrastructure require
+`enabled AND jobs_enabled`. Private reminder cursor batches 200 trades and cycles,
+avoiding permanently starving older outstanding actions. Completion removes future
+reminders; delivered notifications remain ordinary account history.
+
+## Staff, reporting and privacy
+
+`admin_ratings_case(case_id uuid,action text,reason text) -> jsonb` and
+`admin_ratings_ticket(ticket_id uuid,action text,reason text) -> jsonb` require active
+moderator/administrator, JWT AAL2, separate `staff_enabled` and reason 3..500 codepoints.
+The ticket RPC resolves only an existing case linked to the supplied support ticket.
+Staff cannot operate on their own trades/reports. No existing Admin grants are restored.
+
+`admin_ratings_cases(kind text,status text='open',before_at timestamptz=NULL,before_id uuid=NULL)
+-> jsonb` is the metadata-only queue. Kind is required `review_report` or `dispute`;
+status is `open`, `resolved` or `all`, based on `resolved_at`. Active moderator or
+administrator, JWT AAL2 and `staff_enabled` are all required. Conflicted rows (own
+trade or report) are omitted, including NULL-safe checks for erased identities.
+Same fixed 20-row envelope/cursor, descending `(created_at,id)`. Exact queue row:
+`{id,trade_id,review_id:null|uuid,support_ticket_id:null|uuid,kind,created_at,resolved_at:null|timestamp}`.
+No reason, reporter/participant identities, review content, listing details, sealed
+evidence or eligibility flags appear. Queue navigation creates no evidence-read audit;
+detailed reads still require the case-scoped, reason-required audited `evidence` action.
+All new RPCs grant only authenticated EXECUTE; no table grants or existing staff/export
+permissions are broadened. Public wrappers remain invokers with private definers.
+
+Actions: `evidence`, `hide`, `restore`, `resolve`, `void`, `exclude`, `clear_exclusion`.
+Hide/restore requires a review-report case. Resolve requires disputed nonvoid trade;
+prior buyer acknowledgement is required for confirmed state. Every action including
+evidence reads appends an audit record. Mutations return `{case_id:uuid,action:text}`.
+Evidence returns `{case:RatingCase,trade:InternalTrade,reviews:InternalReview[],replies:InternalReply[]}`
+and is the only DTO containing sealed evidence/internal eligibility controls.
+`RatingCase`: `id,trade_id,review_id|null,reporter_id|null,support_ticket_id|null,kind,
+reason,created_at,resolved_at|null`. `InternalTrade`: `id,listing_id|null,seller_id|null,
+buyer_id|null,conversation_id|null,state,sold_at,deadline,buyer_confirmed_at|null,
+closed_at|null,voided,risk_excluded`. `InternalReview`: Review storage fields including
+`trade_id,author_id,recipient_id,reviewer_role,communication,payment_item,meetup,score,
+body,tags,submitted_at,published_at,hidden,redacted,id`; `InternalReply`:
+`review_id,author_id|null,body,created_at`. Reasons/evidence never enter public APIs.
+
+Existing privacy export implementation is renamed to private `ratings_export_base`;
+the wrapper calls it first, retaining authorization, audit, original data and installed
+ACLs. It appends `ratings:{given:OwnSubmission[],received:ReviewDTO[],replies:OwnReply[],trades:OwnTrade[]}`.
+OwnSubmission has review ID/trade ID/role/faces/score/body/tags/submission/publication
+times, never counterpart sealed content. OwnTrade contains only ID/listing/state/sold/
+deadline/buyer-confirmation timestamps; OwnReply has review ID/body/creation time.
+
+Logical `deletion_pending`/`deleted` and physical Auth deletion both invoke erasure:
+erase free text/tags involving the account, tombstone replies, null subject identifiers,
+void affected trades, delete notification receipts and recompute affected reputations.
+This conservatively removes both counterpart and deleted user's related reputation.
+Minimal case/audit evidence is retained under the existing compliance-record model;
+reporter free text is redacted and its identity nulled. Staff audit reasons remain
+immutable retained evidence, matching existing audit policy; no new retention duration
+is invented. Auth FKs use SET NULL; profile stats cascade. Erasure works with flags OFF.
+Any future migration that replaces privacy exporter must preserve this wrapper chain;
+profile-onboarding may precede Ratings, but is not a prerequisite. Do not overwrite its
+unmerged SQL or helper names. Release preflight must capture exporter definition/ACLs.
+
+## Errors
+
+| SQLSTATE | Message / meaning |
+| --- | --- |
+| `42501` | `RATINGS_ACCESS_DENIED`, `RATINGS_STAFF_CONFLICT` — no authorized identity/ownership/role/AAL2, or staff conflict. Missing and forbidden objects deliberately share denial. |
+| `55000` | `RATINGS_DISABLED`, `RATINGS_STAFF_DISABLED`, `RATINGS_LEGACY_SOLD`, `RATINGS_WINDOW_CLOSED`, `RATINGS_TRADE_FROZEN`, `RATINGS_CONFIRM_FIRST`. |
+| `22023` | `RATINGS_INVALID_CHOICE`, `RATINGS_INVALID_BUYER`, `RATINGS_INVALID_ACTION`, `RATINGS_INVALID_FACES`, `RATINGS_INVALID_TAGS`, `RATINGS_INVALID_TEXT`, `RATINGS_INVALID_CURSOR`, `RATINGS_INVALID_PAGE`, `RATINGS_REASON_REQUIRED`, `RATINGS_CASE_MISMATCH`. |
+| `23505` | `RATINGS_TRADE_CONFLICT`, `RATINGS_REVIEW_IMMUTABLE`, `RATINGS_REPLY_IMMUTABLE`; uniqueness defense also applies at table level. |
+| `54000` | `RATINGS_REPORT_LIMIT`. |
+
+Existing sold RPC errors/SQLSTATE, including `POLICY_ACCEPTANCE_REQUIRED:`, remain
+unchanged. Standard PostgreSQL type errors reject fractional integer RPC inputs.
+Do not disclose internal eligibility reasons to consumers. Clients should show generic
+unavailable/frozen state, not infer fraud. Retryable lock/transaction errors are standard
+PostgreSQL `55P03`, `40P01`, `40001`; retry complete idempotent operations, never partial SQL.
+
+## Release and verification references
+
+Separate staged/production manifests, environment identity guards, inactive scheduler
+setup, dependency order, rollback, receipt template and exact check evidence are in
+`releases/candidates/ratings-v1/`. Historical 58 files/hash manifest remain untouched.
+Native SQL tests use PostgreSQL 17; PGlite is supplementary, not hosted acceptance.
+CI wiring is a proposed snippet for ChatGPT; this task makes no Actions changes.
+
+Documentation checked 26 October 2026: [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security),
+[database functions / safe search paths](https://supabase.com/docs/guides/database/functions),
+[Cron](https://supabase.com/docs/guides/cron/quickstart),
+[Postgres upgrades and compatibility](https://supabase.com/docs/guides/platform/upgrading),
+[changelog](https://supabase.com/changelog.md). The implementation uses ordinary
+Postgres 17-compatible functions, generated columns, row locks and advisory locks.

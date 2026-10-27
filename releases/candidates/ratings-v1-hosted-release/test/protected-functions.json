@@ -1,0 +1,483 @@
+[
+  {
+    "identity": "app_security.impl_admin_phone_catalogue(p_kind text, p_entry jsonb)",
+    "signature": "app_security.impl_admin_phone_catalogue(text,jsonb)",
+    "body_sha256": "455129897faa9fe741d479ad72e6c19dbda490372e51a8c6888f45982b4858da",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": false
+  },
+  {
+    "identity": "app_security.impl_admin_search_users(p_query text, p_status account_status_enum, p_limit integer, p_offset integer)",
+    "signature": "app_security.impl_admin_search_users(text,account_status_enum,integer,integer)",
+    "body_sha256": "95eb405f22583a1f9d01a61839f1a4342ad50872509ee693dacf45d503f1e301",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "app_security.impl_fulfill_data_export(p_request_id uuid)",
+    "signature": "app_security.impl_fulfill_data_export(uuid)",
+    "body_sha256": "6cbee48ace9639bd8a072ecaf8289d3696a22b66e656fa32b385432c6a57f0c4",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "app_security.impl_fulfill_data_export_base(p_request_id uuid)",
+    "signature": "app_security.impl_fulfill_data_export_base(uuid)",
+    "body_sha256": "03d212e0b1cfbaed75cd4dad777c5c4a9994d9f8311f722a4ec738e48c1b5819",
+    "acl": "{postgres=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": false
+  },
+  {
+    "identity": "app_security.impl_posting_v2_cleanup(operation text, session_id uuid)",
+    "signature": "app_security.impl_posting_v2_cleanup(text,uuid)",
+    "body_sha256": "56a6356c9e221a7cb2f5eb01fef51295d5a3303627eeca6478d2b2e737c465a4",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": true
+  },
+  {
+    "identity": "app_security.impl_posting_v2_media_ready(session_id uuid, media_id uuid, attempt_id uuid, file_size integer, width integer, height integer)",
+    "signature": "app_security.impl_posting_v2_media_ready(uuid,uuid,uuid,integer,integer,integer)",
+    "body_sha256": "d3c6119710d6d4c50c455f4bc52a1a37b03147ce81bc2cb4cf23ed79761745af",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": true
+  },
+  {
+    "identity": "app_security.impl_posting_v2_session(p_session_id uuid, p_operation text, p_media_id uuid)",
+    "signature": "app_security.impl_posting_v2_session(uuid,text,uuid)",
+    "body_sha256": "7fba63e6b3ba42eeb0b325bcf85cd5deb52814d5aab454a0a9927a957a2ba3cb",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": false
+  },
+  {
+    "identity": "app_security.impl_seller_transition_listing(p_listing_id uuid, p_action text)",
+    "signature": "app_security.impl_seller_transition_listing(uuid,text)",
+    "body_sha256": "1be942886c97691530a5ce5380b12c14259a270c4777e740f3b5c8d4bcc9214d",
+    "acl": null,
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": true,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "app_security.impl_submit_mobile_v2(p_payload jsonb)",
+    "signature": "app_security.impl_submit_mobile_v2(jsonb)",
+    "body_sha256": "dac9ea8821c402f6bf00366aa46ef0d10c8c2f1ea306ff9fff73efd4813ddc0b",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": false
+  },
+  {
+    "identity": "app_security.is_active_staff_aal2(p_required_role staff_role_enum)",
+    "signature": "app_security.is_active_staff_aal2(staff_role_enum)",
+    "body_sha256": "b0957cfaacfa28029a1a3a144ad27b47f2f342d097246ed725cdb4dfbb32c1f8",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres,anon=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": true,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "app_security.mobile_listing_guard()",
+    "signature": "app_security.mobile_listing_guard()",
+    "body_sha256": "0ed05f7da995b6e4c1d5239fa0973a737dd5f15d2d064101c6b5e216ef1878ca",
+    "acl": "{postgres=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": false
+  },
+  {
+    "identity": "app_security.phone_content_guard(p_text text)",
+    "signature": "app_security.phone_content_guard(text)",
+    "body_sha256": "f02cdb4929e9afa359b78a4bfe3efc9c07af652926f21197c42175aa6e98b897",
+    "acl": "{postgres=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": false
+  },
+  {
+    "identity": "app_security.posting_v2_actor()",
+    "signature": "app_security.posting_v2_actor()",
+    "body_sha256": "af3f872ea962ba8583bf57208b580d181a5b9334ef81c19381e82f17a6fc79d1",
+    "acl": "{postgres=X/postgres}",
+    "prosecdef": true,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": false
+  },
+  {
+    "identity": "public.admin_add_ticket_internal_note(ticket_id uuid, content text)",
+    "signature": "admin_add_ticket_internal_note(uuid,text)",
+    "body_sha256": "811fece6e2b56f5a84916bf4b44adb45cf2c8acdfa0a3931f287cda62abbe64b",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_assign_staff_role(p_target_user_id uuid, p_new_role staff_role_enum)",
+    "signature": "admin_assign_staff_role(uuid,staff_role_enum)",
+    "body_sha256": "cbd7917bc789a3914f8ff6c5d218b30f0ca39bf1d121137ff41b85ca58dea772",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_begin_account_deletion(request_id uuid)",
+    "signature": "admin_begin_account_deletion(uuid)",
+    "body_sha256": "d6a1c0e37993bd79d85846bfe026e7ee4aa5f46eedd64e61d8763b136d3e9606",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_finalize_account_deletion(request_id uuid)",
+    "signature": "admin_finalize_account_deletion(uuid)",
+    "body_sha256": "ac3d9d41d18dfedf755c63c9f2ea2c3768e131985778c9a56e255c15e8561b3e",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_fulfill_data_export(request_id uuid)",
+    "signature": "admin_fulfill_data_export(uuid)",
+    "body_sha256": "64a7192af6504653bd8e0dcc66075bcef4e226a33010b472002d43ea5c36aa05",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_get_report_evidence(report_id uuid)",
+    "signature": "admin_get_report_evidence(uuid)",
+    "body_sha256": "2ff05884dbe49df99c5b136767d0781979cc8e96d6e5feeae3c84c3909408871",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_list_profile_text_violations(p_limit integer)",
+    "signature": "admin_list_profile_text_violations(integer)",
+    "body_sha256": "309117c5c4de8361285df9c389532259f98ef05135e38eddd06b6a79763d1dff",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_manage_category(action text, category_id uuid, slug text, name text, description text, icon text, sort_order integer, is_active boolean)",
+    "signature": "admin_manage_category(text,uuid,text,text,text,text,integer,boolean)",
+    "body_sha256": "b4a9d8283b13926a34188e68d88cbf0fe17d3a6cc9363bd061652bfb79405bd1",
+    "acl": "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": true,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_manage_location(action text, city_id uuid, locality_id uuid, name text, state text, slug text, is_active boolean)",
+    "signature": "admin_manage_location(text,uuid,uuid,text,text,text,boolean)",
+    "body_sha256": "bcb65913ecd08acd3222ef6c81afb9b295f423adbc3f519f3a91231f5b923f44",
+    "acl": "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": true,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_phone_catalogue(kind text, entry jsonb)",
+    "signature": "admin_phone_catalogue(text,jsonb)",
+    "body_sha256": "bb0cf0e4bc3573f2d18f0c68eb1db7c499b7d4d582685647c8fc6e69f191dc6d",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": false
+  },
+  {
+    "identity": "public.admin_reply_support_ticket(ticket_id uuid, content text)",
+    "signature": "admin_reply_support_ticket(uuid,text)",
+    "body_sha256": "67d614bf8c532bbf81e10d32e00060f749a4c2508377b63a90acda4d788e6988",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_resolve_privacy_request(p_request_id uuid, p_new_status privacy_request_status_enum, p_notes text)",
+    "signature": "admin_resolve_privacy_request(uuid,privacy_request_status_enum,text)",
+    "body_sha256": "48edb5a3aa73917063128a225a92276448cbb5c4922123f76e3c74001b12dcc4",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_resolve_report(report_id uuid, new_status report_status_enum, resolution_notes text)",
+    "signature": "admin_resolve_report(uuid,report_status_enum,text)",
+    "body_sha256": "e7c6321575e45d0dcb52bf08dbef69ef8486c440c85049f97bf62b9b6b59a764",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_revoke_staff_role(p_target_user_id uuid)",
+    "signature": "admin_revoke_staff_role(uuid)",
+    "body_sha256": "083fe2897b125c31afec67428d801ed79c2b92e7ca5a7e63b2a927cb18a5cfb4",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_search_users(p_query text, p_status account_status_enum, p_limit integer, p_offset integer)",
+    "signature": "admin_search_users(text,account_status_enum,integer,integer)",
+    "body_sha256": "0aa4fc335fc9458c9e9ae763b749c722e6b37da6eacc469e9bcd28aef9e4c98f",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_update_ticket_state(ticket_id uuid, status support_ticket_status_enum, priority support_ticket_priority_enum)",
+    "signature": "admin_update_ticket_state(uuid,support_ticket_status_enum,support_ticket_priority_enum)",
+    "body_sha256": "5f6fdb0ba4026d9723d0c5526d0c928e1d231fcc863d9297baa81d224c92d34c",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": false
+  },
+  {
+    "identity": "public.admin_update_ticket_status(ticket_id uuid, status support_ticket_status_enum, priority support_ticket_priority_enum, assigned_to uuid)",
+    "signature": "admin_update_ticket_status(uuid,support_ticket_status_enum,support_ticket_priority_enum,uuid)",
+    "body_sha256": "882c0816de61afe30425a79108953198ed2fe4c77d3adc2b65198a2dbf7c2b90",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.admin_update_user_account_status(p_target_user_id uuid, p_new_status account_status_enum, p_reason text)",
+    "signature": "admin_update_user_account_status(uuid,account_status_enum,text)",
+    "body_sha256": "124a4bfa6903549aaf024a6c5e6dd239d042faba6e7e1d737623c5d1c0165456",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.posting_v2_catalogue()",
+    "signature": "posting_v2_catalogue()",
+    "body_sha256": "add9452640168b78840ee3ec17cd2b7c13aa587c42a7423b1e103b3026eeebb1",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.posting_v2_cleanup(operation text, session_id uuid)",
+    "signature": "posting_v2_cleanup(text,uuid)",
+    "body_sha256": "847cc6e009e34e3a2d7439ab0c85c8eaf1420208242857ee65c6f74c5ec9fd1b",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.posting_v2_media_ready(session_id uuid, media_id uuid, attempt_id uuid, file_size integer, width integer, height integer)",
+    "signature": "posting_v2_media_ready(uuid,uuid,uuid,integer,integer,integer)",
+    "body_sha256": "e690d95ad56cc41ef66183516936942ec87a6193865ddf270478b73f2da0561e",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": false,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.posting_v2_session(session_id uuid, operation text, media_id uuid)",
+    "signature": "posting_v2_session(uuid,text,uuid)",
+    "body_sha256": "11f86d4af8cb400b10b97012d124a6af83eb6a86f003d011a44d122b9d50a20f",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": false
+  },
+  {
+    "identity": "public.seller_transition_listing(listing_id uuid, action text)",
+    "signature": "seller_transition_listing(uuid,text)",
+    "body_sha256": "b13dda3d61fff0be21b0af97d1451a5074a2d2e67d365d01abfd79aa7fde67ca",
+    "acl": "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": true,
+    "authenticated_execute": true,
+    "service_role_execute": true
+  },
+  {
+    "identity": "public.submit_mobile_v2(payload jsonb)",
+    "signature": "submit_mobile_v2(jsonb)",
+    "body_sha256": "1616f44963aefa5832afb001b1771c5eddc5bd280fa401dc6df525757e04da37",
+    "acl": "{postgres=X/postgres,authenticated=X/postgres}",
+    "prosecdef": false,
+    "proconfig": [
+      "search_path=\"\""
+    ],
+    "anon_execute": false,
+    "authenticated_execute": true,
+    "service_role_execute": false
+  }
+]

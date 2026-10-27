@@ -1,0 +1,42 @@
+name: Chat inbox native PostgreSQL 17 (unread-count RLS baseline)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chat-inbox-native-pg17:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_PASSWORD: hdr03-disposable-only
+          POSTGRES_DB: hdr03_disposable
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hdr03_disposable"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+      - name: Verify immutable historical migration bytes
+        run: node scripts/ci/verify-baseline.mjs
+      - name: Run real PostgreSQL role, RLS, count and signal assertions
+        env:
+          PGPASSWORD: hdr03-disposable-only
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: |
+          node tests/hdr-03/run-disposable.mjs --emit-sql > "$RUNNER_TEMP/hdr03-disposable.sql"
+          psql -X -h 127.0.0.1 -p 5432 -U postgres -d hdr03_disposable -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/hdr03-disposable.sql"

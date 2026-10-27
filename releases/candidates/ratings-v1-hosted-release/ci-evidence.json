@@ -1,0 +1,18 @@
+{
+  "source": "GitHub read-only commit workflow runs; first page, pull-request runs only",
+  "capturedAt": "2026-10-26T19:38:49.907Z",
+  "headSha": "2c34f1135ae0ff59f4f8810b883980325ac96c84",
+  "workflow_runs": [
+    {
+      "id": 40340690551,
+      "name": "Backend independent CI",
+      "status": "completed",
+      "conclusion": "success",
+      "run_number": 228,
+      "jobs_url": "https://api.github.com/repos/vivek2310sharma/FairSwap-Backend/actions/runs/40340690551/jobs",
+      "logs_url": "https://api.github.com/repos/vivek2310sharma/FairSwap-Backend/actions/runs/40340690551/logs",
+      "workflow_id": 386609026
+    }
+  ],
+  "localFullCiRerun": "NOT RUN; existing CI files/dependencies/config contain unrelated changes and were not modified by this task"
+}

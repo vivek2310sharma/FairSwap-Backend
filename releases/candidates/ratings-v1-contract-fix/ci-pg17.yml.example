@@ -1,0 +1,33 @@
+# Integration proposal only. ChatGPT owns the actual workflow edit.
+# Add this job to backend-ci-success.needs and its explicit result checks;
+# preserve unit-integrity, database-pg15 and every existing gate unchanged.
+ratings-native-pg17:
+  runs-on: ubuntu-24.04
+  timeout-minutes: 25
+  permissions:
+    contents: read
+  defaults:
+    run:
+      shell: bash --noprofile --norc -euo pipefail {0}
+  steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: '24.15.0'
+        check-latest: false
+    - name: Frozen dependencies, no lifecycle scripts
+      run: |
+        corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+        npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
+    - name: Build checksum-pinned native PostgreSQL 17.6
+      run: bash tests/ratings/build-native-pg17.sh
+    - name: Ratings DTO and independent-session PostgreSQL regression
+      run: |
+        node --test tests/ratings/contract.test.mjs
+        node node_modules/typescript/bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution Bundler --module ESNext src/lib/ratings/contract.ts src/lib/ratings/score.ts
+        bash tests/ratings/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+# No credentials, service containers, hosted database, deployment or new environment
+# variables. Native initdb/server are owned by the unprivileged disposable runner;
+# fixtures cover Auth/pg_cron/policy, not Supabase Data API/hosted infrastructure.

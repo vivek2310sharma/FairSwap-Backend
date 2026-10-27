@@ -1,0 +1,53 @@
+diff --git a/.github/workflows/backend-ci.yml b/.github/workflows/backend-ci.yml
+index fc99731..e6e3cdf 100644
+--- a/.github/workflows/backend-ci.yml
++++ b/.github/workflows/backend-ci.yml
+@@ -213,8 +213,39 @@ jobs:
+           node node_modules/typescript/bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution Bundler --module ESNext src/lib/ratings/contract.ts src/lib/ratings/score.ts
+           bash tests/ratings/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+ 
++  ratings-hosted-readiness-pg17:
++    needs: unit-integrity
++    runs-on: ubuntu-24.04
++    timeout-minutes: 25
++    permissions:
++      contents: read
++    defaults:
++      run:
++        shell: bash --noprofile --norc -euo pipefail {0}
++    steps:
++      - name: Checkout
++        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
++        with:
++          persist-credentials: false
++      - name: Set up pinned Node
++        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
++        with:
++          node-version: '24.15.0'
++          check-latest: false
++      - name: Verify fail-closed release and mandatory CI contracts
++        run: |
++          node --test releases/candidates/ratings-v1-final-release/ci-contract.test.mjs
++          bash -n releases/candidates/ratings-v1-final-release/run-pg17.sh
++      - name: Build checksum-pinned PostgreSQL 17.6
++        run: bash tests/ratings/build-native-pg17.sh
++      - name: Require both hosted-readiness suites and HDR-03 negative regressions
++        run: |
++          env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
++            bash releases/candidates/ratings-v1-final-release/run-pg17.sh \
++            "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
++
+   backend-ci-success:
+-    needs: [unit-integrity, database-pg15, ratings-native-pg17]
++    needs: [unit-integrity, database-pg15, ratings-native-pg17, ratings-hosted-readiness-pg17]
+     if: ${{ always() }}
+     runs-on: ubuntu-24.04
+     permissions: {}
+@@ -226,5 +257,6 @@ jobs:
+           UNIT_RESULT: ${{ needs.unit-integrity.result }}
+           DATABASE_RESULT: ${{ needs.database-pg15.result }}
+           PG17_RESULT: ${{ needs.ratings-native-pg17.result }}
++          RATINGS_READINESS_RESULT: ${{ needs.ratings-hosted-readiness-pg17.result }}
+         shell: bash --noprofile --norc -euo pipefail {0}
+-        run: '[[ "$UNIT_RESULT" == success && "$DATABASE_RESULT" == success && "$PG17_RESULT" == success ]]'
++        run: '[[ "$UNIT_RESULT" == success && "$DATABASE_RESULT" == success && "$PG17_RESULT" == success && "$RATINGS_READINESS_RESULT" == success ]]'

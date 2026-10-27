@@ -1,0 +1,36 @@
+{
+  "status": "UNRELATED_CONCURRENT_CHANGES_EXCLUDED",
+  "note": "These paths changed after the initial inventory. Ratings work did not edit them; they are excluded from payload and scoped diff. No restoration or overwrite performed.",
+  "files": [
+    {
+      "path": ".github/workflows/backend-ci.yml",
+      "startingSha256": "c8b5d4a628fa889db0904c9047aee5c68d2204d5039cd867b405ce1a6de47dc8",
+      "currentSha256": "e7f07313a84aeb22a480eb1b7afd8d27a476aa99d7bb0c8f9577d3bbb8e3fe95"
+    },
+    {
+      "path": "scripts/ci/test-chat-v2.mjs",
+      "startingSha256": "c4b77a36ea9b15964c66b0558cdb4d6b908e8b8fc37f6292dfe8a7b4b5ee226e",
+      "currentSha256": "35cda66abba1fa325f6ceb5208cb60324e52a375bb0993ba1621940857c8e00e"
+    },
+    {
+      "path": "supabase/forward-migrations/chat-v2/README.md",
+      "startingSha256": "67cc70ac5bfefd61d317baa784864372b0296e9b1eaeeeefc02de230cc8e4bb5",
+      "currentSha256": "70cc29dc15ac2a4030990013d334891004d0eac38db9731057185661071313aa"
+    },
+    {
+      "path": "supabase/forward-migrations/chat-v2/supabase/migrations/20261026073143_chat_safety_worker_infrastructure.sql",
+      "startingSha256": "68e95a22fc4c91df854c07737e69ef482b46f8f80de6b54b6ace354578ba35b3",
+      "currentSha256": "3a5cee84ba4776c2470c905805831229f03c082850d08681b67a1ad3ff50c5c5"
+    },
+    {
+      "path": "tests/chat-v2/bootstrap.sql",
+      "startingSha256": "95c6de6f028de7a3a1cf691165654bcbf242b7246e12f1f44173ca291cc3bbb4",
+      "currentSha256": "ab3d8473ec57a3fe1e4a3319489b48727a4c9499674ca5bab7f3e6aeb1adf3bc"
+    },
+    {
+      "path": "tests/chat-v2/infrastructure-contract.test.mjs",
+      "startingSha256": "1172f9dedc26b73ee6da50a10e8c126725848fe55ba239593b7022ef511173ff",
+      "currentSha256": "9a6862fd848ee0866e841353b3d48d9e5bff191b3e0f3536f86e0965d426433d"
+    }
+  ]
+}
