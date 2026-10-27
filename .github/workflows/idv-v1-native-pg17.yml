@@ -1,0 +1,65 @@
+name: IDV V1 native PostgreSQL 17 security gate
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/forward-migrations/idv/**'
+      - 'supabase/functions/_shared/idv/**'
+      - 'supabase/functions/idv-*/**'
+      - 'tests/idv-pg17/**'
+      - '.github/workflows/idv-v1-native-pg17.yml'
+  push:
+    branches:
+      - feature/idv-v1-backend
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idv-pg17-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-idv-pg17:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout locked source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+
+      - name: Build checksum-pinned native PostgreSQL 17
+        timeout-minutes: 30
+        run: bash tests/ratings/build-native-pg17.sh
+
+      - name: Execute disposable IDV migration and RLS assertions
+        timeout-minutes: 10
+        run: |
+          pg_bin="$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+          test -x "$pg_bin/postgres"
+          [[ "$("$pg_bin/postgres" --version)" == 'postgres (PostgreSQL) 17.'* ]]
+          workdir="$(mktemp -d "$RUNNER_TEMP/fairswap-idv-pg17-XXXXXX")"
+          datadir="$workdir/data"
+          started=false
+          cleanup() {
+            if "$started"; then "$pg_bin/pg_ctl" -D "$datadir" -m fast -w stop >/dev/null 2>&1 || true; fi
+            [[ "$workdir" == "$RUNNER_TEMP/fairswap-idv-pg17-"* ]] && rm -rf -- "$workdir"
+          }
+          trap cleanup EXIT
+          port="$(node -e 'const s=require("node:net").createServer();s.listen(0,"127.0.0.1",()=>{process.stdout.write(String(s.address().port));s.close()})')"
+          if (( port < 49152 )); then port=$((49152 + RANDOM % 16383)); fi
+          "$pg_bin/initdb" -D "$datadir" -U postgres --auth=trust --encoding=UTF8 --locale=C > "$workdir/initdb.log" 2>&1
+          "$pg_bin/pg_ctl" -D "$datadir" -l "$workdir/postgres.log" -o "-h 127.0.0.1 -p $port -c unix_socket_directories=''" -w start
+          started=true
+          node tests/idv-pg17/run-disposable.mjs "--native-port=$port" "--pg-bin=$pg_bin"
