@@ -5,19 +5,20 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {buildPlan,hash,classifyCliFailure,verifyHistoryWorkspace} from './protected-inbox-plan.mjs';
 import {manifest} from './chat-v2-inbox-only.mjs';
-import {auditProtection,bundleHash} from './inbox-protection.mjs';
+import {auditProtection,bundleHash,requireOwnerActors,governanceOwner} from './inbox-protection.mjs';
 export {bundleHash} from './inbox-protection.mjs';
 export function verifyTestReceipt(receipt,expected){
- if(receipt.environment!=='FairSwapTest'||receipt.status!=='verified'||receipt.sourceCommit!==expected.sha||receipt.runId!==expected.runId||receipt.runAttempt!==expected.runAttempt||receipt.bundleSha256!==expected.bundle||receipt.sourceSha256!==manifest.sha256||receipt.flagsOff!==5||!/^[a-f0-9]{64}$/.test(receipt.historySha256)||!/^[a-f0-9]{64}$/.test(receipt.protectionSnapshotSha256)||!/^[a-f0-9]{64}$/.test(receipt.adminAttestationSha256))throw Error('CHAT_SAME_RUN_TEST_EVIDENCE_REQUIRED');
+ if(receipt.schema!==2||receipt.environment!=='FairSwapTest'||receipt.status!=='verified'||receipt.sourceCommit!==expected.sha||receipt.runId!==expected.runId||receipt.runAttempt!==expected.runAttempt||receipt.bundleSha256!==expected.bundle||receipt.sourceSha256!==manifest.sha256||receipt.flagsOff!==5||!/^[a-f0-9]{64}$/.test(receipt.historySha256)||!/^[a-f0-9]{64}$/.test(receipt.protectionSnapshotSha256)||!/^[a-f0-9]{64}$/.test(receipt.ownerAttestationSha256)||!/^[a-f0-9]{64}$/.test(expected.testLedgerSha256??'')||receipt.approvedLedgerSha256!==expected.testLedgerSha256||receipt.governanceOwner!==governanceOwner||receipt.actor!==governanceOwner||receipt.triggeringActor!==governanceOwner)throw Error('CHAT_SAME_RUN_TEST_EVIDENCE_REQUIRED');
 }
-export async function release(environment,ledgerHash,bundle){
+export async function release(environment,ledgerHash,bundle,testLedgerHash){
+ requireOwnerActors(process.env);
  const names={fairswaptest:'FairSwapTest',fairswapprod:'FairSwapProd'},name=names[environment];
  if(!name||process.env.GITHUB_REPOSITORY!=='vivek2310sharma/FairSwap-Backend'||process.env.GITHUB_REF!=='refs/heads/main'||process.env.CHAT_RELEASE_ENABLED!=='true'||process.env.CHAT_ENVIRONMENT_ENABLED!=='true'||process.env.CHAT_WEB_FLAG_OFF_CONFIRMED!=='true'||!/^https:\/\/github.com\/vivek2310sharma\/FairSwap-Backend\//.test(process.env.CHAT_BACKEND_AUTHORITY_RECEIPT??''))throw Error('CHAT_SEPARATE_AUTHORITY_REQUIRED');
  if(!/^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA??'')||bundleHash()!==bundle||!process.env.CHAT_DATABASE_PASSWORD)throw Error('CHAT_IMMUTABLE_INPUT_REQUIRED');
- const protection=await auditProtection(name,process.env.CHAT_RELEASE_AUDIT_TOKEN,fetch,{sourceCommit:process.env.GITHUB_SHA,bundleSha256:bundle,attestationJson:process.env.CHAT_RELEASE_ADMIN_ATTESTATION_JSON});
  const raw=process.env.CHAT_APPROVED_LEDGER_JSON??'';if(hash(raw)!==ledgerHash)throw Error('CHAT_APPROVED_LEDGER_HASH_MISMATCH');
+ if(environment==='fairswapprod')verifyTestReceipt(JSON.parse(readFileSync(resolve('test-evidence/receipt.json'),'utf8')),{sha:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID,runAttempt:process.env.GITHUB_RUN_ATTEMPT,bundle,testLedgerSha256:testLedgerHash});
+ const protection=await auditProtection(name,process.env.CHAT_RELEASE_AUDIT_TOKEN,fetch,{sourceCommit:process.env.GITHUB_SHA,bundleSha256:bundle,ledgerSha256:ledgerHash,actor:process.env.GITHUB_ACTOR,triggeringActor:process.env.GITHUB_TRIGGERING_ACTOR,attestationJson:process.env.CHAT_RELEASE_ADMIN_ATTESTATION_JSON});
  const plan=buildPlan(environment,JSON.parse(raw));
- if(environment==='fairswapprod')verifyTestReceipt(JSON.parse(readFileSync(resolve('test-evidence/receipt.json'),'utf8')),{sha:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID,runAttempt:process.env.GITHUB_RUN_ATTEMPT,bundle});
  const ref=manifest.environments[environment].projectRef,host=`db.${ref}.supabase.co`;
  const env={PATH:process.env.PATH,HOME:process.env.HOME,PGHOST:host,PGPORT:'5432',PGUSER:'postgres',PGDATABASE:'postgres',PGSSLMODE:'verify-full',PGCONNECT_TIMEOUT:'10',PGPASSWORD:process.env.CHAT_DATABASE_PASSWORD,SUPABASE_DB_PASSWORD:process.env.CHAT_DATABASE_PASSWORD,NO_COLOR:'1'};
  const run=(binary,args,input)=>{try{return execFileSync(binary,args,{input,env,encoding:'utf8',stdio:['pipe','pipe','pipe'],timeout:120000,maxBuffer:2e6});}catch(error){throw Error(`CHAT_SUBPROCESS_${classifyCliFailure(String(error.stdout??'')+'\n'+String(error.stderr??''))}_RECOVERY_REVIEW`);}};
@@ -43,7 +44,7 @@ export async function release(environment,ledgerHash,bundle){
  const result=run('psql',['-X','-q','-A','-t','-v','ON_ERROR_STOP=1'],plan.postflight);
  const lines=result.split('\n').filter(line=>line.trim().startsWith('{'));if(lines.length!==1)throw Error('CHAT_POSTFLIGHT_RECEIPT_INVALID');
  const post=JSON.parse(lines[0]);if(post.flagsOff!==5||post.version!==manifest.version||!/^[a-f0-9]{64}$/.test(post.historySha256))throw Error('CHAT_POSTFLIGHT_RECEIPT_INVALID');
- const receipt={schema:1,status:'verified',environment:name,version:manifest.version,cliVersion:'2.117.0',postgresVersionNum:post.postgresVersionNum,sourceCommit:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID,runAttempt:process.env.GITHUB_RUN_ATTEMPT,bundleSha256:bundle,sourceSha256:manifest.sha256,executionSha256:plan.executionSha256,ledgerSha256:plan.ledgerSha256,historySha256:post.historySha256,flagsOff:5,protectionSnapshotSha256:protection.snapshotSha256,adminAttestationSha256:protection.attestationSha256};
+ const receipt={schema:2,status:'verified',environment:name,version:manifest.version,cliVersion:'2.117.0',postgresVersionNum:post.postgresVersionNum,sourceCommit:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID,runAttempt:process.env.GITHUB_RUN_ATTEMPT,bundleSha256:bundle,sourceSha256:manifest.sha256,executionSha256:plan.executionSha256,ledgerSha256:plan.ledgerSha256,approvedLedgerSha256:ledgerHash,historySha256:post.historySha256,flagsOff:5,protectionSnapshotSha256:protection.snapshotSha256,ownerAttestationSha256:protection.attestationSha256,governanceOwner,actor:process.env.GITHUB_ACTOR,triggeringActor:process.env.GITHUB_TRIGGERING_ACTOR};
  mkdirSync('release-receipt',{recursive:true});if(existsSync('release-receipt/receipt.json'))throw Error('CHAT_IMMUTABLE_RECEIPT_ALREADY_EXISTS');
  const text=JSON.stringify(receipt,null,2)+'\n';writeFileSync('release-receipt/receipt.json',text,{flag:'wx'});writeFileSync('release-receipt/SHA256SUMS',hash(text)+'  receipt.json\n',{flag:'wx'});
  return receipt;

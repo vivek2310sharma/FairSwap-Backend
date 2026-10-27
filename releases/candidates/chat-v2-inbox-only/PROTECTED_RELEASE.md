@@ -11,7 +11,7 @@ from actual configuration. PR60 reports owner-only main updates active and the
 stronger protect-main ruleset disabled. This is PR-reported administration state,
 not an independent audit of all settings. Read-only ruleset responses may omit
 `bypass_actors`; absence never establishes zero bypass permission. Every audit now
-requires the separately reviewed, commit-bound administrative evidence described in
+requires the verifiable owner-only, commit/bundle/state/environment/ledger-bound evidence described in
 [ADMIN_ATTESTATION.md](ADMIN_ATTESTATION.md). Forbidden or incomplete APIs still block.
 See [GitHub deployment review](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)
 and [branch protection](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
@@ -25,20 +25,23 @@ deployment approval. No normal Web runtime key is changed.
 
 Before enabling anything, ChatGPT/owner must configure and independently verify:
 
-- Required PR review/stale-approval dismissal, existing required CI gates plus
+- Mandatory PR creation, zero required independent approvals and stale-review dismissal, existing required CI gates plus
   `chat-inbox-native-pg17`, zero bypass actors on `protect-main` (`25352225`).
-  The only exception is the exact independently attested existing RepositoryRole
+  The only exception is the exact owner-attested existing RepositoryRole
   actor 5 / always list on `main-owner-only-updates` (`25821687`), restricted to
   deletion, non-fast-forward and update rules on main. No PR/CI rule may use it.
-  Do not remove other required checks. No force or direct unreviewed main updates.
+  The complete collaborator inventory must establish vivek2310sharma as the sole
+  administrator. Only that owner may merge main; contributors submit PRs for owner
+  review and merging. Required CI cannot be bypassed. Do not remove other checks.
 - Environments named exactly `FairSwapTest` and `FairSwapProd`: required reviewers,
-  prevent self-review, prevent admin bypass, only the `main` branch allowed.
+  exactly the owner as a User, owner self-review allowed, administrator bypass
+  prohibited and only the `main` branch allowed.
 - Distinct environment secrets `CHAT_DATABASE_PASSWORD` and
   `CHAT_RELEASE_AUDIT_TOKEN`; neither name may exist at repository scope. The audit
   identity needs read-only administration/rules/environment and secret-name metadata
   access, never secret values. It must not have source/write/deploy permissions.
   Missing scope, incomplete pagination, 403/404 or absent reviewers remain blockers.
-  Omitted bypass lists require explicit independently approved lists: the exact
+  Omitted bypass lists require explicit owner-approved lists: the exact
   owner-update tuple above, and an empty list for `protect-main`. Unrecognized
   rulesets, changed scope/rule types/actor/mode, or other bypasses are rejected.
 - Environment variables `CHAT_INBOX_ENVIRONMENT_ENABLED=true` only after authority
@@ -53,21 +56,25 @@ default. Manual dispatch `deploy` defaults false. Dispatch must target main, and
 persisted credentials disabled. All Actions are SHA-pinned; dependency installs
 disable lifecycle scripts and precede the credential-bearing step.
 
-The existing non-secret, independently approved reference remains
+The existing non-secret owner-attestation reference remains
 `CHAT_RELEASE_ADMIN_ATTESTATION_JSON`, separately scoped to Test and Prod.
 It binds the exact workflow commit, bundle, effective main rules, environment
 approvals, secret-name scope, all effective ruleset versions and exact allowed bypass lists.
-Both authors must be distinct current repository administrators; the GET-only audit
-checks their unedited statement/approval comments and exact payload digest. Evidence
+Only the real owner authors the V2 attestation; the GET-only audit checks the
+owner identity, complete collaborator inventory and exact unedited statement.
+No second administrator or reviewer is required or fabricated. Evidence
 expires within 24 hours. No token requires Administration write permission.
-No database migration, environment variable or attestation schema is added by this
-final policy correction. See ADMIN_ATTESTATION.md for the exact policy and fresh-proof procedure.
+No database migration or persistent environment variable is added. The existing
+attestation reference now requires the explicitly versioned owner-only V2 schema. See ADMIN_ATTESTATION.md for the exact policy and fresh-proof procedure.
 
 For protection verification only, dispatch `audit_only=true`, `deploy=false`, with
-the reviewed `approved_sha` and `bundle_sha256`; ledger hashes are unnecessary.
+the reviewed `approved_sha`, `bundle_sha256` and both environment ledger hashes.
+Both github.actor and github.triggering_actor must be vivek2310sharma for every
+manual job, and runtime entrypoints independently enforce the same owner context.
 `audit_verify` checks the immutable bundle and automated audit tests without secrets.
 `audit_test` and then `audit_production` each require their own protected environment
-approval and expose only that environment's audit token to the audit entrypoint.
+owner approval and expose only that environment's audit token and non-secret
+approved ledger metadata to the audit entrypoint.
 They never receive a database password, install the Supabase CLI, import a migration
 runner, access a database, change flags or produce a deployment receipt. The initial
 `UNAPPROVED_SNAPSHOT` digest output is preparation metadata, never verification. A
@@ -135,7 +142,8 @@ and all five flags false. No user/message data is exported.
 
 Only success creates an exclusive-create sanitized receipt and SHA256SUMS containing
 environment, workflow SHA/run/attempt, source/execution/bundle/ledger/history hashes,
-version, flags-off evidence and protection-snapshot/administrator-attestation hashes.
+version, flags-off evidence, protection-snapshot/owner-attestation hashes, raw
+approved-ledger hash and original/triggering owner identities in V2 receipts.
 Artifact v4 uses unique run/attempt names, overwrite
 false and 90-day retention. It is immutable within its artifact lifecycle, not
 permanent WORM storage; archive the digest/receipt under approved recovery retention.
@@ -144,7 +152,9 @@ No credentials, SQL, raw ledger, logs, dumps or message contents are uploaded.
 Production depends on successful verification **and Test**, downloads the exact
 same-run Test artifact ID, checks file hashes, and revalidates its source SHA, run,
 attempt, candidate/bundle hash and successful off-state status. It then requires
-its own environment approval, credentials, fresh ledger and full postflight. A
+its own owner environment approval, credentials, fresh owner-attested ledger and
+full postflight. The V2 Test receipt must match the dispatch Test-ledger digest
+before any Production audit API or database use. A
 skipped/failed Test, foreign run/attempt, changed source or forged receipt is rejected.
 
 The Web flag is never changed by Backend code; independently recorded off-state is
@@ -184,7 +194,7 @@ postgres.bki. The separate disposable WSL Linux PG17.6/CLI 2.117.0 fixture has s
 passed rollback, real CLI history, positive migration, postflight and client RLS
 checks; that local result is not hosted deployment or GitHub CI evidence. SQL fixture
 emulation in PGlite is separately recorded and is not native/CLI proof.
-Protected admin settings, independent live administrative attestations, authority transfer, Web off-state,
+Protected solo-owner admin/environment settings, live owner attestations, authority transfer, Web off-state,
 backup/recovery evidence and actual Test/Prod automated postflight remain unverified.
 No GitHub workflow dispatch/administration, hosted change or manual test occurred.
 

@@ -19,10 +19,10 @@ on:
         required: true
       test_ledger_sha256:
         type: string
-        required: false
+        required: true
       prod_ledger_sha256:
         type: string
-        required: false
+        required: true
 permissions:
   contents: read
   actions: read
@@ -33,6 +33,7 @@ jobs:
   verify:
     if: >-
       github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
+      github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
       inputs.deploy && !inputs.audit_only && vars.CHAT_INBOX_RELEASE_ENABLED == 'true' && inputs.approved_sha == github.sha
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -53,7 +54,7 @@ jobs:
         run: node --input-type=module -e 'import {bundleHash} from "./scripts/release/protected-inbox-release.mjs"; if(bundleHash()!==process.env.EXPECTED)process.exit(1)'
   test:
     needs: verify
-    if: ${{ needs.verify.result == 'success' }}
+    if: ${{ needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
     environment: FairSwapTest
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -95,7 +96,7 @@ jobs:
           overwrite: false
   production:
     needs: [verify, test]
-    if: ${{ needs.verify.result == 'success' && needs.test.result == 'success' }}
+    if: ${{ needs.verify.result == 'success' && needs.test.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
     environment: FairSwapProd
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -119,7 +120,7 @@ jobs:
           EXPECTED_RECEIPT_SHA: ${{ needs.test.outputs.receipt_sha }}
         run: cd test-evidence && printf '%s  receipt.json\n' "$EXPECTED_RECEIPT_SHA" | sha256sum --check --status
       - run: bash scripts/release/install-inbox-cli.sh
-      - name: Independently approved Production release and automatic postflight
+      - name: Separately approved owner Production release and automatic postflight
         env:
           CHAT_RELEASE_ENABLED: ${{ vars.CHAT_INBOX_RELEASE_ENABLED }}
           CHAT_ENVIRONMENT_ENABLED: ${{ vars.CHAT_INBOX_ENVIRONMENT_ENABLED }}
@@ -129,9 +130,10 @@ jobs:
           CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
           CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
           CHAT_RELEASE_ADMIN_ATTESTATION_JSON: ${{ vars.CHAT_RELEASE_ADMIN_ATTESTATION_JSON }}
+          TEST_LEDGER_SHA: ${{ inputs.test_ledger_sha256 }}
           LEDGER_SHA: ${{ inputs.prod_ledger_sha256 }}
           BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
-        run: node scripts/release/protected-inbox-release.mjs fairswapprod "$LEDGER_SHA" "$BUNDLE_SHA"
+        run: node scripts/release/protected-inbox-release.mjs fairswapprod "$LEDGER_SHA" "$BUNDLE_SHA" "$TEST_LEDGER_SHA"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: chat-inbox-prod-${{ github.run_id }}-${{ github.run_attempt }}
@@ -142,6 +144,7 @@ jobs:
   audit_verify:
     if: >-
       github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
+      github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
       inputs.audit_only && !inputs.deploy && inputs.approved_sha == github.sha
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -161,7 +164,7 @@ jobs:
         run: node --input-type=module -e 'import {bundleHash} from "./scripts/release/inbox-protection.mjs"; if(bundleHash()!==process.env.EXPECTED)process.exit(1)'
   audit_test:
     needs: audit_verify
-    if: ${{ needs.audit_verify.result == 'success' }}
+    if: ${{ needs.audit_verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
     environment: FairSwapTest
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -178,11 +181,13 @@ jobs:
         env:
           CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
           CHAT_RELEASE_ADMIN_ATTESTATION_JSON: ${{ vars.CHAT_RELEASE_ADMIN_ATTESTATION_JSON }}
+          CHAT_APPROVED_LEDGER_JSON: ${{ vars.CHAT_APPROVED_LEDGER_JSON }}
+          LEDGER_SHA: ${{ inputs.test_ledger_sha256 }}
           BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
         run: node scripts/release/audit-inbox-only.mjs FairSwapTest "$BUNDLE_SHA"
   audit_production:
     needs: audit_test
-    if: ${{ needs.audit_test.result == 'success' }}
+    if: ${{ needs.audit_test.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
     environment: FairSwapProd
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -195,9 +200,11 @@ jobs:
         with:
           node-version: '24.15.0'
       - run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
-      - name: Independently approved Production protection audit only
+      - name: Separately approved owner Production protection audit only
         env:
           CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
           CHAT_RELEASE_ADMIN_ATTESTATION_JSON: ${{ vars.CHAT_RELEASE_ADMIN_ATTESTATION_JSON }}
+          CHAT_APPROVED_LEDGER_JSON: ${{ vars.CHAT_APPROVED_LEDGER_JSON }}
+          LEDGER_SHA: ${{ inputs.prod_ledger_sha256 }}
           BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
         run: node scripts/release/audit-inbox-only.mjs FairSwapProd "$BUNDLE_SHA"

@@ -29,11 +29,12 @@ test('existing foundation must use a protected recovery receipt, never silent hi
  assert.throws(()=>buildPlan('fairswaptest',{...input,ledger:[...input.ledger,{version:manifest.version,name:manifest.name,statementsSha256:hash(JSON.stringify([readFileSync(new URL('../../releases/candidates/chat-v2-inbox-only/supabase/migrations/20261025204922_chat_v2_inbox_and_safety.sql',import.meta.url),'utf8')]))}]}),/PROTECTED_RECOVERY/);
 });
 test('Production requires successful Test evidence from this exact run, attempt and source',()=>{
- const expected={sha:'a'.repeat(40),runId:'1',runAttempt:'1',bundle:'b'.repeat(64)};
- const receipt={environment:'FairSwapTest',status:'verified',sourceCommit:expected.sha,runId:'1',runAttempt:'1',bundleSha256:expected.bundle,sourceSha256:manifest.sha256,flagsOff:5,historySha256:'c'.repeat(64),protectionSnapshotSha256:'d'.repeat(64),adminAttestationSha256:'e'.repeat(64)};
+ const expected={sha:'a'.repeat(40),runId:'1',runAttempt:'1',bundle:'b'.repeat(64),testLedgerSha256:'f'.repeat(64)};
+ const receipt={schema:2,approvedLedgerSha256:expected.testLedgerSha256,governanceOwner:'vivek2310sharma',actor:'vivek2310sharma',triggeringActor:'vivek2310sharma',environment:'FairSwapTest',status:'verified',sourceCommit:expected.sha,runId:'1',runAttempt:'1',bundleSha256:expected.bundle,sourceSha256:manifest.sha256,flagsOff:5,historySha256:'c'.repeat(64),protectionSnapshotSha256:'d'.repeat(64),ownerAttestationSha256:'e'.repeat(64)};
  verifyTestReceipt(receipt,expected);
  for(const delta of [{runId:'2'},{runAttempt:'2'},{status:'failed'},{environment:'FairSwapProd'},{flagsOff:4},{sourceCommit:'d'.repeat(40)},{bundleSha256:'e'.repeat(64)}])assert.throws(()=>verifyTestReceipt({...receipt,...delta},expected),/SAME_RUN_TEST/);
- for(const field of ['protectionSnapshotSha256','adminAttestationSha256'])assert.throws(()=>verifyTestReceipt({...receipt,[field]:undefined},expected),/SAME_RUN_TEST/);
+ for(const field of ['protectionSnapshotSha256','ownerAttestationSha256'])assert.throws(()=>verifyTestReceipt({...receipt,[field]:undefined},expected),/SAME_RUN_TEST/);
+ for(const delta of [{schema:1},{actor:'contributor'},{triggeringActor:'contributor'},{governanceOwner:'contributor'},{approvedLedgerSha256:'0'.repeat(64)}])assert.throws(()=>verifyTestReceipt({...receipt,...delta},expected),/SAME_RUN_TEST/);
 });
 test('unavailable administration APIs block before credentials can be used for DB work',async()=>{
  const fixture=await auditFixture();
@@ -43,7 +44,7 @@ test('workflow is manual/default-off and has separately gated Test and Productio
  const sql=readFileSync(new URL('../../.github/workflows/chat-v2-inbox-release.yml',import.meta.url),'utf8');
  assert(sql.includes('workflow_dispatch:'));assert(!sql.includes('schedule:'));assert(!sql.includes('pull_request:'));assert(sql.includes('default: false'));assert(sql.includes('environment: FairSwapTest'));assert(sql.includes('environment: FairSwapProd'));assert(sql.includes('needs: [verify, test]'));assert(sql.includes('inputs.approved_sha == github.sha'));assert(sql.includes('overwrite: false'));assert(!sql.includes('db push'));
 });
-test('complete protections pass; self approval, bypass, pagination and repository secrets fail',async()=>{
+test('solo-owner protections pass; bypass, pagination and repository secrets fail',async()=>{
  const {responses,evidence}=await auditFixture();
  assert.equal((await auditProtection('FairSwapTest','fixture',fixtureApi(responses),evidence)).protected,true);
  for(const mutate of [x=>{x['/environments/FairSwapTest'].can_admins_bypass=true;},x=>{x['/actions/secrets?per_page=100']={total_count:1,secrets:[{name:'CHAT_DATABASE_PASSWORD'}]};},x=>{x['/actions/secrets?per_page=100'].total_count=999;},x=>{x['/rulesets/25352225'].bypass_actors=[{actor_id:1}];}]){
