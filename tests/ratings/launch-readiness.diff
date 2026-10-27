@@ -1,0 +1,417 @@
+diff --git a/tests/ratings/run.mjs b/tests/ratings/run.mjs
+index c247345..a88b082 100644
+--- a/tests/ratings/run.mjs
++++ b/tests/ratings/run.mjs
+@@ -4,6 +4,7 @@ import {readFileSync,readdirSync} from 'node:fs';
+ import {fileURLToPath} from 'node:url';
+ import assert from 'node:assert/strict';
+ import {consumerContractChecks} from './consumer-contract.mjs';
++import {launchReadinessChecks} from './launch-readiness.mjs';
+ const root=fileURLToPath(new URL('../../',import.meta.url));
+ const read=p=>readFileSync(root+p,'utf8');
+ // Load only the selected engine: native adapter path validation is platform-specific.
+@@ -199,6 +200,6 @@ try {
+  await test('account deletion erases text and removes reputation; physical deletion is FK safe',async()=>{await owner();await db.query(`update public.user_accounts set account_status='deletion_pending' where user_id=$1`,[buyer]);assert.equal((await summary(seller)).counted_review_count,0);assert.equal((await summary(seller)).completed_trades,0);assert.equal(await q(`select count(*)::int from public.rating_reviews where body is not null`),0);assert.equal(await q(`select count(*)::int from public.rating_replies where body<>'[redacted]'`),0);await db.query('delete from auth.users where id=$1',[buyer]);});
+  await owner();await db.exec(read('supabase/forward-migrations/ratings/tests/security.sql'));
+  await test('catalog security assertions pass',async()=>{});
+- if(nativePort)await test('rollback kill switch disables only Ratings settings and jobs',async()=>{await db.exec(read('releases/candidates/ratings-v1/rollback-disable.sql'));assert.equal(await q(`select count(*)::int from app_security.ratings_settings where enabled or public_reads or jobs_enabled or staff_enabled`),0);assert.equal(await q(`select count(*)::int from cron.job where active`),0);assert.equal(await q('select app_security.publish_due_reviews()'),0);});
++ await launchReadinessChecks(db,test,read('releases/candidates/ratings-v1/rollback-disable.sql'));
+  console.log(`PASS ${checks} automated database checks; no hosted or external network operations`);
+ } catch(e) {console.error('FAIL',e.message,e.code??'',e.where??'');process.exitCode=1;} finally {await db.close();}
+diff --git a/tests/ratings/launch-readiness.mjs b/tests/ratings/launch-readiness.mjs
+new file mode 100644
+index 0000000..34aa8a7
+--- /dev/null
++++ b/tests/ratings/launch-readiness.mjs
+@@ -0,0 +1,97 @@
++import assert from 'node:assert/strict';
++import {randomUUID} from 'node:crypto';
++
++// Only called by run.mjs inside its fresh disposable database. Auth/JWT and cron
++// remain fixtures: these checks prove SQL authorization, not token verification.
++export async function launchReadinessChecks(db, test, rollback) {
++ const q=async(sql,args=[])=>Object.values((await db.query(sql,args)).rows[0]??{})[0];
++ const owner=()=>db.exec('reset role; set role postgres');
++ const login=async(user,aal='aal1',role='authenticated')=>{
++  await owner();await db.query("select set_config('request.user',$1,false),set_config('request.aal',$2,false)",[user??'',aal]);
++  await db.exec(`set role ${role}`);
++ };
++ const denied=(sql,args=[],pattern=/permission denied|RATINGS_ACCESS_DENIED/)=>assert.rejects(()=>q(sql,args),pattern);
++ const [seller,buyer,other,staff]=Array.from({length:4},()=>randomUUID());
++ await owner();
++ for(const u of [seller,buyer,other,staff])await db.query(`insert into auth.users(id,raw_user_meta_data) values($1,'{"display_name":"Launch fixture"}')`,[u]);
++ await db.query("insert into public.staff_roles(user_id,role) values($1,'moderator')",[staff]);
++ const trade=async(days=0)=>{
++  await owner();return q(`insert into public.rating_trades(seller_id,buyer_id,state,sold_at,deadline)
++   values($1,$2,'pending_buyer',statement_timestamp()-make_interval(days=>$3),
++   statement_timestamp()+make_interval(days=>14-$3)) returning id`,[seller,buyer,days]);
++ };
++ const t=await trade();
++ await test('launch identity matrix rejects missing identity and unrelated AAL2 callers',async()=>{
++  for(const [u,role] of [[null,'anon'],[null,'authenticated'],[other,'authenticated']]){
++   await login(u,'aal2',role);
++   await denied('select public.ratings_trade($1)',[t]);
++   await denied("select public.ratings_buyer_action($1,'confirm')",[t]);
++   await denied('select public.ratings_submit($1,4,4,4)',[t]);
++  }
++  await login(seller);await denied("select public.ratings_buyer_action($1,'confirm')",[t]);
++  await login(buyer);assert.equal((await q("select public.ratings_buyer_action($1,'confirm')",[t])).state,'confirmed');
++ });
++ await test('launch direct DML and private evidence are denied even to AAL2 staff',async()=>{
++  for(const user of [seller,buyer,other,staff]){
++   await login(user,'aal2');
++   for(const table of ['public.rating_reviews','public.rating_trades','app_security.rating_moderation_audit','app_security.rating_notification_receipts']){
++    await denied(`select * from ${table}`);await denied(`delete from ${table}`);
++    await denied(`insert into ${table} default values`);await denied(`update ${table} set ${table.endsWith('receipts')?'kind=kind':'id=id'}`);
++   }
++   await denied('select app_security.rating_reminders()');
++  }
++ });
++ await test('launch deadline invariant is exactly 14 days and actions close at deadline',async()=>{
++  await owner();assert.equal(await q("select bool_and(deadline=sold_at+interval '14 days') from public.rating_trades"),true);
++  const due=await trade(14);
++  await login(buyer);
++  for(const action of ['confirm','dispute'])await denied('select public.ratings_buyer_action($1,$2)',[due,action],/RATINGS_WINDOW_CLOSED/);
++  await login(seller);await denied('select public.ratings_submit($1,4,4,4)',[due],/RATINGS_WINDOW_CLOSED/);
++ });
++ await test('launch generated database score covers all 64 face combinations',async()=>{
++  await owner();
++  await db.exec(`do $$ declare a int;b int;c int;t uuid;s numeric;begin
++   for a in 1..4 loop for b in 1..4 loop for c in 1..4 loop
++    insert into public.rating_trades(state) values('pending_selection') returning id into t;
++    insert into public.rating_reviews(trade_id,reviewer_role,communication,payment_item,meetup)
++     values(t,'seller',a,b,c) returning score into s;
++    if s<>round((a+b+c-3)*10/9.0,1) or s<0 or s>10 then raise exception 'SCORE_MISMATCH';end if;
++   end loop;end loop;end loop;end $$`);
++ });
++ await test('launch publication drains over 200 due trades and is idempotent',async()=>{
++  await owner();await db.exec('select app_security.publish_due_reviews()');
++  await db.exec(`insert into public.rating_trades(state,sold_at,deadline)
++   select 'pending_selection',statement_timestamp()-interval '15 days',statement_timestamp()-interval '1 day' from generate_series(1,205)`);
++  assert.equal(await q('select app_security.publish_due_reviews()'),200);
++  assert.equal(await q('select app_security.publish_due_reviews()'),5);
++  assert.equal(await q('select app_security.publish_due_reviews()'),0);
++  assert.equal(await q('select count(*)::int from public.rating_trades where deadline<=clock_timestamp() and closed_at is null'),0);
++ });
++ await test('launch reminder cursor reaches beyond batch and skips stale day3 reminders',async()=>{
++  await owner();await db.exec('update app_security.rating_reminder_cursor set last_sold_at=null,last_id=null');
++  // Disable notification generation while constructing a delayed backlog.
++  await db.exec('update app_security.ratings_settings set jobs_enabled=false');
++  const ids=(await db.query(`insert into public.rating_trades(seller_id,buyer_id,state,sold_at,deadline)
++   select $1,$2,'pending_buyer',statement_timestamp()-interval '11 days',statement_timestamp()+interval '3 days'
++   from generate_series(1,205) returning id`,[seller,buyer])).rows.map(x=>x.id);
++  await db.exec('update app_security.ratings_settings set jobs_enabled=true');
++  for(let i=0;i<4;i++)await q('select app_security.rating_reminders()');
++  const counts=await q(`select json_build_object('day10',count(*) filter(where kind='day10'),'day3',count(*) filter(where kind='day3'))
++   from app_security.rating_notification_receipts where trade_id=any($1::uuid[])`,[ids]);
++  assert.deepEqual(counts,{day10:410,day3:0});
++  await q('select app_security.rating_reminders()');
++  assert.equal(await q("select count(*)::int from app_security.rating_notification_receipts where trade_id=any($1::uuid[]) and kind='day10'",[ids]),410);
++ });
++ await test('launch rollback preserves evidence and unrelated jobs, closes all Ratings gates',async()=>{
++  await owner();await db.exec("select cron.schedule('launch-unrelated','0 0 * * *','select 1')");
++  const before=await q('select count(*)::int from public.rating_reviews');
++  await db.exec(rollback);
++  assert.equal(await q('select count(*)::int from app_security.ratings_settings where enabled or public_reads or jobs_enabled or staff_enabled'),0);
++  assert.equal(await q("select count(*)::int from cron.job where jobname like 'ratings-v1-%' and active"),0);
++  assert.equal(await q("select active from cron.job where jobname='launch-unrelated'"),true);
++  assert.equal(await q('select count(*)::int from public.rating_reviews'),before);
++  assert.equal(await q('select app_security.publish_due_reviews()'),0);
++  assert.equal(await q('select app_security.rating_reminders()'),0);
++  await login(seller);await denied('select public.ratings_pending()',[],/RATINGS_DISABLED/);
++ });
++}
+diff --git a/tests/ratings/auth-test-only.mjs b/tests/ratings/auth-test-only.mjs
+new file mode 100644
+index 0000000..ce06935
+--- /dev/null
++++ b/tests/ratings/auth-test-only.mjs
+@@ -0,0 +1,46 @@
++import assert from 'node:assert/strict';
++import {pathToFileURL} from 'node:url';
++
++// Read-only opt-in hosted smoke check. No login, fixture creation or database write.
++// It intentionally cannot accept a Production URL. Supply only a publishable/anon
++// API key and existing user access tokens; no privileged key is needed.
++export function configuration(env) {
++ assert.equal(env.RATINGS_AUTH_TARGET,'FairSwapTest','Explicit Test target required');
++ assert.equal(env.RATINGS_AUTH_URL,'https://wpppxlnbzqynvhpeuavd.supabase.co','Only FairSwapTest is allowed');
++ const names=['RATINGS_AUTH_PUBLISHABLE_KEY','RATINGS_AUTH_SELLER_TOKEN','RATINGS_AUTH_BUYER_TOKEN','RATINGS_AUTH_OUTSIDER_TOKEN','RATINGS_AUTH_STAFF_AAL1_TOKEN','RATINGS_AUTH_STAFF_AAL2_TOKEN'];
++ for(const name of names)assert(env[name],`Missing ${name}`);
++ return {url:env.RATINGS_AUTH_URL,key:env[names[0]],tokens:names.slice(1).map(n=>env[n])};
++}
++export async function verifyAuth(env,transport=fetch) {
++ const {url,key,tokens}=configuration(env);
++ const request=async(path,token,body)=>{
++  const r=await transport(url+path,{method:body===undefined?'GET':'POST',redirect:'error',
++   headers:{apikey:key,Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
++   body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
++  // Never print responses, identities or tokens, including on failures.
++  return {status:r.status,data:await r.json()};
++ };
++ const identities=[];
++ for(const token of tokens){const r=await request('/auth/v1/user',token);assert.equal(r.status,200,'Auth rejected a supplied user token');assert(r.data.id,'Auth returned no identity');identities.push(r.data.id);}
++ assert.equal(new Set(identities.slice(0,4)).size,4,'Seller, buyer, outsider and staff must differ');
++ assert.equal(identities[3],identities[4],'AAL tokens must belong to the same staff identity');
++ assert.equal((await request('/auth/v1/user','invalid-token')).status,401,'Invalid token accepted');
++ for(let i=0;i<tokens.length;i++){
++  const r=await request('/rest/v1/rpc/ratings_pending',tokens[i],{});
++  assert.equal(r.data.code,'55000','Ratings must remain disabled');assert.equal(r.data.message,'RATINGS_DISABLED');
++  for(const table of ['rating_trades','rating_reviews','rating_replies','profile_rating_stats','trade_system_events']){
++   const denied=await request(`/rest/v1/${table}?select=*&limit=1`,tokens[i]);
++   assert([401,403].includes(denied.status),'Direct Ratings table read was not denied');assert.equal(denied.data.code,'42501');
++  }
++ }
++ // Guard ordering checks both actual role membership and JWT assurance level.
++ for(const [i,message] of [[2,'RATINGS_ACCESS_DENIED'],[3,'RATINGS_ACCESS_DENIED'],[4,'RATINGS_STAFF_DISABLED']]){
++  const r=await request('/rest/v1/rpc/admin_ratings_cases',tokens[i],{});
++  assert.equal(r.data.message,message,'Staff assurance/role/disabled-state boundary mismatch');
++ }
++ return {identities:4,tokens:5,directReadDenials:25};
++}
++if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
++ try{const result=await verifyAuth(process.env);console.log('PASS Test-only Auth disabled-state checks',result);}
++ catch{console.error('FAIL Test-only Auth checks; verify required inputs and disabled-state authorization (details suppressed)');process.exitCode=1;}
++}
+diff --git a/tests/ratings/auth-test-only.test.mjs b/tests/ratings/auth-test-only.test.mjs
+new file mode 100644
+index 0000000..6ac129e
+--- /dev/null
++++ b/tests/ratings/auth-test-only.test.mjs
+@@ -0,0 +1,27 @@
++import './offline-guard.mjs';
++import {test} from 'node:test';
++import assert from 'node:assert/strict';
++import {configuration,verifyAuth} from './auth-test-only.mjs';
++const env={RATINGS_AUTH_TARGET:'FairSwapTest',RATINGS_AUTH_URL:'https://wpppxlnbzqynvhpeuavd.supabase.co',RATINGS_AUTH_PUBLISHABLE_KEY:'fixture-key',
++ RATINGS_AUTH_SELLER_TOKEN:'seller',RATINGS_AUTH_BUYER_TOKEN:'buyer',RATINGS_AUTH_OUTSIDER_TOKEN:'outsider',RATINGS_AUTH_STAFF_AAL1_TOKEN:'staff1',RATINGS_AUTH_STAFF_AAL2_TOKEN:'staff2'};
++test('hosted verifier refuses Production and missing inputs before transport',async()=>{
++ for(const override of [{RATINGS_AUTH_TARGET:'FairSwapProd'},{RATINGS_AUTH_URL:'https://kriuhwppxgxsyyrbjsau.supabase.co'},{RATINGS_AUTH_BUYER_TOKEN:''}]){
++  let requests=0;await assert.rejects(()=>verifyAuth({...env,...override},async()=>{requests++;}));assert.equal(requests,0);
++ }
++ assert(configuration(env));
++});
++const transport=(change=x=>x)=>async(url,options)=>{
++ const token=options.headers.Authorization.slice(7);let status=200,data;
++ if(url.endsWith('/auth/v1/user')){
++  if(token==='invalid-token'){status=401;data={};}else data={id:token.startsWith('staff')?'staff':token};
++ }else if(url.includes('/rpc/admin_ratings_cases')){status=403;data={message:token==='staff2'?'RATINGS_STAFF_DISABLED':'RATINGS_ACCESS_DENIED'};}
++ else if(url.includes('/rpc/ratings_pending')){status=400;data={code:'55000',message:'RATINGS_DISABLED'};}
++ else {status=403;data={code:'42501'};}
++ return change({status,json:async()=>data},url);
++};
++test('hosted verifier exercises four identities and 25 read denials with fake transport',async()=>{
++ assert.deepEqual(await verifyAuth(env,transport()),{identities:4,tokens:5,directReadDenials:25});
++});
++test('hosted verifier fails if direct reads unexpectedly succeed',async()=>{
++ await assert.rejects(()=>verifyAuth(env,transport((r,url)=>url.includes('?select=')?{status:200,json:async()=>[]}:r)));
++});
+diff --git a/tests/ratings/launch-monitoring.sql b/tests/ratings/launch-monitoring.sql
+new file mode 100644
+index 0000000..f8995a1
+--- /dev/null
++++ b/tests/ratings/launch-monitoring.sql
+@@ -0,0 +1,18 @@
++-- Owner/operator read-only monitoring. No mutation or job invocation.
++begin read only;
++select enabled,public_reads,jobs_enabled,staff_enabled,min_reviews from app_security.ratings_settings;
++select jobname,active,schedule from cron.job where jobname in ('ratings-v1-publication','ratings-v1-reminders');
++select count(*) as publication_backlog,
++ extract(epoch from (clock_timestamp()-min(deadline))) as oldest_due_seconds
++ from public.rating_trades where deadline<=clock_timestamp() and closed_at is null;
++select count(*) as impossible_scores from public.profile_rating_stats
++ where score<0 or score>10 or (counted_review_count<3 and score is not null);
++select count(*) as open_disputes,min(created_at) as oldest_open_dispute
++ from app_security.rating_cases where kind='dispute' and resolved_at is null;
++select count(*) as audit_actions_last_day from app_security.rating_moderation_audit
++ where created_at>=clock_timestamp()-interval '1 day';
++select j.jobname,r.status,count(*) as runs,max(r.end_time) as latest_end
++ from cron.job j join cron.job_run_details r on r.jobid=j.jobid
++ where j.jobname in ('ratings-v1-publication','ratings-v1-reminders')
++ and r.start_time>=clock_timestamp()-interval '1 day' group by j.jobname,r.status;
++commit;
+diff --git a/tests/ratings/launch-readiness-plan.md b/tests/ratings/launch-readiness-plan.md
+new file mode 100644
+index 0000000..67e8ea2
+--- /dev/null
++++ b/tests/ratings/launch-readiness-plan.md
+@@ -0,0 +1,18 @@
++# Ratings V1 launch readiness plan
++
++Scope: Backend automated verification and release handoff only, 27 October 2026.
++Preserve existing dirty work, six Ratings migration bytes, APIs, policies and CI.
++No fetch, hosted access, migration reapplication, feature activation or release actions.
++
++1. Reuse the isolated Ratings fixture runner and its real SQL migrations. Extend
++   coverage for identity/role authorization, direct DML denial, deadline boundaries,
++   all score combinations, publication backlog, reminder cursor and rollback.
++2. Run offline contract and database checks; attempt the existing disposable native
++   PG17 harness. Clearly distinguish emulated Auth/JWT/cron from hosted acceptance.
++3. Deliver exact task diff, results, coverage limits, environment names, staging-first
++   release instructions, monitoring and rollback. No new database migration expected;
++   any discovered contract defect becomes an explicit blocker rather than a silent
++   edit to deployed SQL.
++
++Local HEAD observed: 213b57c84e2b3767e3ab3499846dd280bf3315c3. Not synchronized.
++PR #59 merged and six migrations deployed are user-reported facts.
+diff --git a/tests/ratings/launch-readiness-handoff.md b/tests/ratings/launch-readiness-handoff.md
+new file mode 100644
+index 0000000..36846b1
+--- /dev/null
++++ b/tests/ratings/launch-readiness-handoff.md
+@@ -0,0 +1,155 @@
++# Ratings V1 launch-readiness handoff — 27 October 2026
++
++Local verification is extended; launch acceptance remains blocked on native PG17,
++real Auth and installed-environment evidence. No GitHub, hosted Supabase, migration,
++deployment, flag or scheduled-job operation was performed. The user reports PR #59
++merged and all six migrations deployed to Test and Production; not independently
++verified here. Do not reapply them or use old candidate deployment scripts to do so.
++
++## Exact task files
++
++- `tests/ratings/run.mjs`: invokes added launch checks at suite end; replaces the
++  native-only rollback check with a cross-engine, unrelated-job-preserving check.
++- `tests/ratings/launch-readiness.mjs`: seven additional SQL scenario checks.
++- `tests/ratings/auth-test-only.mjs`: opt-in real Auth/API disabled-state verifier.
++- `tests/ratings/auth-test-only.test.mjs`: three offline verifier/guard tests.
++- `tests/ratings/launch-monitoring.sql`: aggregate read-only operator queries.
++- `tests/ratings/launch-readiness-plan.md`: plan written before implementation.
++- `tests/ratings/launch-readiness-handoff.md`: this handoff.
++- `tests/ratings/launch-readiness.diff`: exact task patch; excludes itself.
++
++All paths relative to FairSwap-Backend. Existing Ratings files are untracked in this
++checkout, alongside unrelated modified/untracked work. Task diff uses the observed
++pre-task runner content, not HEAD (which has no Ratings runner). No unrelated files
++were edited. Observed main HEAD: `213b57c84e2b3767e3ab3499846dd280bf3315c3`.
++No fetch/pull; this is not a synchronized release base.
++
++## Executed evidence
++
++| Command | Actual result |
++| --- | --- |
++| `node tests/ratings/run.mjs` | PASS: 50 database scenario checks, PGlite 0.5.8 / PostgreSQL 18.3 WASM |
++| `node --experimental-strip-types --test tests/ratings/contract.test.mjs` | PASS: 7 tests, zero failed/skipped |
++| `node --test tests/ratings/auth-test-only.test.mjs` | PASS: 3 tests, fake transport only |
++| `node scripts/verify-migration-manifest.mjs` | FAIL: malformed manifest line 1 in existing working checkout; preserved |
++| `node tests/ratings/verify-baseline.mjs` with process-scoped Git safe.directory | PASS: 58 pinned historical Git blobs, EOL-aware working identities and unchanged manifest |
++| `powershell -NoProfile -ExecutionPolicy Bypass -File tests/ratings/run-native.ps1` | BLOCKED: sandbox initdb restricted-token error 87; outside sandbox retry found installed `share/postgres.bki` missing |
++| `node tests/ratings/auth-test-only.mjs` against Test | NOT RUN: no hosted access/token use authorized in this coding session |
++| Hosted Test / Production acceptance, monitoring SQL | NOT RUN |
++
++Initial new fixture run failed because display_name was absent; corrected the fixture
++and reran successfully. No production SQL defect was inferred from that fixture error.
++The manifest failure is not reported as a passing raw-byte integrity check.
++
++## Coverage and its limits
++
++Existing checks exercise confirmation, seller-only expiry, reciprocal double-blind
++publication, sealed export/Received/public privacy, disputes and resolution, immutable
++review/reply retries, malformed text/tags/faces, outsider access, staff role/AAL2/account
++and flag checks, moderation evidence audit, hide/restore/exclusion/void recomputation,
++three-review threshold and true zero score, privacy deletion, consumer DTOs and cursors.
++Added checks cover missing identities/outsider AAL2, four-user direct DML denial,
++14-day invariant and deadline rejection, all 64 generated SQL scores, 205 due trades
++drained 200+5+0, 205 delayed reminder trades with 410 day10 receipts and no day3
++receipts, repeat deduplication, and rollback preserving reviews and an unrelated job.
++
++Fixture auth.uid/auth.jwt, account-policy provider and cron are emulated. AAL2 fixture
++claims do not prove MFA enrollment/challenge or cryptographic JWT validation. Native
++concurrent-session coverage in the existing runner was NOT RUN. Neither engine runs
++the complete deployed migration ledger, hosted Auth, PostgREST or real pg_cron.
++Direct table denial proves ACL/RLS boundary behavior collectively, not an isolated
++RLS-policy path where ACL already denies. Fixture branches temporarily enable local
++in-memory flags to exercise behavior; persistent/hosted flags stay OFF and the suite
++finishes with all four local flags OFF and Ratings jobs inactive.
++
++The Test-only runner validates five existing tokens through `/auth/v1/user`, four
++distinct identities, same staff identity at two assurance levels, invalid-token denial,
++25 direct-table read denials, disabled Ratings RPCs and staff guard ordering. It sends
++only reads and read-only RPCs, refuses every URL except the exact Test project, never
++creates users or logs token/response content. It cannot prove enabled-state hosted
++flows while flags must stay OFF. Test tokens must represent active pre-existing users;
++staff must have the actual moderator/administrator role and fresh AAL1/AAL2 sessions.
++
++## Database and environment changes
++
++No additive database migration is necessary for these checks. No migration bytes,
++grants, RLS, RPC signatures, schema, package manifests, config or Actions were changed.
++No new runtime variables in either Test or Production.
++
++| Verification variable | FairSwapTest | FairSwapProd |
++| --- | --- | --- |
++| `RATINGS_AUTH_TARGET` | `FairSwapTest` | Not supported |
++| `RATINGS_AUTH_URL` | Exact Test HTTPS project URL | Not supported; runner refuses Production |
++| `RATINGS_AUTH_PUBLISHABLE_KEY` | Test publishable/legacy anon key | Not used |
++| `RATINGS_AUTH_SELLER_TOKEN` | Active seller access token | Not used |
++| `RATINGS_AUTH_BUYER_TOKEN` | Active buyer access token | Not used |
++| `RATINGS_AUTH_OUTSIDER_TOKEN` | Unrelated active user access token | Not used |
++| `RATINGS_AUTH_STAFF_AAL1_TOKEN` | Staff session before MFA assurance | Not used |
++| `RATINGS_AUTH_STAFF_AAL2_TOKEN` | Same staff session identity at AAL2 | Not used |
++
++Provide variables via the operator's secure process environment, never files/logs or
++command arguments. No service-role key or database URL is required. Disposable suite
++needs Node 24.15.0 and existing pinned dependencies; native runner additionally needs
++a complete PostgreSQL 17 installation (`PgBin`/`PsqlBin` parameters, not env vars).
++Production monitoring uses an already-authorized private operator session, no new
++application credential. Monitoring owner and alert destination must be assigned.
++
++## Staging-first delivery and production instructions
++
++1. ChatGPT reconciles these local-only changes against the merged PR #59 source,
++   confirms the six deployed migration hashes/ledgers and preserves unrelated work.
++   ChatGPT owns branch/commit/PR/Actions. Preserve all existing CI gates; no workflow
++   edits are included. Proposed extra commands are the three Node checks above and
++   the existing disposable native PG17 harness on a complete supported installation.
++2. On FairSwapTest (`wpppxlnbzqynvhpeuavd`), the authorized release operator runs
++   automated read-only installed-state checks: all four flags false, Ratings schedules
++   absent or inactive, deployed function/grant/RLS/privacy-wrapper definitions matching
++   reviewed source. Do not execute provisioning, job functions or migrations hosted.
++   Run the opt-in Auth command with existing secure Test tokens; retain sanitized
++   pass/fail evidence. Any enabled-state end-to-end test requires a separate disposable
++   environment/authorization, not a flag change in these two hosted projects.
++3. After automated staging evidence, ChatGPT can deliver the verification-only source
++   change through the normal repository gates. No database deploy step exists for
++   this change. Production (`kriuhwppxgxsyyrbjsau`) receives only authorized read-only
++   ledger/source/flag/job checks and monitoring setup; no synthetic test writes or
++   Auth runner. Record environment identity, source SHA, execution time and results.
++   No owner manual/exploratory test or predeployment owner testing gate is requested.
++4. Ratings activation remains outside this task. Do not enable flags or scheduled
++   jobs. Any discovered installed SQL defect needs separately reviewed additive
++   forward SQL, explicit RLS implications, isolated Test/Production packaging and
++   release authorization; never modify/reapply the six deployed files.
++
++## Remaining launch blockers and production monitoring
++
++- Reconcile actual merged source/deployed ledgers with this unsynchronized dirty
++  checkout; resolve raw manifest verification failure without changing immutable SQL.
++- Obtain passing native PG17 complete-chain/concurrency and real Auth evidence.
++  Confirm actual MFA assurance transitions and installed staff membership in Test.
++- Hosted enabled-state consumer integration, load qualification/global-lock contention,
++  real scheduler execution and notification delivery remain unverified. Existing
++  architecture allows repeat confirmed pairs on distinct listings; no cooldown,
++  identity verification or automated collusion detector is added. Fraud tags are
++  private signals, not proof. Record the fraud response owner and accepted V1 limits.
++- Confirm production backup/restore evidence, privacy-wrapper chain and audit retention
++  owner under the existing release gates. Local fixtures cannot certify them.
++- Operator should run `launch-monitoring.sql` read-only after release and on an agreed
++  cadence. While disabled, alert on any true flag or active Ratings job; a due backlog
++  can be expected while disabled and must not itself trigger processing.
++- For a future separately authorized activation: alert on any publication/reminder job
++  failure, publication oldest-due age above two publication intervals (10 minutes),
++  growing backlog across two cycles, impossible score/threshold rows (must be zero),
++  unexpected audit gaps/tampering or private-table exposure. Monitor staff permission
++  denials, report/dispute volume, cursor progress, deduplication constraint failures,
++  notification insert errors, lock waits/deadlocks and RPC latency. Set traffic-based
++  thresholds and dispute SLA with the operator; no invented production baseline.
++  Use aggregate metrics/IDs only, never sealed bodies, report text, JWTs or PII.
++
++One-line operational rollback (authorized operator only): execute existing
++`releases/candidates/ratings-v1/rollback-disable.sql` in the verified target project;
++it disables all four Ratings flags and only Ratings jobs, retaining data and APIs.
++No rollback execution is required for this verification-only delivery. Source rollback:
++ChatGPT reverts only this task patch through normal review; never revert deployed SQL.
++
++Reference checked: https://supabase.com/docs/guides/database/postgres/row-level-security
++(grants and policies are distinct boundaries). Changelog markdown retrieval was
++unavailable through the browsing tool; no new Supabase API/library feature is used.
