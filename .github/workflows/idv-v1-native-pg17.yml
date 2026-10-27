@@ -7,6 +7,11 @@ on:
       - 'supabase/functions/_shared/idv/**'
       - 'supabase/functions/idv-*/**'
       - 'tests/idv-pg17/**'
+      - 'tests/idv/**'
+      - 'vitest.idv.config.ts'
+      - 'vitest.config.ts'
+      - 'package.json'
+      - 'tsconfig.json'
       - '.github/workflows/idv-v1-native-pg17.yml'
   push:
     branches:
@@ -63,3 +68,31 @@ jobs:
           "$pg_bin/pg_ctl" -D "$datadir" -l "$workdir/postgres.log" -o "-h 127.0.0.1 -p $port -c unix_socket_directories=''" -w start
           started=true
           node tests/idv-pg17/run-disposable.mjs "--native-port=$port" "--pg-bin=$pg_bin"
+
+  idv-unit-isolated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout locked source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up pinned Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+      - name: Install frozen dependencies without scripts
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
+      - name: Run network-blocked IDV tests independently
+        run: |
+          test -f tests/setup/no-network.ts
+          test -f tests/idv/idv-setu.test.ts
+          test -f vitest.idv.config.ts
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            corepack pnpm test:idv
