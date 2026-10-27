@@ -287,3 +287,53 @@ test('unauthorized Production release stops before GitHub API or database access
   }
  }finally{assert.equal(dirname(resolve(directory)),resolve(tmpdir()));assert(basename(directory).startsWith('chat-solo-owner-prod.'));rmSync(directory,{recursive:true,force:true});}
 });
+
+test('GitHub offset timestamps canonicalize for owner proof while raw policy timestamps remain fingerprinted',async()=>{
+ const clock=Date.now;Date.now=()=>Date.parse('2026-10-28T00:00:00Z');
+ try{
+  const stamps={25352225:'2026-10-27T15:52:55.449+01:00',25821687:'2026-10-25T13:56:33.413+01:00'};
+  const fixture=await auditFixture('FairSwapTest','b'.repeat(64),stamps);
+  assert.deepEqual(fixture.inspection.rulesets.map(rule=>rule.updatedAt),['2026-10-27T14:52:55.449Z','2026-10-25T12:56:33.413Z']);
+  assert.equal((await run(fixture)).protected,true);
+  for(const stamp of ['2026-10-27T09:22:55.449-05:30','2026-10-28T04:52:55.449+14:00','2026-10-27T14:52:55.449Z']){
+   fixture.responses['/rulesets/25352225'].updated_at=stamp;
+   const inspection=await inspectProtection('FairSwapTest','fixture-token',fixture.evidence.sourceCommit,fixtureApi(fixture.responses));
+   assert.equal(inspection.rulesets[0].updatedAt,'2026-10-27T14:52:55.449Z');
+   assert.notEqual(inspection.rulesets[0].policySha256,fixture.inspection.rulesets[0].policySha256);
+   await assert.rejects(()=>run(fixture),/CHAT_ADMIN_ATTESTATION_INVALID/);
+  }
+ }finally{Date.now=clock;}
+});
+
+test('invalid API timestamp calendars, missing zones and ambiguous offsets fail closed',async()=>{
+ const fixture=await auditFixture();
+ for(const stamp of ['2026-02-29T12:00:00Z','2026-04-31T12:00:00+01:00','2026-10-27T24:00:00Z','2026-10-27T12:00:60Z','2026-10-27T12:00:00','2026-10-27T12:00:00-00:00','2026-10-27T12:00:00+14:01','2026-10-27T12:00:00+15:00','2026-10-27T12:00:00+01:60','2026-10-27T12:00:00+0100','2026-10-27T12:00:00+1:00','private-upstream-value',null,123]){
+  fixture.responses['/rulesets/25352225'].updated_at=stamp;
+  await assert.rejects(()=>run(fixture),error=>error.message==='CHAT_RULESET_METADATA_REQUIRED');
+ }
+});
+
+test('owner observedAt and expiresAt remain strict valid UTC-Z timestamps',async()=>{
+ for(const field of ['observedAt','expiresAt'])for(const stamp of ['2026-10-27T15:52:55.449+01:00','2026-02-29T12:00:00Z','2026-10-27T24:00:00Z']){
+  const fixture=await auditFixture();fixture.attestation.payload[field]=stamp;fixture.evidence.attestationJson=JSON.stringify(fixture.attestation);
+  await assert.rejects(()=>run(fixture),error=>error.message==='CHAT_ADMIN_ATTESTATION_STALE');
+ }
+});
+
+test('missing or malformed effective ruleset IDs require provider metadata without inferring source rules',async()=>{
+ for(const value of [undefined,null,'25352225',0,-1,1.5,Number.MAX_SAFE_INTEGER+1]){
+  const fixture=await auditFixture(),calls=[];
+  if(value===undefined)delete fixture.responses['/rules/branches/main?per_page=100'][0].ruleset_id;
+  else fixture.responses['/rules/branches/main?per_page=100'][0].ruleset_id=value;
+  await assert.rejects(()=>auditProtection('FairSwapTest','fixture-token',fixtureApi(fixture.responses,{calls}),fixture.evidence),error=>error.message==='CHAT_EFFECTIVE_RULE_RULESET_ID_REQUIRED');
+  assert(!calls.some(call=>call.path.startsWith('/rulesets/')));
+ }
+});
+
+test('offset ruleset updates newer than owner observation cannot authorize release',async()=>{
+ const clock=Date.now;Date.now=()=>Date.parse('2026-10-28T00:00:00Z');
+ try{
+  const fixture=await auditFixture('FairSwapTest','b'.repeat(64),{25352225:'2026-10-28T01:00:00+01:00'});
+  await assert.rejects(()=>run(fixture),error=>error.message==='CHAT_ADMIN_ATTESTATION_RULESET_MISMATCH');
+ }finally{Date.now=clock;}
+});

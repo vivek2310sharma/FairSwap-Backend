@@ -8,7 +8,7 @@ export function fixtureApi(responses,{links={},denied=[],calls=[]}={}){
   return {ok:!denied.includes(path)&&Object.hasOwn(responses,path),headers:new Headers(links[path]?{link:links[path]}:{}),json:async()=>structuredClone(responses[path])};
  };
 }
-export async function auditFixture(environment='FairSwapTest',bundleSha256='b'.repeat(64)){
+export async function auditFixture(environment='FairSwapTest',bundleSha256='b'.repeat(64),updatedAt={}){
  const now=Date.now(),stamp=delta=>new Date(now+delta).toISOString(),sourceCommit='a'.repeat(40);
  const responses={
   '':{id:123,full_name:'vivek2310sharma/FairSwap-Backend',visibility:'public',default_branch:'main',owner:{login:'vivek2310sharma',id:11,type:'User'}},
@@ -25,6 +25,7 @@ export async function auditFixture(environment='FairSwapTest',bundleSha256='b'.r
  };
  responses['/rulesets/25352225'].rules=responses['/rules/branches/main?per_page=100'].map(({ruleset_id,...rule})=>structuredClone(rule));
  responses['/rules/branches/main?per_page=100'].push(...responses['/rulesets/25821687'].rules.map(rule=>({...rule,ruleset_id:25821687})));
+ for(const [id,stamp]of Object.entries(updatedAt))responses['/rulesets/'+id].updated_at=stamp;
  const inspection=await inspectProtection(environment,'fixture-token',sourceCommit,fixtureApi(responses));
  const ledgerJson=JSON.stringify({ledger:[{version:'20000101000000',name:'fixture',statementsSha256:'c'.repeat(64)}]}),ledgerSha256=createHash('sha256').update(ledgerJson).digest('hex');
  const payload={schema:2,repository:'vivek2310sharma/FairSwap-Backend',environment,sourceCommit,bundleSha256,ledgerSha256,snapshotSha256:inspection.snapshotSha256,observedAt:stamp(-60000),expiresAt:stamp(3600000),owner:{login:'vivek2310sharma',id:11},reviewIssue:60,rulesets:inspection.rulesets.map(r=>({...r,bypassActors:r.id===25821687?[{actor_id:5,actor_type:'RepositoryRole',bypass_mode:'always'}]:[]}))};

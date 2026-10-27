@@ -25,7 +25,24 @@ export function bundleHash(){
 const fail=code=>{throw Error(code);};
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const sha=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
-const iso=value=>typeof value==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value)&&Number.isFinite(Date.parse(value));
+// API timestamps may carry an explicit offset; owner attestations remain UTC-Z only.
+function apiTimestamp(value){
+ if(typeof value!=='string')return null;
+ const match=/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d{1,3})?(Z|[+-]\d\d:\d\d)$/.exec(value);
+ if(!match)return null;
+ const [,local,fraction='',zone]=match,wall=local+fraction+'Z',time=Date.parse(wall);
+ // Date.parse normalizes impossible calendar dates; require an exact wall-clock round trip.
+ if(!Number.isFinite(time)||new Date(time).toISOString()!==local+'.'+fraction.slice(1).padEnd(3,'0')+'Z')return null;
+ if(zone!=='Z'){
+  const hours=Number(zone.slice(1,3)),minutes=Number(zone.slice(4,6));
+  if(hours>14||minutes>59||(hours===14&&minutes!==0)||zone==='-00:00')return null;
+ }
+ const instant=Date.parse(value);
+ if(!Number.isFinite(instant))return null;
+ const canonical=new Date(instant).toISOString();
+ return /^\d{4}-/.test(canonical)?canonical:null;
+}
+const iso=value=>typeof value==='string'&&value.endsWith('Z')&&apiTimestamp(value)!==null;
 const keys=(value,expected)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===[...expected].sort().join(',');
 const ownerRulesetId=25821687,approvalRulesetId=25352225;
 const ownerRuleTypes=['deletion','non_fast_forward','update'];
@@ -95,18 +112,19 @@ export async function inspectProtection(environment,token,sourceCommit,fetcher=f
  if(rules.filter(rule=>rule.type==='required_status_checks').some(rule=>!Array.isArray(rule.parameters?.required_status_checks)||rule.parameters.required_status_checks.some(check=>typeof check?.context!=='string')))fail('CHAT_BRANCH_APPROVAL_AND_CHECKS_REQUIRED');
  const checks=rules.filter(rule=>rule.type==='required_status_checks').flatMap(rule=>rule.parameters?.required_status_checks??[]).map(check=>check.context);
  if(!prs.length||prs.some(pr=>pr.parameters?.required_approving_review_count!==0||pr.parameters.dismiss_stale_reviews_on_push!==true)||!checks.includes('backend-ci-success')||!checks.includes('chat-inbox-native-pg17'))fail('CHAT_BRANCH_APPROVAL_AND_CHECKS_REQUIRED');
- if(rules.some(rule=>!id(rule.ruleset_id)))fail('CHAT_RULESET_METADATA_REQUIRED');
+ // Require provider-supplied IDs on every effective rule; never infer them from source policies.
+ if(rules.some(rule=>!id(rule.ruleset_id)))fail('CHAT_EFFECTIVE_RULE_RULESET_ID_REQUIRED');
  const ids=[...new Set(rules.map(rule=>rule.ruleset_id))].sort((a,b)=>a-b),rulesets=[];
  if(canonicalJson(ids)!==canonicalJson([approvalRulesetId,ownerRulesetId]))fail('CHAT_RULESET_UNRECOGNIZED');
  if(rules.some(rule=>['pull_request','required_status_checks'].includes(rule.type)&&rule.ruleset_id!==approvalRulesetId))fail('CHAT_APPROVAL_RULESET_BYPASS_FORBIDDEN');
  for(const rulesetId of ids){
   const policy=await get(`/rulesets/${rulesetId}`);
-  if(policy?.id!==rulesetId||policy.enforcement!=='active'||policy.target!=='branch'||!iso(policy.updated_at))fail('CHAT_RULESET_METADATA_REQUIRED');
+  if(policy?.id!==rulesetId||policy.enforcement!=='active'||policy.target!=='branch'||!apiTimestamp(policy.updated_at))fail('CHAT_RULESET_METADATA_REQUIRED');
   verifyRulesetShape(policy,rules.filter(rule=>rule.ruleset_id===rulesetId));
   // Absence proves nothing; visible and attested lists must match the pinned policy.
   if(Object.hasOwn(policy,'bypass_actors')&&canonicalJson(policy.bypass_actors)!==canonicalJson(requiredBypassActors(rulesetId)))fail('CHAT_RULESET_BYPASS_FORBIDDEN');
   const {bypass_actors,_links,...visible}=policy;
-  rulesets.push({id:rulesetId,policySha256:protectionHash(visible),updatedAt:policy.updated_at});
+  rulesets.push({id:rulesetId,policySha256:protectionHash(visible),updatedAt:apiTimestamp(policy.updated_at)});
  }
  const names=list=>{if(list.some(s=>typeof s?.name!=='string'||!/^[A-Z0-9_]+$/.test(s.name))||new Set(list.map(s=>s.name)).size!==list.length)fail('CHAT_ADMIN_PAGINATION_INCOMPLETE');return list.map(s=>s.name).sort();};
  const environmentNames=names(environmentSecrets),repositoryNames=names(repositorySecrets);
