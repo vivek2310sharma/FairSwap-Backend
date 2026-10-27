@@ -35,7 +35,7 @@ export async function verifyAuth(env,transport=fetch) {
  }
  // Guard ordering checks both actual role membership and JWT assurance level.
  for(const [i,message] of [[2,'RATINGS_ACCESS_DENIED'],[3,'RATINGS_ACCESS_DENIED'],[4,'RATINGS_STAFF_DISABLED']]){
-  const r=await request('/rest/v1/rpc/admin_ratings_cases',tokens[i],{});
+  const r=await request('/rest/v1/rpc/admin_ratings_cases',tokens[i],{kind:'dispute'});
   assert.equal(r.data.message,message,'Staff assurance/role/disabled-state boundary mismatch');
  }
  return {identities:4,tokens:5,directReadDenials:25};

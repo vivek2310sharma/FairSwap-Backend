@@ -14,12 +14,17 @@ const transport=(change=x=>x)=>async(url,options)=>{
  const token=options.headers.Authorization.slice(7);let status=200,data;
  if(url.endsWith('/auth/v1/user')){
   if(token==='invalid-token'){status=401;data={};}else data={id:token.startsWith('staff')?'staff':token};
- }else if(url.includes('/rpc/admin_ratings_cases')){status=403;data={message:token==='staff2'?'RATINGS_STAFF_DISABLED':'RATINGS_ACCESS_DENIED'};}
+ }else if(url.includes('/rpc/admin_ratings_cases')){
+  assert.equal(JSON.parse(options.body).kind,'dispute','Required allowed kind is missing or invalid');
+  status=token==='staff2'?400:403;data={message:token==='staff2'?'RATINGS_STAFF_DISABLED':'RATINGS_ACCESS_DENIED'};
+ }
  else if(url.includes('/rpc/ratings_pending')){status=400;data={code:'55000',message:'RATINGS_DISABLED'};}
  else {status=403;data={code:'42501'};}
  return change({status,json:async()=>data},url);
 };
 test('hosted verifier exercises four identities and 25 read denials with fake transport',async()=>{
+ await assert.rejects(()=>transport()('https://example.invalid/rpc/admin_ratings_cases',
+  {headers:{Authorization:'Bearer staff2'},body:'{}'}),/Required allowed kind/);
  assert.deepEqual(await verifyAuth(env,transport()),{identities:4,tokens:5,directReadDenials:25});
 });
 test('hosted verifier fails if direct reads unexpectedly succeed',async()=>{
