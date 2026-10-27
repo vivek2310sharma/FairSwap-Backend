@@ -84,7 +84,7 @@ jobs:
           env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
             node --experimental-strip-types --test tests/ratings/contract.test.mjs
           env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
-            node --test tests/ratings/auth-test-only.test.mjs
+            node --test tests/ratings/auth-sessions.test.mjs tests/ratings/auth-test-only.test.mjs
           env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
             node tests/ratings/run.mjs
           ./node_modules/.bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution Bundler --module ESNext src/lib/ratings/contract.ts src/lib/ratings/score.ts
