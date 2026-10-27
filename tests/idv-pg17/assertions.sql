@@ -429,6 +429,11 @@ begin
   end;
 
   -- Negative Case: Missing app_project_ref (fails closed)
+  -- Restore the canonical FairSwapTest worker URL first so test isolates the missing project reference check
+  update vault.decrypted_secrets
+  set decrypted_secret = 'https://wpppxlnbzqynvhpeuavd.supabase.co/functions/v1/idv-revocation-worker'
+  where name = 'idv_revocation_worker_url';
+
   delete from vault.decrypted_secrets where name = 'app_project_ref';
   begin
     perform app_security.idv_activate_revocation_scheduler();
