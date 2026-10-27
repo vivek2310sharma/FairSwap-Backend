@@ -82,14 +82,51 @@ export async function launchReadinessChecks(db, test, rollback) {
   await q('select app_security.rating_reminders()');
   assert.equal(await q("select count(*)::int from app_security.rating_notification_receipts where trade_id=any($1::uuid[]) and kind='day10'",[ids]),410);
  });
+ await test('launch notification failure rolls back receipts and retry delivers exactly once',async()=>{
+  await owner();await db.exec('update app_security.ratings_settings set jobs_enabled=false');
+  const retry=await trade(4);
+  await db.exec('update app_security.ratings_settings set jobs_enabled=true');
+  const before=await q('select count(*)::int from public.notifications');
+  await db.exec(`create function public.launch_notification_failure() returns trigger language plpgsql as $$
+   begin raise exception 'LAUNCH_NOTIFICATION_FAILURE'; end $$;
+   create trigger launch_notification_failure before insert on public.notifications
+   for each row execute function public.launch_notification_failure()`);
+  try {
+   await denied('select app_security.rating_notify($1)',[retry],/LAUNCH_NOTIFICATION_FAILURE/);
+   assert.equal(await q('select count(*)::int from app_security.rating_notification_receipts where trade_id=$1',[retry]),0);
+   assert.equal(await q('select count(*)::int from public.notifications'),before);
+  } finally {
+   await db.exec('drop trigger launch_notification_failure on public.notifications; drop function public.launch_notification_failure()');
+  }
+  await q('select app_security.rating_notify($1)',[retry]);
+  await q('select app_security.rating_notify($1)',[retry]);
+  assert.equal(await q('select count(*)::int from app_security.rating_notification_receipts where trade_id=$1',[retry]),4);
+  assert.equal(await q('select count(*)::int from public.notifications'),before+4);
+ });
+ await test('launch aggregate monitoring executes in a read-only transaction',async()=>{
+  await owner();
+  // pg_cron is a fixture here; never claim real scheduler delivery from this run.
+  await db.exec(`create table if not exists cron.job_run_details(jobid bigint,status text,start_time timestamptz,end_time timestamptz)`);
+  const {readFileSync}=await import('node:fs');
+  const monitoring=readFileSync(new URL('./launch-monitoring.sql',import.meta.url),'utf8');
+  await db.exec(monitoring);
+  assert.equal(await q("select count(*)::int from public.profile_rating_stats where score<0 or score>10 or (counted_review_count<3 and score is not null)"),0);
+ });
  await test('launch rollback preserves evidence and unrelated jobs, closes all Ratings gates',async()=>{
   await owner();await db.exec("select cron.schedule('launch-unrelated','0 0 * * *','select 1')");
   const before=await q('select count(*)::int from public.rating_reviews');
+  const tables=['public.rating_trades','public.rating_reviews','public.rating_replies',
+   'public.trade_system_events','app_security.rating_cases','app_security.rating_moderation_audit',
+   'app_security.rating_notification_receipts'];
+  const fingerprint=table=>q(`select md5(coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text)::text,'')) from ${table} x`);
+  const history=await Promise.all(tables.map(fingerprint));
+  await db.exec(rollback);
   await db.exec(rollback);
   assert.equal(await q('select count(*)::int from app_security.ratings_settings where enabled or public_reads or jobs_enabled or staff_enabled'),0);
   assert.equal(await q("select count(*)::int from cron.job where jobname like 'ratings-v1-%' and active"),0);
   assert.equal(await q("select active from cron.job where jobname='launch-unrelated'"),true);
   assert.equal(await q('select count(*)::int from public.rating_reviews'),before);
+  assert.deepEqual(await Promise.all(tables.map(fingerprint)),history,'Rollback changed retained history');
   assert.equal(await q('select app_security.publish_due_reviews()'),0);
   assert.equal(await q('select app_security.rating_reminders()'),0);
   await login(seller);await denied('select public.ratings_pending()',[],/RATINGS_DISABLED/);
