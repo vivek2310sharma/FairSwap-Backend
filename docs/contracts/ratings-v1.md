@@ -305,3 +305,107 @@ Documentation checked 26 October 2026: [RLS](https://supabase.com/docs/guides/da
 [Postgres upgrades and compatibility](https://supabase.com/docs/guides/platform/upgrading),
 [changelog](https://supabase.com/changelog.md). The implementation uses ordinary
 Postgres 17-compatible functions, generated columns, row locks and advisory locks.
+
+## Automated launch acceptance handoff (27 October 2026)
+
+Acceptance source baseline: Backend main `c53b956eb2d34858e007580678ec5f04814f1b76`.
+The preceding candidate provenance is historical. This change adds no migrations,
+API/RLS grants, dependencies, runtime flags or CI workflow changes.
+
+### Secure hosted Test run
+
+Invoke `node tests/ratings/auth-test-only.mjs` only in a trusted operator process
+with these environment variables injected by its secret store (never shell arguments,
+chat, files, logs, CI artifacts, browser bundles or copied JWTs):
+
+- `RATINGS_AUTH_TARGET` and `RATINGS_AUTH_URL`: exact FairSwapTest target and endpoint.
+- `RATINGS_AUTH_PUBLISHABLE_KEY`: Test publishable key or project-bound legacy anon key.
+- `RATINGS_AUTH_SELLER_TOKEN`, `RATINGS_AUTH_BUYER_TOKEN`, `RATINGS_AUTH_OUTSIDER_TOKEN`.
+- `RATINGS_AUTH_STAFF_AAL1_TOKEN`, `RATINGS_AUTH_STAFF_AAL2_TOKEN`.
+
+Use five distinct existing short-lived access tokens, four distinct active users,
+and the same active moderator/administrator for both staff tokens. The staff tokens
+must carry AAL1 and AAL2 respectively. All tokens need more than 60 seconds remaining.
+No passwords, refresh tokens, service keys, DB credentials or Management API PATs
+are accepted as user credentials. No login, refresh, MFA enrollment or session
+creation is performed. Missing or malformed inputs fail before any HTTP request.
+Decoded JWT claims are untrusted preflight filters; unchanged tokens must separately
+pass Auth user validation and actual PostgREST authorization. This does not prove
+immediate session revocation, role freshness beyond server enforcement, or live MFA
+challenge completion. Credentials and response bodies never enter receipts/errors.
+
+The runner permits only the exact Test endpoint, rejects redirects, times out requests,
+and performs only Auth GETs, direct-table GET denials and read RPC POSTs. It verifies
+invalid-token rejection by Auth and PostgREST, disabled participant RPCs, all five
+identities' direct table denials and staff role/AAL/disabled boundaries with SQLSTATE
+and HTTP status checks. A pass returns counts only. It does not read private settings
+or prove all four flags/cron state; independently targeted operator monitoring must
+confirm those. Seller/buyer labels do not prove transaction ownership without fixtures.
+Keep hosted enabled-state writes outside this runner.
+
+### Disposable scenarios and automated evidence
+
+`node --test tests/ratings/auth-test-only.test.mjs` uses fake unsigned tokens and a
+network-blocking guard. It is offline regression evidence, never hosted acceptance.
+`node tests/ratings/run.mjs` runs supplementary PGlite. Use
+`tests/ratings/run-native.ps1` on Windows or `tests/ratings/run-native.sh <absolute-bin>`
+on Linux for a fresh loopback PostgreSQL 17 cluster. Auth, cron and notification
+infrastructure remain fixtures even in native PG17. No connection URL is accepted.
+The existing suite covers sealed/immutable reviews, threshold three, reports,
+disputes, AAL2, own-case conflicts, audited evidence and privacy erasure. Launch
+checks add batch-205 draining, delayed day10-over-day3 delivery, notification-insert
+failure with transactional receipt rollback, exact retry deduplication, monitoring
+SQL execution and repeatable rollback fingerprinting all trade/review/reply/event,
+case/audit/receipt history while preserving unrelated jobs. Notification inserts
+are not proof of external delivery. Real cron execution/throughput, notification
+provider delivery and operational response remain separately unverified.
+
+Local execution: 4 Auth regression tests, 7 contract tests, 52 supplementary
+PGlite checks (PostgreSQL 18.3 WASM), 93 unit tests, 83 existing moderation regressions,
+195 CI-validator tests, 6 release-contract tests and 6 Production-category verifier
+tests passed. Typecheck, migration-byte integrity (58 historical files), unit
+network-isolation pins, branding and Ratings DTO compilation passed. A second
+isolated worktree with canonical LF bytes resolved initial Windows CRLF integrity
+failures; Git Bash on the process PATH resolved validator shell startup failures. Hosted Test: **NOT RUN — CREDENTIALS
+UNAVAILABLE** (no required operator variables present). Native PG17 startup was
+blocked by the installed distribution missing `share/postgres.bki`; no PG17 pass is
+claimed. Protected Linux CI must run native PG17 and all existing aggregate gates.
+
+### Monitoring, release order and rollback
+
+ChatGPT integrates the exact diff into its prepared branch, preserves existing CI
+(including `backend-ci-success`), and runs protected CI before Test acceptance, then
+applicable Production source/config delivery. No schema deployment is required.
+Keep all four database settings false and both Ratings cron jobs inactive in Test
+and Production. Enabled-state qualification stays in disposable databases unless
+isolated hosted Test automation is independently authorized. Never create synthetic
+Production trades. Credentials must be injected by a secure operator; never request
+their values in chat. Public launch remains blocked by hosted identity acceptance,
+operational ownership, editorial approvals and native parity/scope signoff.
+
+Separately targeted runtime configuration names (values intentionally omitted): Web
+server-only `FAIRSWAP_RATINGS_V1_ENABLED`, `FAIRSWAP_RATINGS_PUBLIC_SCORE_ENABLED`;
+Admin environment-specific flags must be confirmed from its own repository before
+any deployment (this Backend scope does not establish their names). Database
+`app_security.ratings_settings`: `enabled`, `public_reads`, `jobs_enabled`,
+`staff_enabled`; cron `ratings-v1-publication`, `ratings-v1-reminders`. This task
+changes none of these. Independently verify Test/Production project identities.
+
+Run `tests/ratings/launch-monitoring.sql` as a separately authorized read-only
+operator against each verified project. Collect aggregate output only. Alert on
+publication lag over 600 seconds, missing jobs, any failed/stalled job, duplicate
+receipt keys, impossible scores or threshold configuration drift. Compare backlog
+across timestamped receipts for growth; SQL alone does not install an alert sink.
+Receipt uniqueness does not prove absence of duplicate external notifications.
+Monitor both case kinds and audit counts; zero audit actions alone is not an audit
+gap. Reconcile authorized case operations with immutable audit records in the
+operational system and assign grievance/on-call ownership and response thresholds.
+Do not expose case reasons, identities, JWTs, review content or raw cron errors.
+
+Production owner checks after applicable deployment: flags/cron remain OFF,
+publication lag/backlog, reminder duplication, NULL score below three counted
+reviews and valid 0..10 score at threshold, moderation queues/audit and errors.
+Use automated monitoring; no owner manual testing is required before deployment.
+Rollback source through a protected PR and prior app deployment as applicable;
+keep all four flags false and both Ratings jobs inactive. Preserve all data, audit,
+receipts and migration history. Do not delete trades or reverse historical SQL.
