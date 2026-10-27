@@ -1335,7 +1335,7 @@ BEGIN
     LIMIT 1;
 
     IF v_expected_project IS NULL OR length(trim(v_expected_project)) = 0 THEN
-      v_expected_project := pg_catalog.nullif(pg_catalog.current_setting('app.supabase_project_ref', true), '');
+      v_expected_project := NULLIF(pg_catalog.current_setting('app.supabase_project_ref', true), '');
     END IF;
 
     IF v_expected_project IS NULL OR length(trim(v_expected_project)) = 0 THEN
