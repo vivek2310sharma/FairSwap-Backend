@@ -127,3 +127,20 @@ verify_jwt = true
 [functions.moderation-v2-image-shadow-probe]
 verify_jwt = true
 
+# FairSwap IDV-V1: Authenticated user gateway policies for DigiLocker identity functions
+[functions.idv-start]
+verify_jwt = true
+
+[functions.idv-status]
+verify_jwt = true
+
+[functions.idv-complete]
+verify_jwt = true
+
+[functions.idv-withdraw]
+verify_jwt = true
+
+# FairSwap IDV-V1: Scheduled / authorized revocation worker gateway policy
+[functions.idv-revocation-worker]
+verify_jwt = false
+
