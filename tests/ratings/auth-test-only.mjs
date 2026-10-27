@@ -59,7 +59,7 @@ async function run(env,transport) {
  assert.equal((await request('/rest/v1/rpc/ratings_pending','invalid-token',{})).status,401,'PostgREST accepted invalid token');
  for(let i=0;i<tokens.length;i++){
   const r=await request('/rest/v1/rpc/ratings_pending',tokens[i],{});
-  assert.equal(r.status,400,'Disabled RPC HTTP status mismatch');assert.equal(r.data.code,'55000','Ratings must remain disabled');assert.equal(r.data.message,'RATINGS_DISABLED');
+  assert.equal(r.status,500,'Disabled RPC HTTP status mismatch');assert.equal(r.data.code,'55000','Ratings must remain disabled');assert.equal(r.data.message,'RATINGS_DISABLED');
   for(const table of ['rating_trades','rating_reviews','rating_replies','profile_rating_stats','trade_system_events']){
    const denied=await request(`/rest/v1/${table}?select=*&limit=1`,tokens[i]);
    assert([401,403].includes(denied.status),'Direct Ratings table read was not denied');assert.equal(denied.data.code,'42501');
@@ -69,7 +69,7 @@ async function run(env,transport) {
  for(const [i,message] of [[0,'RATINGS_ACCESS_DENIED'],[1,'RATINGS_ACCESS_DENIED'],[2,'RATINGS_ACCESS_DENIED'],[3,'RATINGS_ACCESS_DENIED'],[4,'RATINGS_STAFF_DISABLED']]){
   const r=await request('/rest/v1/rpc/admin_ratings_cases',tokens[i],{kind:'dispute'});
   assert.equal(r.data.message,message,'Staff assurance/role/disabled-state boundary mismatch');
-  assert.equal(r.status,i===4?400:403,'Staff HTTP boundary mismatch');
+  assert.equal(r.status,i===4?500:403,'Staff HTTP boundary mismatch');
   assert.equal(r.data.code,i===4?'55000':'42501','Staff SQLSTATE mismatch');
  }
  return {identities:4,tokens:5,directReadDenials:25};

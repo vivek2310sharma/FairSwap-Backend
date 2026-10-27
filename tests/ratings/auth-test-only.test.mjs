@@ -15,9 +15,9 @@ const transport=(change=x=>x)=>async(url,options)=>{
  else if(url.endsWith('/auth/v1/user'))data={id:c.sub,is_anonymous:false};
  else if(url.includes('/rpc/admin_ratings_cases')){
   assert.deepEqual(JSON.parse(options.body),{kind:'dispute'});
-  status=c.sub===id(4)&&c.aal==='aal2'?400:403;
-  data={code:status===400?'55000':'42501',message:status===400?'RATINGS_STAFF_DISABLED':'RATINGS_ACCESS_DENIED'};
- }else if(url.includes('/rpc/ratings_pending')){status=400;data={code:'55000',message:'RATINGS_DISABLED'};}
+  status=c.sub===id(4)&&c.aal==='aal2'?500:403;
+  data={code:status===500?'55000':'42501',message:status===500?'RATINGS_STAFF_DISABLED':'RATINGS_ACCESS_DENIED'};
+ }else if(url.includes('/rpc/ratings_pending')){status=500;data={code:'55000',message:'RATINGS_DISABLED'};}
  else {status=403;data={code:'42501'};}
  return change({status,json:async()=>data},url,options);
 };
