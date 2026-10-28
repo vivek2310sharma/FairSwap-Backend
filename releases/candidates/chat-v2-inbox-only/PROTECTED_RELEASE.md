@@ -1,212 +1,90 @@
-# Protected inbox release — source-only handoff, 26 October 2026
+# Chat V2 foundation: one-dispatch protected release
 
-This supersedes the earlier psql/direct-history operational instructions in PR60.
-The exact original foundation bytes/version remain unchanged. No hosted operation,
-GitHub administration, dispatch, approval or credential transfer occurred here.
+Owner authorization for this release permits existing Supabase credentials, multiple
+deploy tools, no backups, and deployment to both environments. It does not establish
+old-token revocation or exclusive Backend deployment authority. No hosted action was
+performed while preparing these files.
 
-The repository's **public** visibility was verified through read-only GitHub metadata.
-Earlier private-repository plan restrictions in the initial runbook are obsolete.
-Public repositories can use required deployment reviewers; availability is distinct
-from actual configuration. PR60 reports owner-only main updates active and the
-stronger protect-main ruleset disabled. This is PR-reported administration state,
-not an independent audit of all settings. Read-only ruleset responses may omit
-`bypass_actors`; absence never establishes zero bypass permission. Every audit now
-requires the verifiable owner-only, commit/bundle/state/environment/ledger-bound evidence described in
-[ADMIN_ATTESTATION.md](ADMIN_ATTESTATION.md). Forbidden or incomplete APIs still block.
-See [GitHub deployment review](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)
-and [branch protection](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
+## Dispatch and order
 
-## Authority, protections and immutable input
+After ChatGPT reviews and lands the changes with all required branch checks intact,
+the owner dispatches once on main: deploy=true, audit_only=false, approved_sha equal
+to the immutable workflow SHA, and bundle_sha256 from bundleHash() at that commit.
+No ledger inputs, audit preparation run, comment, attestation JSON or successful-run
+rerun is required. Optional audit_only=true remains GET-only and never deploys.
 
-Backend-only release authority remains **unverified/not transferred** per the existing
-cutover runbook. Owner attestation of old token retirement is not independent proof
-of all privileged writers being retired. Repository-level PAT read checks are not
-deployment approval. No normal Web runtime key is changed.
+Order: automatic native PG17/CLI and offline checks -> protected FairSwapTest ->
+automatic Test postflight and receipt -> same-run receipt validation -> protected
+FairSwapProd -> automatic Production postflight and receipt. Existing GitHub
+Environment approval protections still apply independently to each environment;
+there is no additional owner testing or staging sign-off requirement.
 
-Before enabling anything, ChatGPT/owner must configure and independently verify:
+## Variables and credentials
 
-- Mandatory PR creation, zero required independent approvals and stale-review dismissal, existing required CI gates plus
-  `chat-inbox-native-pg17`, zero bypass actors on `protect-main` (`25352225`).
-  The only exception is the exact owner-attested existing RepositoryRole
-  actor 5 / always list on `main-owner-only-updates` (`25821687`), restricted to
-  deletion, non-fast-forward and update rules on main. No PR/CI rule may use it.
-  The complete collaborator inventory must establish vivek2310sharma as the sole
-  administrator. Only that owner may merge main; contributors submit PRs for owner
-  review and merging. Required CI cannot be bypassed. Do not remove other checks.
-- Environments named exactly `FairSwapTest` and `FairSwapProd`: required reviewers,
-  exactly the owner as a User, owner self-review allowed, administrator bypass
-  prohibited and only the `main` branch allowed.
-- Distinct environment secrets `CHAT_DATABASE_PASSWORD` and
-  `CHAT_RELEASE_AUDIT_TOKEN`; neither name may exist at repository scope. The audit
-  identity needs read-only administration/rules/environment and secret-name metadata
-  access, never secret values. It must not have source/write/deploy permissions.
-  Missing scope, incomplete pagination, 403/404 or absent reviewers remain blockers.
-  Omitted bypass lists require explicit owner-approved lists: the exact
-  owner-update tuple above, and an empty list for `protect-main`. Unrecognized
-  rulesets, changed scope/rule types/actor/mode, or other bypasses are rejected.
-- Environment variables `CHAT_INBOX_ENVIRONMENT_ENABLED=true` only after authority
-  transfer; `CHAT_WEB_FLAG_OFF_CONFIRMED=true` backed by immutable Web off-state
-  evidence; `CHAT_BACKEND_AUTHORITY_RECEIPT` pointing to the reviewed cutover receipt;
-  `CHAT_APPROVED_LEDGER_JSON` containing only the freshly reviewed metadata defined
-  in the original ledger capture contract. No passwords/tokens belong in variables.
+- Keep repository variable CHAT_INBOX_RELEASE_ENABLED=true for the authorized
+  release (default absent/false otherwise).
+- Keep environment variables CHAT_INBOX_ENVIRONMENT_ENABLED=true and
+  CHAT_WEB_FLAG_OFF_CONFIRMED=true in both environments. The Web confirmation must
+  reflect the deployed Web flag being OFF; the Backend does not inspect or alter Web.
+- Keep existing environment-only secrets CHAT_DATABASE_PASSWORD and
+  CHAT_RELEASE_AUDIT_TOKEN. No Supabase credential rotation or new secret is needed.
+- Remove obsolete environment variables CHAT_APPROVED_LEDGER_JSON,
+  CHAT_RELEASE_ADMIN_ATTESTATION_JSON and CHAT_BACKEND_AUTHORITY_RECEIPT.
+- Add variables: none. Remove dispatch inputs test_ledger_sha256/prod_ledger_sha256.
 
-The repository variable `CHAT_INBOX_RELEASE_ENABLED` must remain absent/false by
-default. Manual dispatch `deploy` defaults false. Dispatch must target main, and
-`approved_sha` must equal the immutable workflow SHA. Checkouts use that SHA with
-persisted credentials disabled. All Actions are SHA-pinned; dependency installs
-disable lifecycle scripts and precede the credential-bearing step.
+The audit identity needs complete live read access to repository/collaborator,
+ruleset (including bypass lists), environment/branch and secret-name metadata.
+Omitted bypass lists, denied APIs or incomplete pagination are genuine unverifiable
+protection failures, never substituted with comments or presumed empty lists.
+Keep main-only environments, sole-owner reviewers, self-review allowed,
+administrator bypass disabled, both existing rulesets and every required CI check.
+No source code in this release changes GitHub configuration or removes checks.
 
-The existing non-secret owner-attestation reference remains
-`CHAT_RELEASE_ADMIN_ATTESTATION_JSON`, separately scoped to Test and Prod.
-It binds the exact workflow commit, bundle, effective main rules, environment
-approvals, secret-name scope, all effective ruleset versions and exact allowed bypass lists.
-Only the real owner authors the V2 attestation; the GET-only audit checks the
-owner identity, complete collaborator inventory and exact unedited statement.
-No second administrator or reviewer is required or fabricated. Evidence
-expires within 24 hours. No token requires Administration write permission.
-No database migration or persistent environment variable is added. The existing
-attestation reference now requires the explicitly versioned owner-only V2 schema. See ADMIN_ATTESTATION.md for the exact policy and fresh-proof procedure.
+## History, identity and atomic execution
 
-For protection verification only, dispatch `audit_only=true`, `deploy=false`, with
-the reviewed `approved_sha`, `bundle_sha256` and both environment ledger hashes.
-Both github.actor and github.triggering_actor must be vivek2310sharma for every
-manual job, and runtime entrypoints independently enforce the same owner context.
-`audit_verify` checks the immutable bundle and automated audit tests without secrets.
-`audit_test` and then `audit_production` each require their own protected environment
-owner approval and expose only that environment's audit token and non-secret
-approved ledger metadata to the audit entrypoint.
-They never receive a database password, install the Supabase CLI, import a migration
-runner, access a database, change flags or produce a deployment receipt. The initial
-`UNAPPROVED_SNAPSHOT` digest output is preparation metadata, never verification. A
-missing attestation fails the job. Only the final `status=verified` result is a
-successful protection audit; it makes no claim about hosted database/Web flag state.
-Both dispatch modes default false and are mutually exclusive. A release still
-requires `deploy=true`, `audit_only=false` and every existing default-off release gate.
+No new migration or reviewed SQL source change. Reuse source version 20261025204922
+and its pinned original SHA. The source/bundle hashes, PG17 requirement, fixed
+project identities and verify-full TLS remain mandatory. Before planning each
+environment, a read-only repeatable-read transaction captures its current complete
+version/name/statement-array hashes; no historical SQL or user data enters artifacts.
+The snapshot is validated for the expected project, source base, freshness and
+ledger shape. Existing candidate history requires protected recovery, never replay.
 
-Compute `bundleHash()` from `scripts/release/protected-inbox-release.mjs` at the
-final reviewed commit. `protected-files.json` binds the complete release/security
-source set, candidate, legacy contracts and toolchain; dispatch its SHA-256 as
-`bundle_sha256`. Separately review the raw Test and Prod ledger JSON SHA-256 values
-and supply their corresponding dispatch inputs. Exact metadata bytes are checked
-against protected environment variables. These hashes do not replace human approval.
+CLI 2.117.0 fetches genuine applied history into a private isolated PG17 workspace.
+Exact ledger checks run before and after fetch, again under the transaction-scoped
+history lock in the pending execution, and after apply. Concurrent/history drift,
+missing or extra fetched versions, dependency/catalog/identity failures and partial
+or foreign candidate state block release. The CLI owns atomic schema/history
+recording; no manual insert, repair, fabricated history, raw-directory db push or
+replacement migration version is allowed. Private fetched SQL is deleted afterward.
 
-## Native verification and supported migration history
+Production downloads the Test artifact by its trusted job output ID, verifies
+SHA256SUMS and the independently supplied receipt digest, then validates schema 3,
+owner actors, source/bundle, run ID/attempt, source version, CLI/PG17, execution,
+protection/history hashes, five OFF flags, Web OFF confirmation and captured Test
+ledger digest from the trusted Test job output before Production API/database access.
+Receipts contain only sanitized metadata/hashes and use exclusive-create files and
+unique run/attempt artifacts with overwrite=false and 90-day retention.
 
-The new secret-free native lane is separate from every existing Backend workflow,
-test count and package/toolchain pin. It builds PostgreSQL 17.6 from its pinned
-official archive/checksum into an ephemeral private directory. It initializes its
-own fixture cluster with loopback/private socket access, never a hosted target.
-The existing PR-triggered `chat-inbox-native-pg17` check also runs
-`readonly-audit.test.mjs` alongside its existing protected-release suite, without
-changing the check name, triggers, permissions or native database test step.
+## Production verification and rollback
 
-It tests actual role/RLS denial, disabled flags, existing policy-aware send/read
-functions, idempotent retry, blocked sends/history, unread/peer cursors, seller
-grouping beyond 50 enquiries and tied-cursor drilldown. It also runs pinned Supabase
-CLI 2.117.0 `migration up` in an isolated one-file workspace. A deliberately failing
-migration must roll back both schema and history. A successful older-version
-candidate must apply with `--include-all` while preserving an already-recorded
-later version. The native postflight checks the resulting CLI ledger and catalog.
-Any unsupported CLI behavior blocks the release verification job.
+Automatic postflight must prove PG17, exact unchanged noncandidate history,
+CLI-recorded version/name/nonempty statements and execution marker, expected
+function bodies/owners/security modes, grants, participant RLS, indexes, empty
+safety state, no new worker runtime and all five database flags OFF: inbox,
+safety_warnings, rich_media, meetup_pin, seller_sale_flow. Web Chat stays OFF.
+No schedulers, workers or feature activation are deployed. ChatGPT checks the
+successful Production job and sanitized receipt for the approved SHA/bundle/run,
+version, history/ledger hashes and OFF evidence; no manual/exploratory testing.
+Hosted results remain NOT RUN until orchestration actually executes.
 
-The operational path **does not insert or repair migration history directly**.
-The old `render().apply` remains only for unchanged offline regression fixtures;
-its CLI artifact exporter and old apply entrypoints are retired/fail closed.
-The protected path renders reviewed identity/full-ledger guards, the unchanged
-foundation inner DDL, and catalog/off-state checks into a single execution file with
-the original version/name. The supported CLI owns history recording. Source SHA and
-rendered execution SHA are distinct and both recorded: CLI history contains its
-serialization of the guarded execution, not the earlier one-element raw source.
-See [Supabase migration up and repair](https://supabase.com/docs/reference/cli/supabase-migration-up).
-Do not use `db push`, raw mixed historical directories, automatic `repair`, fabricated
-historical files or a second timestamp for this foundation.
+Rollback: disable Chat flags, git revert/restore previous deployment; retain additive
+schema, messages and migration history (never erase additive history).
 
-Connection uses fixed `db.<expected-ref>.supabase.co`, database/user postgres, port
-5432 and TLS verify-full. Password travels only in process environment; it is never
-in a URI argument, generated SQL, receipt or printed subprocess output. All raw
-subprocess diagnostics are captured and discarded; errors are fixed generic text.
-Direct IPv6 reachability and the CLI's `SUPABASE_DB_PASSWORD` runtime behavior still
-require protected native/hosted execution evidence. Do not weaken TLS or silently
-switch endpoints/credentials if networking or permissions are unavailable.
+A real failure blocks dependent Production work. After an ambiguous apply, use
+protected automated verify/recovery rather than blindly rerunning CREATE statements;
+this is failure recovery, not a required second dispatch on the success path.
 
-## Test before Production, postflight and receipts
-
-The manual release workflow first reruns native verification against the same SHA
-and verifies the approved bundle. Only then can the independently reviewed Test
-environment job run. The release runner checks live GitHub protection metadata
-before any database use, then validates full recent ledger/identity and dependencies,
-executes only the isolated candidate via CLI, and automatically verifies PG17,
-unchanged noncandidate history, CLI version/name/statements, every function body/
-owner/security mode, relevant grants/RLS/indexes, empty safety state, no worker runtime
-and all five flags false. No user/message data is exported.
-
-Only success creates an exclusive-create sanitized receipt and SHA256SUMS containing
-environment, workflow SHA/run/attempt, source/execution/bundle/ledger/history hashes,
-version, flags-off evidence, protection-snapshot/owner-attestation hashes, raw
-approved-ledger hash and original/triggering owner identities in V2 receipts.
-Artifact v4 uses unique run/attempt names, overwrite
-false and 90-day retention. It is immutable within its artifact lifecycle, not
-permanent WORM storage; archive the digest/receipt under approved recovery retention.
-No credentials, SQL, raw ledger, logs, dumps or message contents are uploaded.
-
-Production depends on successful verification **and Test**, downloads the exact
-same-run Test artifact ID, checks file hashes, and revalidates its source SHA, run,
-attempt, candidate/bundle hash and successful off-state status. It then requires
-its own owner environment approval, credentials, fresh owner-attested ledger and
-full postflight. The V2 Test receipt must match the dispatch Test-ledger digest
-before any Production audit API or database use. A
-skipped/failed Test, foreign run/attempt, changed source or forged receipt is rejected.
-
-The Web flag is never changed by Backend code; independently recorded off-state is
-a prerequisite. DB `inbox`, `safety_warnings`, `rich_media`, `meetup_pin` and
-`seller_sale_flow` remain false. Activation requires a later independent release.
-
-## Failure, rollback and recovery
-
-Keep default-off gates and Web inbox disabled on any failure. Do not rerun an
-ambiguous deployment blindly: existing candidate history/objects stop fresh deploy.
-After interruption, a separately protected owner must capture exact ledger and
-identity again, compare candidate/source/execution receipt hashes, verify catalog,
-all five off flags and unchanged historical versions using automated checks.
-If native CLI atomicity holds and neither schema nor row exists, prepare a new
-reviewed snapshot and new run. If both exist, treat schema as installed and produce
-fresh authorized verify-only evidence; do not replay CREATE statements. This workflow
-intentionally does not auto-adopt an installed candidate or issue a replacement
-receipt after an ambiguous failure. Missing/partial/foreign history requires a
-separately reviewed supported Supabase reconciliation plan, never a silent repair.
-
-Non-destructive rollback first disables Web inbox (or restores prior Web deployment),
-then an independently approved Backend operator uses the identity-bound rollback
-SQL available from `buildPlan(...).rollback` to disable only DB inbox. Do not expose
-credentials in commands. Keep all other flags false, retain objects/messages/read
-states/history, and preserve receipts. Unexpected other-flag activation needs a
-separately reviewed combined-release recovery. No database down migration exists.
-
-PR58 compatibility: retain exactly version 20261025204922 and original source bytes;
-future supported CLI version detection skips it. Review guarded-execution history
-and receipts rather than expecting the former custom one-statement serialization.
-Worker/scheduler versions remain separate and are not deployed here.
-
-## Local evidence and outstanding gates
-
-The handoff records actual local results. The Windows PG17 installation lacks
-postgres.bki. The separate disposable WSL Linux PG17.6/CLI 2.117.0 fixture has since
-passed rollback, real CLI history, positive migration, postflight and client RLS
-checks; that local result is not hosted deployment or GitHub CI evidence. SQL fixture
-emulation in PGlite is separately recorded and is not native/CLI proof.
-Protected solo-owner admin/environment settings, live owner attestations, authority transfer, Web off-state,
-backup/recovery evidence and actual Test/Prod automated postflight remain unverified.
-No GitHub workflow dispatch/administration, hosted change or manual test occurred.
-
-The guarded execution includes a source/ledger-bound marker statement. Postflight
-requires that marker in CLI-recorded statements, rejecting a skipped or competing
-installation whose version/name alone matches. This is distinct from and recorded
-alongside the complete rendered execution SHA-256; it is not a credential.
-
-Audit-correction rollback is a Git revert of the audit/workflow correction, without
-changing database state. Any subsequent authorized release remains FairSwapTest then
-automated hosted verification, then FairSwapProd, followed only by independently
-authorized Web inbox activation. Production acceptance covers existing messages,
-participant RLS, migration history, unread/Seen and disabled safety features. Future activation
-rollback remains Web flag OFF, then DB inbox OFF, retaining additive schema, history
-and messages. This source correction neither dispatches nor authorizes a release.
+Owner-reported history difference: FairSwapTest includes DigiLocker version
+20261028091220; FairSwapProd does not. Runtime capture uses each target independently
+and preserves that difference; this task did not query either hosted ledger.

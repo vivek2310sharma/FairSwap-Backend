@@ -1,4 +1,4 @@
-// GET-only policy audit. Omitted privileged fields require independent evidence.
+// GET-only policy audit. Complete privileged metadata is required automatically.
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
@@ -25,7 +25,7 @@ export function bundleHash(){
 const fail=code=>{throw Error(code);};
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const sha=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
-// API timestamps may carry an explicit offset; owner attestations remain UTC-Z only.
+// API timestamps may carry an explicit offset; retain strict calendar/offset checks.
 function apiTimestamp(value){
  if(typeof value!=='string')return null;
  const match=/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d{1,3})?(Z|[+-]\d\d:\d\d)$/.exec(value);
@@ -42,7 +42,6 @@ function apiTimestamp(value){
  const canonical=new Date(instant).toISOString();
  return /^\d{4}-/.test(canonical)?canonical:null;
 }
-const iso=value=>typeof value==='string'&&value.endsWith('Z')&&apiTimestamp(value)!==null;
 const keys=(value,expected)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===[...expected].sort().join(',');
 const ownerRulesetId=25821687,approvalRulesetId=25352225;
 const ownerRuleTypes=['deletion','non_fast_forward','update'];
@@ -62,6 +61,8 @@ function verifyRulesetShape(policy,effectiveRules){
   if(canonicalJson(types(policy.rules))!==canonicalJson(ownerRuleTypes)||canonicalJson(types(effectiveRules))!==canonicalJson(ownerRuleTypes))fail('CHAT_OWNER_UPDATE_RULESET_REQUIRED');
  }else{
   const prs=policy.rules.filter(rule=>rule.type==='pull_request'),checks=policy.rules.filter(rule=>rule.type==='required_status_checks').flatMap(rule=>Array.isArray(rule.parameters?.required_status_checks)?rule.parameters.required_status_checks:[]).map(check=>check?.context);
+  const effectiveChecks=effectiveRules.filter(rule=>rule.type==='required_status_checks').flatMap(rule=>rule.parameters?.required_status_checks??[]).map(check=>check?.context);
+  if(canonicalJson([...checks].sort())!==canonicalJson(effectiveChecks.sort()))fail('CHAT_REQUIRED_CHECKS_DISCREPANCY');
   if(!prs.length||prs.some(rule=>rule.parameters?.required_approving_review_count!==0||rule.parameters.dismiss_stale_reviews_on_push!==true)||!checks.includes('backend-ci-success')||!checks.includes('chat-inbox-native-pg17'))fail('CHAT_BRANCH_APPROVAL_AND_CHECKS_REQUIRED');
  }
 }
@@ -114,42 +115,31 @@ export async function inspectProtection(environment,token,sourceCommit,fetcher=f
  if(!prs.length||prs.some(pr=>pr.parameters?.required_approving_review_count!==0||pr.parameters.dismiss_stale_reviews_on_push!==true)||!checks.includes('backend-ci-success')||!checks.includes('chat-inbox-native-pg17'))fail('CHAT_BRANCH_APPROVAL_AND_CHECKS_REQUIRED');
  // Require provider-supplied IDs on every effective rule; never infer them from source policies.
  if(rules.some(rule=>!id(rule.ruleset_id)))fail('CHAT_EFFECTIVE_RULE_RULESET_ID_REQUIRED');
- const ids=[...new Set(rules.map(rule=>rule.ruleset_id))].sort((a,b)=>a-b),rulesets=[];
+ const ids=[...new Set(rules.map(rule=>rule.ruleset_id))].sort((a,b)=>a-b),rulesets=[];let bypassComplete=true;
  if(canonicalJson(ids)!==canonicalJson([approvalRulesetId,ownerRulesetId]))fail('CHAT_RULESET_UNRECOGNIZED');
  if(rules.some(rule=>['pull_request','required_status_checks'].includes(rule.type)&&rule.ruleset_id!==approvalRulesetId))fail('CHAT_APPROVAL_RULESET_BYPASS_FORBIDDEN');
  for(const rulesetId of ids){
   const policy=await get(`/rulesets/${rulesetId}`);
   if(policy?.id!==rulesetId||policy.enforcement!=='active'||policy.target!=='branch'||!apiTimestamp(policy.updated_at))fail('CHAT_RULESET_METADATA_REQUIRED');
   verifyRulesetShape(policy,rules.filter(rule=>rule.ruleset_id===rulesetId));
-  // Absence proves nothing; visible and attested lists must match the pinned policy.
+  // Omission is recorded truthfully; deployment cannot claim verified bypass privileges.
+  if(!Object.hasOwn(policy,'bypass_actors'))bypassComplete=false;
   if(Object.hasOwn(policy,'bypass_actors')&&canonicalJson(policy.bypass_actors)!==canonicalJson(requiredBypassActors(rulesetId)))fail('CHAT_RULESET_BYPASS_FORBIDDEN');
   const {bypass_actors,_links,...visible}=policy;
-  rulesets.push({id:rulesetId,policySha256:protectionHash(visible),updatedAt:apiTimestamp(policy.updated_at)});
+  rulesets.push({id:rulesetId,policySha256:protectionHash({...visible,bypass_actors}),updatedAt:apiTimestamp(policy.updated_at)});
  }
  const names=list=>{if(list.some(s=>typeof s?.name!=='string'||!/^[A-Z0-9_]+$/.test(s.name))||new Set(list.map(s=>s.name)).size!==list.length)fail('CHAT_ADMIN_PAGINATION_INCOMPLETE');return list.map(s=>s.name).sort();};
  const environmentNames=names(environmentSecrets),repositoryNames=names(repositorySecrets);
  for(const name of ['CHAT_DATABASE_PASSWORD','CHAT_RELEASE_AUDIT_TOKEN'])if(!environmentNames.includes(name)||repositoryNames.includes(name))fail('CHAT_ENVIRONMENT_ONLY_SECRET_REQUIRED');
  const snapshot={repository:{id:repo.id,full_name:repo.full_name,visibility:repo.visibility,default_branch:repo.default_branch,owner:repo.owner},collaborators:inventory,environment,sourceCommit,protectionRules:env.protection_rules,canAdminsBypass:env.can_admins_bypass,deploymentBranchPolicy:env.deployment_branch_policy,branches:policies,environmentSecretNames:environmentNames,repositorySecretNames:repositoryNames,effectiveRules:rules,rulesets};
- return {snapshotSha256:protectionHash(snapshot),rulesets,owner:{login:governanceOwner,id:repo.owner.id}};
+ return {bypassComplete,snapshotSha256:protectionHash(snapshot),rulesets,owner:{login:governanceOwner,id:repo.owner.id}};
 }
-function parseAttestation(raw){
- try{if(typeof raw!=='string'||!raw||raw.length>32000)fail('invalid');return JSON.parse(raw);}catch{fail('CHAT_ADMIN_ATTESTATION_REQUIRED');}
-}
-export async function verifyAdministrativeAttestation(environment,token,evidence,inspection,fetcher=fetch,now=Date.now()){
- const attestation=parseAttestation(evidence.attestationJson),p=attestation?.payload;
- if(!keys(attestation,['payload','attestationCommentId'])||!keys(p,['schema','repository','environment','sourceCommit','bundleSha256','ledgerSha256','snapshotSha256','observedAt','expiresAt','owner','reviewIssue','rulesets'])||p.schema!==2||p.repository!==repository||p.environment!==environment||p.sourceCommit!==evidence.sourceCommit||!sha(p.bundleSha256)||p.bundleSha256!==evidence.bundleSha256||!sha(p.ledgerSha256)||p.ledgerSha256!==evidence.ledgerSha256||!sha(p.snapshotSha256)||p.snapshotSha256!==inspection.snapshotSha256||!keys(p.owner,['login','id'])||canonicalJson(p.owner)!==canonicalJson(inspection.owner)||evidence.actor!==governanceOwner||evidence.triggeringActor!==governanceOwner||!id(p.reviewIssue)||!id(attestation.attestationCommentId))fail('CHAT_ADMIN_ATTESTATION_INVALID');
- if(!iso(p.observedAt)||!iso(p.expiresAt)||Date.parse(p.observedAt)>now||Date.parse(p.expiresAt)<=now||Date.parse(p.expiresAt)<=Date.parse(p.observedAt)||Date.parse(p.expiresAt)-Date.parse(p.observedAt)>86400000)fail('CHAT_ADMIN_ATTESTATION_STALE');
- if(!Array.isArray(p.rulesets)||p.rulesets.length!==inspection.rulesets.length||p.rulesets.some((rule,index)=>!keys(rule,['id','policySha256','updatedAt','bypassActors'])||rule.id!==inspection.rulesets[index].id||canonicalJson(rule.bypassActors)!==canonicalJson(requiredBypassActors(rule.id))||Date.parse(rule.updatedAt)>Date.parse(p.observedAt)||canonicalJson({id:rule.id,policySha256:rule.policySha256,updatedAt:rule.updatedAt})!==canonicalJson(inspection.rulesets[index])))fail('CHAT_ADMIN_ATTESTATION_RULESET_MISMATCH');
- const get=client(token,fetcher),attestationSha256=protectionHash(p);
- const [statement,permission]=await Promise.all([get('/issues/comments/'+attestation.attestationCommentId),get('/collaborators/'+governanceOwner+'/permission')]);
- if(statement?.user?.id!==p.owner.id||statement.user.login!==governanceOwner||statement.user.type!=='User'||permission?.permission!=='admin'||statement.issue_url!==base+'/issues/'+p.reviewIssue||!iso(statement.created_at)||statement.updated_at!==statement.created_at||Date.parse(statement.created_at)<Date.parse(p.observedAt)||Date.parse(statement.created_at)>now||statement.body!=='CHAT_RELEASE_OWNER_ATTESTATION_V2\n'+canonicalJson(p))fail('CHAT_ADMIN_ATTESTATION_REVIEW_REQUIRED');
+// Owner dispatch and the existing protected Environment approval authorize this run.
+export async function auditProtection(environment,token,fetcher=fetch,evidence={}){
+ if(evidence.actor!==governanceOwner||evidence.triggeringActor!==governanceOwner||!sha(evidence.bundleSha256))fail('CHAT_OWNER_DISPATCH_REQUIRED');
+ const inspection=await inspectProtection(environment,token,evidence.sourceCommit,fetcher);
+ if(!inspection.bypassComplete)fail('CHAT_RULESET_BYPASS_UNVERIFIABLE');
  const rechecked=await inspectProtection(environment,token,evidence.sourceCommit,fetcher);
  if(rechecked.snapshotSha256!==inspection.snapshotSha256)fail('CHAT_PROTECTION_CHANGED_DURING_AUDIT');
- if(Date.parse(p.expiresAt)<=Date.now())fail('CHAT_ADMIN_ATTESTATION_STALE');
- return attestationSha256;
-}
-export async function auditProtection(environment,token,fetcher=fetch,evidence={}){
- const inspection=await inspectProtection(environment,token,evidence.sourceCommit,fetcher);
- const attestationSha256=await verifyAdministrativeAttestation(environment,token,evidence,inspection,fetcher);
- return {environment,public:true,protected:true,sourceCommit:evidence.sourceCommit,snapshotSha256:inspection.snapshotSha256,attestationSha256};
+ return {environment,public:true,protected:true,sourceCommit:evidence.sourceCommit,snapshotSha256:inspection.snapshotSha256};
 }
