@@ -6,6 +6,7 @@ export const idvEnvConfigSchema = z.object({
   SUPABASE_URL: z.string().url("SUPABASE_URL must be a valid URL"),
   SUPABASE_PROJECT_REF: z.string().min(1),
   SETU_ENVIRONMENT: z.enum(["sandbox", "production"]),
+  SETU_ALLOW_SANDBOX_ON_PROD: z.string().optional().default("false").transform((v) => v.toLowerCase() === "true"),
   SETU_CLIENT_ID: z.string().optional().default(""),
   SETU_CLIENT_SECRET: z.string().optional().default(""),
   SETU_PRODUCT_INSTANCE_ID: z.string().optional().default(""),
@@ -14,7 +15,11 @@ export const idvEnvConfigSchema = z.object({
 }).superRefine((data, ctx) => {
   // Bind Supabase project identity, Setu environment, API base URL and approved callback origin.
   // - FairSwapTest wpppxlnbzqynvhpeuavd: Setu sandbox only.
-  // - FairSwapProd kriuhwppxgxsyyrbjsau: Setu production only.
+  // - FairSwapProd kriuhwppxgxsyyrbjsau: Setu production only, unless explicit default-off SETU_ALLOW_SANDBOX_ON_PROD=true is set.
+  const isApprovedStagingRedirect =
+    data.SETU_REDIRECT_BASE_URL === "https://fair-swap-git-staging-fairswap.vercel.app/account/verification" ||
+    data.SETU_REDIRECT_BASE_URL === "https://fairswap-web-git-staging-fairswap.vercel.app/account/verification";
+
   if (data.SUPABASE_PROJECT_REF === "wpppxlnbzqynvhpeuavd") {
     if (data.SETU_ENVIRONMENT !== "sandbox") {
       ctx.addIssue({
@@ -30,27 +35,45 @@ export const idvEnvConfigSchema = z.object({
         path: ["SETU_API_BASE_URL"],
       });
     }
-    if (data.SETU_REDIRECT_BASE_URL !== "https://fair-swap-git-staging-fairswap.vercel.app/account/verification") {
+    if (!isApprovedStagingRedirect) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "SETU_REDIRECT_BASE_URL must be https://fair-swap-git-staging-fairswap.vercel.app/account/verification for FairSwapTest sandbox",
+        message: "SETU_REDIRECT_BASE_URL must be an approved staging verification URL for FairSwapTest sandbox",
         path: ["SETU_REDIRECT_BASE_URL"],
       });
     }
   } else if (data.SUPABASE_PROJECT_REF === "kriuhwppxgxsyyrbjsau") {
-    if (data.SETU_ENVIRONMENT !== "production") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "FairSwapProd (kriuhwppxgxsyyrbjsau) must use Setu production environment only",
-        path: ["SETU_ENVIRONMENT"],
-      });
-    }
-    if (data.SETU_API_BASE_URL !== "https://dg.setu.co") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "SETU_API_BASE_URL must be https://dg.setu.co for FairSwapProd production",
-        path: ["SETU_API_BASE_URL"],
-      });
+    if (data.SETU_ALLOW_SANDBOX_ON_PROD) {
+      // Production sandbox compatibility mode: allow Setu sandbox credentials and sandbox endpoints on FairSwapProd
+      if (data.SETU_ENVIRONMENT !== "sandbox") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "FairSwapProd with SETU_ALLOW_SANDBOX_ON_PROD=true must specify SETU_ENVIRONMENT=sandbox",
+          path: ["SETU_ENVIRONMENT"],
+        });
+      }
+      if (data.SETU_API_BASE_URL !== "https://dg-sandbox.setu.co") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "SETU_API_BASE_URL must be https://dg-sandbox.setu.co when SETU_ALLOW_SANDBOX_ON_PROD=true (never send sandbox credentials to production endpoint)",
+          path: ["SETU_API_BASE_URL"],
+        });
+      }
+    } else {
+      if (data.SETU_ENVIRONMENT !== "production") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "FairSwapProd (kriuhwppxgxsyyrbjsau) must use Setu production environment only (or set SETU_ALLOW_SANDBOX_ON_PROD=true)",
+          path: ["SETU_ENVIRONMENT"],
+        });
+      }
+      if (data.SETU_API_BASE_URL !== "https://dg.setu.co") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "SETU_API_BASE_URL must be https://dg.setu.co for FairSwapProd production",
+          path: ["SETU_API_BASE_URL"],
+        });
+      }
     }
     if (data.SETU_REDIRECT_BASE_URL !== "https://fairswap.in/account/verification") {
       ctx.addIssue({
@@ -135,6 +158,7 @@ export function readIdvEnvConfig(env: Record<string, string | undefined>): IdvEn
     SUPABASE_URL: supabaseUrl,
     SUPABASE_PROJECT_REF: projectRef,
     SETU_ENVIRONMENT: env["SETU_ENVIRONMENT"],
+    SETU_ALLOW_SANDBOX_ON_PROD: env["SETU_ALLOW_SANDBOX_ON_PROD"] || "false",
     SETU_CLIENT_ID: env["SETU_CLIENT_ID"] || "",
     SETU_CLIENT_SECRET: env["SETU_CLIENT_SECRET"] || "",
     SETU_PRODUCT_INSTANCE_ID: env["SETU_PRODUCT_INSTANCE_ID"] || "",
