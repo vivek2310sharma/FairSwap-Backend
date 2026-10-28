@@ -40,7 +40,10 @@ PG17, unchanged prior history, CLI candidate history/execution marker, expected
 RLS/grants/catalog and OFF evidence in the successful automated receipt.
 Hosted acceptance remains NOT RUN until the protected workflow executes.
 
-Variables to add: none. Retain CHAT_INBOX_RELEASE_ENABLED,
+Add required CHAT_DB_POOLER_HOST independently to FairSwapTest and FairSwapProd,
+using each project's raw Session pooler hostname. Both clients use port 5432,
+postgres.<expected-project-ref> and verified TLS; retain existing passwords.
+Retain CHAT_INBOX_RELEASE_ENABLED,
 CHAT_INBOX_ENVIRONMENT_ENABLED and CHAT_WEB_FLAG_OFF_CONFIRMED; remove obsolete
 CHAT_APPROVED_LEDGER_JSON, CHAT_RELEASE_ADMIN_ATTESTATION_JSON and
 CHAT_BACKEND_AUTHORITY_RECEIPT. Retain environment-only CHAT_DATABASE_PASSWORD and
