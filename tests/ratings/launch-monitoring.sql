@@ -2,6 +2,7 @@
 -- Run separately against an independently verified project; this is not a deploy script.
 begin isolation level repeatable read read only;
 set local statement_timeout='15s';
+select app_security.ratings_operational_health() as aggregate_alert_conditions;
 select enabled,public_reads,jobs_enabled,staff_enabled,min_reviews,
  min_reviews<>3 as threshold_configuration_alert from app_security.ratings_settings;
 select count(*)<>2 as missing_jobs_alert,

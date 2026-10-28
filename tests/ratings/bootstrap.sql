@@ -16,5 +16,6 @@ create schema cron;
 create schema vault;
 create table vault.decrypted_secrets(name text,decrypted_secret text);
 create table cron.job(jobid bigserial primary key,jobname text unique,schedule text,command text,active boolean default true);
+create table cron.job_run_details(jobid bigint,runid bigserial,status text,start_time timestamptz,end_time timestamptz);
 create function cron.schedule(text,text,text) returns bigint language plpgsql as $$declare j bigint; begin insert into cron.job(jobname,schedule,command) values($1,$2,$3) on conflict(jobname) do update set schedule=excluded.schedule,command=excluded.command returning jobid into j;return j;end$$;
 create function cron.alter_job(job_id bigint,active boolean) returns void language sql as $$update cron.job set active=$2 where jobid=$1$$;
