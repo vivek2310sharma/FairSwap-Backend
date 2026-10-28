@@ -7,6 +7,19 @@ import {buildPlan,hash,classifyCliFailure,verifyHistoryWorkspace,historyCaptureS
 import {manifest} from './chat-v2-inbox-only.mjs';
 import {auditProtection,bundleHash,requireOwnerActors,governanceOwner} from './inbox-protection.mjs';
 export {bundleHash} from './inbox-protection.mjs';
+// Shared session pooler only: raw hostname, fixed mode/port and project identity.
+export function databaseConnection(environment,context){
+ const ref=manifest.environments[environment]?.projectRef;
+ if(!ref)throw Error('CHAT_ENVIRONMENT_REQUIRED');
+ const host=context.CHAT_DB_POOLER_HOST;
+ if(typeof host!=='string'||host.length===0)throw Error('CHAT_DB_POOLER_HOST_REQUIRED');
+ if(host.length>253||!/^aws-[0-9]+-[a-z0-9]+(?:-[a-z0-9]+)*\.pooler\.supabase\.com$/.test(host))throw Error('CHAT_DB_POOLER_HOST_INVALID');
+ if(typeof context.CHAT_DATABASE_PASSWORD!=='string'||!context.CHAT_DATABASE_PASSWORD)throw Error('CHAT_DATABASE_PASSWORD_REQUIRED');
+ const user=`postgres.${ref}`,rootCert='/etc/ssl/certs/ca-certificates.crt';
+ const connection=`postgresql://${user}@${host}:5432/postgres?sslmode=verify-full&sslrootcert=${rootCert}&connect_timeout=10`;
+ const env={PATH:context.PATH,HOME:context.HOME,PGHOST:host,PGPORT:'5432',PGUSER:user,PGDATABASE:'postgres',PGSSLMODE:'verify-full',PGSSLROOTCERT:rootCert,PGCONNECT_TIMEOUT:'10',PGPASSWORD:context.CHAT_DATABASE_PASSWORD,SUPABASE_DB_PASSWORD:context.CHAT_DATABASE_PASSWORD,NO_COLOR:'1'};
+ return {connection,env};
+}
 export function verifyTestReceipt(receipt,expected){
  if(receipt?.schema!==3||receipt.environment!=='FairSwapTest'||receipt.status!=='verified'||receipt.sourceCommit!==expected.sha||receipt.runId!==expected.runId||receipt.runAttempt!==expected.runAttempt||receipt.bundleSha256!==expected.bundle||receipt.sourceSha256!==manifest.sha256||receipt.flagsOff!==5||receipt.webFlagOffConfirmed!==true||receipt.version!==manifest.version||receipt.cliVersion!=='2.117.0'||Math.floor(receipt.postgresVersionNum/10000)!==17||!/^[a-f0-9]{64}$/.test(receipt.historySha256)||!/^[a-f0-9]{64}$/.test(receipt.protectionSnapshotSha256)||!/^[a-f0-9]{64}$/.test(receipt.executionSha256)||!/^[a-f0-9]{64}$/.test(expected.testLedgerSha256??'')||receipt.capturedLedgerSha256!==expected.testLedgerSha256||receipt.governanceOwner!==governanceOwner||receipt.actor!==governanceOwner||receipt.triggeringActor!==governanceOwner)throw Error('CHAT_SAME_RUN_TEST_EVIDENCE_REQUIRED');
 }
@@ -16,11 +29,10 @@ export async function release(environment,bundle,testLedgerHash,{context=process
  if(!name||context.GITHUB_REPOSITORY!=='vivek2310sharma/FairSwap-Backend'||context.GITHUB_REF!=='refs/heads/main'||context.CHAT_RELEASE_ENABLED!=='true'||context.CHAT_ENVIRONMENT_ENABLED!=='true'||context.CHAT_WEB_FLAG_OFF_CONFIRMED!=='true')throw Error('CHAT_OWNER_AUTHORIZATION_REQUIRED');
  if(!/^[1-9][0-9]*$/.test(context.GITHUB_RUN_ID??'')||!/^[1-9][0-9]*$/.test(context.GITHUB_RUN_ATTEMPT??'')||!/^[a-f0-9]{40}$/.test(context.GITHUB_SHA??'')||bundleHash()!==bundle||!context.CHAT_DATABASE_PASSWORD)throw Error('CHAT_IMMUTABLE_INPUT_REQUIRED');
  if(environment==='fairswapprod')verifyTestReceipt(JSON.parse(readFileSync(resolve('test-evidence/receipt.json'),'utf8')),{sha:context.GITHUB_SHA,runId:context.GITHUB_RUN_ID,runAttempt:context.GITHUB_RUN_ATTEMPT,bundle,testLedgerSha256:testLedgerHash});
+ const {connection,env}=databaseConnection(environment,context);
  const protection=await auditProtection(name,context.CHAT_RELEASE_AUDIT_TOKEN,fetcher,{sourceCommit:context.GITHUB_SHA,bundleSha256:bundle,actor:context.GITHUB_ACTOR,triggeringActor:context.GITHUB_TRIGGERING_ACTOR});
 
- const ref=manifest.environments[environment].projectRef,host=`db.${ref}.supabase.co`;
- const env={PATH:context.PATH,HOME:context.HOME,PGHOST:host,PGPORT:'5432',PGUSER:'postgres',PGDATABASE:'postgres',PGSSLMODE:'verify-full',PGCONNECT_TIMEOUT:'10',PGPASSWORD:context.CHAT_DATABASE_PASSWORD,SUPABASE_DB_PASSWORD:context.CHAT_DATABASE_PASSWORD,NO_COLOR:'1'};
- const run=(binary,args,input)=>{try{if(runner)return runner(binary,args,input);return execFileSync(binary,args,{input,env,encoding:'utf8',stdio:['pipe','pipe','pipe'],timeout:120000,maxBuffer:2e6});}catch(error){throw Error(`CHAT_SUBPROCESS_${classifyCliFailure(String(error.stdout??'')+'\n'+String(error.stderr??''))}_RECOVERY_REVIEW`);}};
+ const run=(binary,args,input)=>{try{if(runner)return runner(binary,args,input,env);return execFileSync(binary,args,{input,env,encoding:'utf8',stdio:['pipe','pipe','pipe'],timeout:120000,maxBuffer:2e6});}catch(error){throw Error(`CHAT_SUBPROCESS_${classifyCliFailure(String(error.stdout??'')+'\n'+String(error.stderr??'')+'\n'+String(error.code??''))}_RECOVERY_REVIEW`);}};
  if(run('supabase',['--version']).trim().split('\n')[0]!=='2.117.0')throw Error('CHAT_CLI_PIN_MISMATCH');
  const help=run('supabase',['migration','up','--help']);if(!help.includes('--include-all')||!help.includes('--db-url'))throw Error('CHAT_CLI_CONTRACT_CHANGED');
  const fetchHelp=run('supabase',['migration','fetch','--help']);if(!fetchHelp.includes('--db-url'))throw Error('CHAT_CLI_CONTRACT_CHANGED');
@@ -32,7 +44,6 @@ export async function release(environment,bundle,testLedgerHash,{context=process
  writeFileSync(join(isolated,'supabase/config.toml'),'project_id="chat-inbox-isolated"\n[db]\nmajor_version=17\n');
  // Fetch only already-recorded history into private files; never repair or fabricate it.
  // All remote versions must be present locally even when migration up uses --include-all.
- const connection=`postgresql://postgres@${host}:5432/postgres?sslmode=verify-full`;
  run('supabase',['migration','fetch','--db-url',connection,'--workdir',isolated]);
  const approvedLedger=snapshot.ledger;
  verifyHistoryWorkspace(isolated,approvedLedger);
