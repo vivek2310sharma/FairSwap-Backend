@@ -1,0 +1,89 @@
+{
+  "release": "idv-digilocker-v1",
+  "receipt_kind": "verified_hosted_db_and_edge_dark_launch",
+  "recorded_date": "2026-10-28",
+  "code_source_commit": "5160200b6f6ebc38b96789ef15a80cc46646d141",
+  "migration_source": {
+    "file": "supabase/forward-migrations/idv/20261026183000_idv_digilocker_foundation.sql",
+    "source_file_version": "20261026183000",
+    "sha256": "1ed7194418c39bda34ce692937b51946a00326591d3a18a28a0d45a14dc85f23",
+    "migration_name_on_host": "idv_digilocker_foundation_v1",
+    "apply_method": "Supabase project-scoped apply_migration",
+    "caution": "Hosted migration IDs differ from source filename. Do not replay this SQL or use migration repair to fabricate the source-file version."
+  },
+  "deployments": {
+    "FairSwapTest": {
+      "project_ref": "wpppxlnbzqynvhpeuavd",
+      "previous_count": 93,
+      "applied_hosted_version": "20261028091220",
+      "post_count": 94,
+      "rls_tables": 4,
+      "issued_badges": 0,
+      "identity_records": 0,
+      "attempts": 0,
+      "audit_events": 0,
+      "revocation_scheduler_jobs": 0,
+      "worker_vault_entries": 0
+    },
+    "FairSwapProd": {
+      "project_ref": "kriuhwppxgxsyyrbjsau",
+      "previous_count": 77,
+      "applied_hosted_version": "20261028095605",
+      "post_count": 78,
+      "rls_tables": 4,
+      "issued_badges": 0,
+      "identity_records": 0,
+      "attempts": 0,
+      "audit_events": 0,
+      "revocation_scheduler_jobs": 0,
+      "worker_vault_entries": 0
+    }
+  },
+  "edge_functions": {
+    "source_commit": "5160200b6f6ebc38b96789ef15a80cc46646d141",
+    "functions": [
+      {
+        "name": "idv-start",
+        "version": 1,
+        "verify_jwt": true,
+        "build_sha256": "5f970df88e67f9c9ee9d2117c0a92f34f56cfb68aa29b4dad0e8cfb4add931d6"
+      },
+      {
+        "name": "idv-status",
+        "version": 1,
+        "verify_jwt": true,
+        "build_sha256": "f7f331d21bcde2043a0b1f159aabdab75115f5169aba760bf77cf5122f51320b"
+      },
+      {
+        "name": "idv-complete",
+        "version": 1,
+        "verify_jwt": true,
+        "build_sha256": "30fae6d47e880c1df3adcb5bcd9e8a2197f56a087a573925ab7b636b170d71a7"
+      },
+      {
+        "name": "idv-withdraw",
+        "version": 1,
+        "verify_jwt": true,
+        "build_sha256": "f00359f132d8fec74885f153d559cfaef2c504c46bfc28eafe5fb2d7df216826"
+      },
+      {
+        "name": "idv-revocation-worker",
+        "version": 1,
+        "verify_jwt": false,
+        "build_sha256": "2f52adba7f0e46c18c6dc1257e0a6e92ff1b61fafe0874ec8ef5bf3cd8d2b845"
+      }
+    ],
+    "status": "ACTIVE in both FairSwapTest and FairSwapProd"
+  },
+  "operational_readiness": {
+    "identity_issuance_authorized": false,
+    "Setu_calls_authorized": false,
+    "feature_flag_expected": "FAIRSWAP_IDV_ENABLED=false (source default; hosted Edge secret configuration is not readable through this connector)",
+    "unsupported_document_authenticity": "contentAuthSupported=false",
+    "provider_secrets": "not provisioned or verified in this release",
+    "revocation_worker_secret_and_vault": "not provisioned or verified",
+    "revocation_scheduler": "not activated in either project",
+    "note": "Schema and functions deployed dark. Not ready for real provider identity sessions or revocation processing until securely configured."
+  },
+  "rollback": "Keep verification disabled; revert GitHub/Vercel application deployments if needed. Preserve hosted IDV tables, consent audit history, and revocation queue."
+}

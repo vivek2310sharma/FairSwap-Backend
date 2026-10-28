@@ -1,0 +1,67 @@
+{
+  "release": "idv-digilocker-v1",
+  "generated_at": "2026-10-27T00:12:00Z",
+  "feature": "FairSwap DigiLocker Identity Verification V1",
+  "target_environment": "FairSwapProd",
+  "project_ref": "kriuhwppxgxsyyrbjsau",
+  "baseline_applied_migrations_count": 77,
+  "latest_applied_migration_version": "20261026094908",
+  "forward_migration": {
+    "version": "20261026183000",
+    "name": "idv_digilocker_foundation",
+    "relative_path": "supabase/forward-migrations/idv/20261026183000_idv_digilocker_foundation.sql",
+    "sha256": "1ed7194418c39bda34ce692937b51946a00326591d3a18a28a0d45a14dc85f23"
+  },
+  "tables_created": [
+    "public.user_identity_verifications",
+    "app_security.idv_verification_attempts",
+    "app_security.idv_identity_records",
+    "app_security.idv_audit_events"
+  ],
+  "rpcs_created": [
+    "app_security.impl_idv_start_attempt",
+    "app_security.impl_idv_attach_provider_session",
+    "app_security.impl_idv_complete_verification",
+    "app_security.impl_idv_withdraw_consent",
+    "app_security.impl_admin_revoke_verification",
+    "public.admin_revoke_verification",
+    "public.get_my_identity_verification",
+    "public.server_idv_start_attempt",
+    "public.server_idv_attach_provider_session",
+    "public.server_idv_complete_verification",
+    "public.server_idv_withdraw_consent",
+    "public.server_idv_get_attempt_for_completion",
+    "public.server_idv_get_latest_attempt",
+    "public.server_idv_record_token_revoked",
+    "public.server_idv_record_token_revocation_failed",
+    "public.server_idv_get_pending_revocation_retries",
+    "public.server_idv_claim_revocation_retries"
+  ],
+  "edge_functions": [
+    "idv-start",
+    "idv-status",
+    "idv-complete",
+    "idv-withdraw",
+    "idv-revocation-worker"
+  ],
+  "environment_configuration": {
+    "FAIRSWAP_IDV_ENABLED": "false",
+    "SETU_ENVIRONMENT": "production",
+    "SETU_API_BASE_URL": "https://dg.setu.co",
+    "SETU_REDIRECT_BASE_URL": "https://fairswap.in/account/verification",
+    "SETU_CLIENT_ID": "PENDING_PROVISIONING",
+    "SETU_CLIENT_SECRET": "PENDING_PROVISIONING",
+    "SETU_PRODUCT_INSTANCE_ID": "PENDING_PROVISIONING"
+  },
+  "deployment_guard": {
+    "raw_db_push_forbidden": true,
+    "applied_via": "Supabase managed project-scoped forward migration CLI or migration ledger endpoint with isolated 77-version verification"
+  },
+  "rollback": {
+    "order": [
+      "1. Keep FAIRSWAP_IDV_ENABLED=false (immediately turns off all user entrypoints)",
+      "2. Provider revocation processing remains available while pending revocations exist (do not prematurely terminate worker or drop queue)",
+      "3. Do not drop shared security schemas (e.g. app_security) or destroy existing audit records"
+    ]
+  }
+}

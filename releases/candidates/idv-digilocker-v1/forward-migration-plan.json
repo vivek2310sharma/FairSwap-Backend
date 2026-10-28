@@ -1,0 +1,44 @@
+{
+  "name": "idv-digilocker-v1",
+  "version": "1.0.0",
+  "generated_at": "2026-10-26T23:50:00Z",
+  "description": "Forward-only identity verification V1 schema for FairSwap India",
+  "staging": {
+    "project_ref": "wpppxlnbzqynvhpeuavd",
+    "migration_file": "supabase/forward-migrations/idv/20261026183000_idv_digilocker_foundation.sql",
+    "target_version": "20261026183000",
+    "expected_tables": [
+      "public.user_identity_verifications",
+      "app_security.idv_verification_attempts",
+      "app_security.idv_identity_records",
+      "app_security.idv_audit_events"
+    ]
+  },
+  "production": {
+    "project_ref": "kriuhwppxgxsyyrbjsau",
+    "migration_file": "supabase/forward-migrations/idv/20261026183000_idv_digilocker_foundation.sql",
+    "target_version": "20261026183000",
+    "expected_tables": [
+      "public.user_identity_verifications",
+      "app_security.idv_verification_attempts",
+      "app_security.idv_identity_records",
+      "app_security.idv_audit_events"
+    ]
+  },
+  "edge_functions": [
+    "idv-start",
+    "idv-status",
+    "idv-complete",
+    "idv-withdraw",
+    "idv-revocation-worker"
+  ],
+  "feature_gates": {
+    "FAIRSWAP_IDV_ENABLED": false
+  },
+  "rollback_order": [
+    "1. Maintain FAIRSWAP_IDV_ENABLED=false (Default OFF immediately prevents user interaction across all clients)",
+    "2. Never unschedule revocation processing while outstanding provider revocations exist (ensure pending Setu revocations drain cleanly)",
+    "3. Never drop app_security or delete IDV audit data as a normal rollback (preserves immutable security trail)",
+    "4. If needed, drop forward functions and tables in reverse dependency order without touching existing baseline migrations (93 in staging, 77 in production)."
+  ]
+}

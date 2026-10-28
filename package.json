@@ -12,8 +12,7 @@
     "verify:migrations": "node scripts/verify-migration-manifest.mjs",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run",
-    "test:ratings": "node tests/ratings/run.mjs",
-    "test:ratings-contract": "node --experimental-strip-types --test tests/ratings/contract.test.mjs"
+    "test:idv": "vitest run --config vitest.idv.config.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.116.0",
