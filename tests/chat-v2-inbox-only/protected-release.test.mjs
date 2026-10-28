@@ -1,14 +1,16 @@
 import './offline-guard.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync,mkdtempSync,mkdirSync,writeFileSync,unlinkSync,rmdirSync,readdirSync,copyFileSync,rmSync} from 'node:fs';
+import {readFileSync,mkdtempSync,mkdirSync,writeFileSync,unlinkSync,rmdirSync,readdirSync,copyFileSync,rmSync,existsSync,statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve,basename} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {rootCertificates} from 'node:tls';
+import {X509Certificate} from 'node:crypto';
 import {auditProtection} from '../../scripts/release/inbox-protection.mjs';
 import {buildPlan,hash,classifyCliFailure,diagnoseCliFailure,verifyHistoryWorkspace,historyCaptureSql,parseHistoryCapture} from '../../scripts/release/protected-inbox-plan.mjs';
-import {verifyTestReceipt,release,bundleHash,databaseConnection} from '../../scripts/release/protected-inbox-release.mjs';
+import {verifyTestReceipt,release,bundleHash,databaseConnection,withDatabaseConnection,validateRootCertificate} from '../../scripts/release/protected-inbox-release.mjs';
 import {manifest} from '../../scripts/release/chat-v2-inbox-only.mjs';
 import {auditFixture as originalFixture,fixtureApi} from './audit-fixture.mjs';
 async function auditFixture(...args){
@@ -18,6 +20,9 @@ async function auditFixture(...args){
  return fixture;
 }
 
+const [fixturePem,prodFixturePem]=rootCertificates.filter(pem=>{const cert=new X509Certificate(pem);return cert.ca&&Date.parse(cert.validFrom)<=Date.now()&&Date.parse(cert.validTo)>Date.now();});
+assert(fixturePem&&prodFixturePem);
+const fixtureRoot=join(tmpdir(),'chat-test-root.crt');
 const input={projectRef:manifest.environments.fairswaptest.projectRef,baseCommit:manifest.baseCommit,observedAt:new Date().toISOString(),reviewEvidence:'https://github.com/vivek2310sharma/FairSwap-Backend/pull/60',ledger:[{version:'20260914000011',name:'create_communication',statementsSha256:hash(JSON.stringify(['fixture baseline']))}]};
 test('hosted execution removes custom history writes and keeps exact source identity',()=>{
  const plan=buildPlan('fairswaptest',input);assert(!/insert into supabase_migrations/i.test(plan.execution));assert(plan.execution.includes('CHAT_EXACT_LEDGER_MISMATCH'));assert(plan.postflight.includes('CHAT_CLI_HISTORY_REQUIRED'));assert.equal(plan.sourceSha256,manifest.sha256);assert.equal(plan.executionSha256,hash(plan.execution));
@@ -85,7 +90,7 @@ test('native SQL diagnostics expose only allowlisted states and bounded statemen
 test('CLI error classification is allowlisted and never echoes SQL, URLs or credentials',()=>{
  assert.equal(classifyCliFailure('CHAT_HISTORY_WORKSPACE_MISMATCH'),'LOCAL_HISTORY_WORKSPACE_FAILURE');
  assert.equal(classifyCliFailure('CHAT_NATIVE_CLI_SEED_HISTORY_REQUIRED'),'FIXTURE_CONFIGURATION_FAILURE');
- const cases=[['Remote migration versions not found in local migrations directory.','MISSING_LOCAL_HISTORY'],['Found local migration files to be inserted before the last migration on remote database.','MIGRATION_ORDER_FAILURE'],['password authentication failed (SQLSTATE 28P01)','AUTHENTICATION_FAILURE'],['connect ECONNREFUSED','CONNECTION_FAILURE'],['ERROR: permission denied for schema (SQLSTATE 42501)','ROLE_PERMISSION_FAILURE'],['unknown flag --fixture','CLI_CONFIGURATION_FAILURE'],['opaque upstream text','UNCLASSIFIED_CLI_FAILURE']];
+ const cases=[['Remote migration versions not found in local migrations directory.','MISSING_LOCAL_HISTORY'],['Found local migration files to be inserted before the last migration on remote database.','MIGRATION_ORDER_FAILURE'],['password authentication failed (SQLSTATE 28P01)','AUTHENTICATION_FAILURE'],['connect ECONNREFUSED','TCP_FAILURE'],['ERROR: permission denied for schema (SQLSTATE 42501)','ROLE_PERMISSION_FAILURE'],['unknown flag --fixture','CLI_CONFIGURATION_FAILURE'],['opaque upstream text','UNCLASSIFIED_CLI_FAILURE']];
  for(const [raw,expected]of cases){const output=classifyCliFailure(raw+' postgres://fixture:do-not-echo@host/ SELECT private_sql;');assert.equal(output,expected);assert(/^[A-Z_]+$/.test(output));assert(!output.includes('do-not-echo'));}
 });
 test('isolated CLI workspace requires authentic applied files plus exactly one pending foundation',()=>{
@@ -153,9 +158,9 @@ test('automatic history capture is environment-bound, PG17, read-only and metada
 
 test('single-dispatch orchestration captures each current ledger and gates Production on same-run Test evidence',async()=>{
  const directory=mkdtempSync(join(tmpdir(),'chat-one-dispatch-')),previous=process.cwd();
- const bundle=bundleHash(),events=[],testFixture=await auditFixture('FairSwapTest',bundle),prodFixture=await auditFixture('FairSwapProd',bundle);
- const context={PATH:process.env.PATH,GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR:'vivek2310sharma',GITHUB_TRIGGERING_ACTOR:'vivek2310sharma',GITHUB_REPOSITORY:'vivek2310sharma/FairSwap-Backend',GITHUB_REF:'refs/heads/main',GITHUB_SHA:testFixture.evidence.sourceCommit,GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'1',CHAT_RELEASE_ENABLED:'true',CHAT_ENVIRONMENT_ENABLED:'true',CHAT_WEB_FLAG_OFF_CONFIRMED:'true',CHAT_DB_POOLER_HOST:'aws-0-ap-south-1.pooler.supabase.com',CHAT_DATABASE_PASSWORD:'synthetic-offline-password',CHAT_RELEASE_AUDIT_TOKEN:'fixture-token'};
- const makeRunner=(environment,{drift=false,wrongIdentity=false,badPost=false,failure}={})=>{
+ const bundle=bundleHash(),certPaths=new Set(),events=[],testFixture=await auditFixture('FairSwapTest',bundle),prodFixture=await auditFixture('FairSwapProd',bundle);
+ const context={PATH:process.env.PATH,GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR:'vivek2310sharma',GITHUB_TRIGGERING_ACTOR:'vivek2310sharma',GITHUB_REPOSITORY:'vivek2310sharma/FairSwap-Backend',GITHUB_REF:'refs/heads/main',GITHUB_SHA:testFixture.evidence.sourceCommit,GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'1',CHAT_RELEASE_ENABLED:'true',CHAT_ENVIRONMENT_ENABLED:'true',CHAT_WEB_FLAG_OFF_CONFIRMED:'true',CHAT_DB_POOLER_HOST:'aws-0-ap-south-1.pooler.supabase.com',CHAT_DB_SSL_ROOT_CERT_PEM:fixturePem,CHAT_DATABASE_PASSWORD:'synthetic-offline-password',CHAT_RELEASE_AUDIT_TOKEN:'fixture-token'};
+ const makeRunner=(environment,{drift=false,wrongIdentity=false,badPost=false,failure,failureAt='capture'}={})=>{
   const snapshot={...input,observedAt:new Date().toISOString(),projectRef:manifest.environments[environment].projectRef,reviewEvidence:'https://github.com/vivek2310sharma/FairSwap-Backend/actions'};
   // Distinct histories, including a later version, must never be interchanged.
   if(environment==='fairswaptest')snapshot.ledger=[...snapshot.ledger,{version:'20261028091220',name:'digilocker_fixture',statementsSha256:hash('digilocker fixture')}];
@@ -166,7 +171,10 @@ test('single-dispatch orchestration captures each current ledger and gates Produ
    const expectedHost=environment==='fairswaptest'?'aws-0-ap-south-1.pooler.supabase.com':'aws-1-eu-central-1.pooler.supabase.com';
    assert.equal(childEnv.PGHOST,expectedHost);assert.equal(childEnv.PGUSER,'postgres.'+manifest.environments[environment].projectRef);
    assert.equal(childEnv.PGPORT,'5432');assert.equal(childEnv.PGDATABASE,'postgres');assert.equal(childEnv.PGSSLMODE,'verify-full');
-   assert.equal(childEnv.PGSSLROOTCERT,'/etc/ssl/certs/ca-certificates.crt');assert.equal(childEnv.PGPASSWORD,context.CHAT_DATABASE_PASSWORD);
+   certPaths.add(childEnv.PGSSLROOTCERT);
+   assert.equal(readFileSync(childEnv.PGSSLROOTCERT,'utf8'),(environment==='fairswaptest'?fixturePem:prodFixturePem).trim()+'\n');
+   assert(!Object.hasOwn(childEnv,'CHAT_DB_SSL_ROOT_CERT_PEM'));
+   if(process.platform!=='win32'){assert.equal(statSync(childEnv.PGSSLROOTCERT).mode&0o777,0o600);assert.equal(statSync(resolve(childEnv.PGSSLROOTCERT,'..')).mode&0o777,0o700);}assert.equal(childEnv.PGPASSWORD,context.CHAT_DATABASE_PASSWORD);
    assert.equal(childEnv.SUPABASE_DB_PASSWORD,context.CHAT_DATABASE_PASSWORD);
    assert(!JSON.stringify([args,sql]).includes(context.CHAT_DATABASE_PASSWORD));
    if(args.includes('--db-url')){
@@ -175,7 +183,7 @@ test('single-dispatch orchestration captures each current ledger and gates Produ
     assert.equal(uri.pathname,'/'+childEnv.PGDATABASE);assert.equal(uri.password,'');assert.equal(uri.searchParams.get('sslmode'),childEnv.PGSSLMODE);
     assert.equal(uri.searchParams.get('sslrootcert'),childEnv.PGSSLROOTCERT);assert.equal(uri.searchParams.get('connect_timeout'),childEnv.PGCONNECT_TIMEOUT);
    }
-   if(failure&&binary==='psql')throw failure;
+   if(failure&&((failureAt==='capture'&&binary==='psql')||(failureAt==='apply'&&args[1]==='up'&&!args.includes('--help'))||(failureAt==='fetch'&&args[1]==='fetch'&&!args.includes('--help'))))throw failure;
    if(args[0]==='--version')return '2.117.0';
    if(args.includes('--help'))return '--include-all --db-url';
    if(sql===historyCaptureSql(environment)){events.push(environment+':capture');return JSON.stringify({...snapshot,projectRef:wrongIdentity?'foreign':snapshot.projectRef});}
@@ -203,16 +211,20 @@ test('single-dispatch orchestration captures each current ledger and gates Produ
   assert.equal(testReceipt.schema,3);assert.equal(testReceipt.capturedLedgerSha256,testReceipt.ledgerSha256);
   const receiptFile=join(process.cwd(),'release-receipt/receipt.json');
   mkdirSync(join(directory,'prod/test-evidence'),{recursive:true});copyFileSync(receiptFile,join(directory,'prod/test-evidence/receipt.json'));process.chdir(join(directory,'prod'));
-  const prodContext={...context,CHAT_DB_POOLER_HOST:'aws-1-eu-central-1.pooler.supabase.com'};
+  const prodContext={...context,CHAT_DB_POOLER_HOST:'aws-1-eu-central-1.pooler.supabase.com',CHAT_DB_SSL_ROOT_CERT_PEM:prodFixturePem};
   await assert.rejects(()=>release('fairswapprod',bundle,'0'.repeat(64),{context:prodContext,fetcher:()=>assert.fail('no API before receipt validation'),runner:()=>assert.fail('no DB')}),/SAME_RUN_TEST/);
   const prodReceipt=await release('fairswapprod',bundle,testReceipt.capturedLedgerSha256,{context:prodContext,fetcher:fixtureApi(prodFixture.responses),runner:makeRunner('fairswapprod')});
   assert.notEqual(prodReceipt.capturedLedgerSha256,testReceipt.capturedLedgerSha256);
+  for(const path of certPaths)assert(!existsSync(path));
+  assert(!JSON.stringify([testReceipt,prodReceipt]).includes('BEGIN CERTIFICATE'));
+  assert(!JSON.stringify([testReceipt,prodReceipt]).includes('root.crt'));
   assert(events.indexOf('fairswaptest:postflight')<events.indexOf('fairswapprod:capture'));
-  for(const [name,options,expected]of [['drift',{drift:true},/UNEXPECTED_SQL_FAILURE/],['identity',{wrongIdentity:true},/CHAT_/],['postflight',{badPost:true},/POSTFLIGHT_RECEIPT_INVALID/],['network',{failure:{code:'ENOTFOUND',stderr:'lookup failed '+context.CHAT_DATABASE_PASSWORD}},/^Error: CHAT_SUBPROCESS_CONNECTION_FAILURE_RECOVERY_REVIEW$/],['auth',{failure:{stderr:'failed SASL auth '+context.CHAT_DATABASE_PASSWORD}},/^Error: CHAT_SUBPROCESS_AUTHENTICATION_FAILURE_RECOVERY_REVIEW$/]]){
+  for(const [name,options,expected]of [['drift',{drift:true},/UNEXPECTED_SQL_FAILURE/],['identity',{wrongIdentity:true},/CHAT_/],['postflight',{badPost:true},/POSTFLIGHT_RECEIPT_INVALID/],['network',{failure:{code:'ENOTFOUND',stderr:'lookup failed '+context.CHAT_DATABASE_PASSWORD}},/^Error: CHAT_SUBPROCESS_HISTORY_CAPTURE_DNS_FAILURE_RECOVERY_REVIEW$/],['auth',{failure:{stderr:'failed SASL auth '+context.CHAT_DATABASE_PASSWORD}},/^Error: CHAT_SUBPROCESS_HISTORY_CAPTURE_AUTHENTICATION_FAILURE_RECOVERY_REVIEW$/],['tls',{failure:{stderr:'failed to connect: x509: certificate signed by unknown authority '+fixturePem}},/^Error: CHAT_SUBPROCESS_HISTORY_CAPTURE_TLS_CERTIFICATE_FAILURE_RECOVERY_REVIEW$/],['tcp',{failure:{code:'ECONNREFUSED',stderr:context.CHAT_DATABASE_PASSWORD}},/^Error: CHAT_SUBPROCESS_HISTORY_CAPTURE_TCP_FAILURE_RECOVERY_REVIEW$/],['apply',{failureAt:'apply',failure:{stderr:'ERROR: private SQL (SQLSTATE 42601) '+context.CHAT_DATABASE_PASSWORD}},/^Error: CHAT_SUBPROCESS_MIGRATION_APPLY_UNEXPECTED_SQL_FAILURE_RECOVERY_REVIEW$/],['fetch',{failureAt:'fetch',failure:{code:'ENOTFOUND',stderr:context.CHAT_DATABASE_PASSWORD}},/^Error: CHAT_SUBPROCESS_HISTORY_FETCH_DNS_FAILURE_RECOVERY_REVIEW$/]]){
    mkdirSync(join(directory,name));process.chdir(join(directory,name));const start=events.length;
    await assert.rejects(()=>release('fairswaptest',bundle,undefined,{context,fetcher:fixtureApi(testFixture.responses),runner:makeRunner('fairswaptest',options)}),expected);
    if(name!=='postflight')assert(!events.slice(start).includes('fairswaptest:up'));
    assert(!readdirSync('.').includes('release-receipt'));
+   for(const path of certPaths)assert(!existsSync(path));
   }
  }finally{
   process.chdir(previous);assert.equal(resolve(directory,'..'),resolve(tmpdir()));assert(basename(directory).startsWith('chat-one-dispatch-'));rmSync(directory,{recursive:true,force:true});
@@ -222,11 +234,11 @@ test('single-dispatch orchestration captures each current ledger and gates Produ
 test('session pooler configuration fixes endpoint, project user, port and verified TLS for both clients',()=>{
  const password='synthetic:/?@#% secret';
  for(const [environment,host]of [['fairswaptest','aws-0-ap-south-1.pooler.supabase.com'],['fairswapprod','aws-1-eu-central-1.pooler.supabase.com']]){
-  const {connection,env}=databaseConnection(environment,{CHAT_DB_POOLER_HOST:host,CHAT_DATABASE_PASSWORD:password,PGHOST:'attacker.invalid',PGUSER:'postgres.other',PGSSLMODE:'disable',PGSSLROOTCERT:'/bad'}),uri=new URL(connection);
+  const {connection,env}=databaseConnection(environment,{CHAT_DB_POOLER_HOST:host,CHAT_DATABASE_PASSWORD:password,PGHOST:'attacker.invalid',PGUSER:'postgres.other',PGSSLMODE:'disable',PGSSLROOTCERT:'/bad'},fixtureRoot),uri=new URL(connection);
   assert.equal(uri.hostname,host);assert.equal(uri.username,'postgres.'+manifest.environments[environment].projectRef);
   assert.equal(uri.port,'5432');assert.equal(uri.pathname,'/postgres');assert.equal(uri.password,'');assert(!connection.includes(password));
   assert.equal(uri.searchParams.get('sslmode'),'verify-full');assert.equal(env.PGSSLMODE,'verify-full');
-  assert.equal(uri.searchParams.get('sslrootcert'),env.PGSSLROOTCERT);assert.equal(env.PGSSLROOTCERT,'/etc/ssl/certs/ca-certificates.crt');
+  assert.equal(uri.searchParams.get('sslrootcert'),env.PGSSLROOTCERT);assert.equal(env.PGSSLROOTCERT,fixtureRoot);
   assert.equal(env.PGHOST,uri.hostname);assert.equal(env.PGUSER,uri.username);assert.equal(env.PGPORT,uri.port);
   assert.equal(env.PGPASSWORD,password);assert.equal(env.SUPABASE_DB_PASSWORD,password);
  }
@@ -246,7 +258,7 @@ test('missing or malformed pooler hosts fail closed without echoing input or usi
  for(const privateText of [privateUri,'private-password','private-user','attacker.invalid'])assert(!child.stderr.includes(privateText));
 });
 test('pooler DNS and network failures remain distinct from authentication and expose only allowlisted categories',()=>{
- const cases=[['could not translate host name "private-host" to address: Name or service not known','CONNECTION_FAILURE'],['Temporary failure in name resolution','CONNECTION_FAILURE'],['lookup private-host: no such host','CONNECTION_FAILURE'],['EAI_AGAIN','CONNECTION_FAILURE'],['ETIMEDOUT','CONNECTION_FAILURE'],['ENETUNREACH','CONNECTION_FAILURE'],['ECONNRESET','CONNECTION_FAILURE'],['certificate verify failed','CONNECTION_FAILURE'],['failed to connect: failed SASL auth','AUTHENTICATION_FAILURE'],['FATAL: Tenant or user not found','AUTHENTICATION_FAILURE'],['SCRAM authentication failed','AUTHENTICATION_FAILURE'],['ERROR: password authentication failed (SQLSTATE 28P01)','AUTHENTICATION_FAILURE']];
+ const cases=[['could not translate host name "private-host" to address: Name or service not known','DNS_FAILURE'],['Temporary failure in name resolution','DNS_FAILURE'],['lookup private-host: no such host','DNS_FAILURE'],['EAI_AGAIN','DNS_FAILURE'],['ETIMEDOUT','TCP_FAILURE'],['ENETUNREACH','TCP_FAILURE'],['ECONNRESET','TCP_FAILURE'],['certificate verify failed','TLS_CERTIFICATE_FAILURE'],['failed to connect: failed SASL auth','AUTHENTICATION_FAILURE'],['FATAL: Tenant or user not found','AUTHENTICATION_FAILURE'],['SCRAM authentication failed','AUTHENTICATION_FAILURE'],['ERROR: password authentication failed (SQLSTATE 28P01)','AUTHENTICATION_FAILURE']];
  for(const [raw,expected]of cases){
   const category=classifyCliFailure(raw+' postgresql://private-user:private-password@private-host:5432/postgres');
   assert.equal(category,expected);assert(!category.includes('private'));assert(/^[A-Z_]+$/.test(category));
@@ -258,6 +270,43 @@ test('only protected deploy jobs receive their environment-scoped pooler hostnam
  for(const job of jobs){
   const deploy=/^  (?:test|production):/.test(job);
   assert.equal(job.includes('CHAT_DB_POOLER_HOST: ${{ vars.CHAT_DB_POOLER_HOST }}'),deploy);
+  assert.equal(job.includes('CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.CHAT_DB_SSL_ROOT_CERT_PEM }}'),deploy);
  }
  assert(workflow.includes('environment: FairSwapTest'));assert(workflow.includes('environment: FairSwapProd'));
+});
+
+test('project PEM is temporary, private, identical for both clients and removed after success or failure',async()=>{
+ const context={CHAT_DB_POOLER_HOST:'aws-0-ap-south-1.pooler.supabase.com',CHAT_DATABASE_PASSWORD:'synthetic-private',CHAT_DB_SSL_ROOT_CERT_PEM:fixturePem};
+ for(const fails of [false,true]){
+  let path;
+  const execute=()=>withDatabaseConnection('fairswaptest',context,async({connection,env})=>{
+   path=env.PGSSLROOTCERT;assert(existsSync(path));assert.equal(readFileSync(path,'utf8'),fixturePem.trim()+'\n');
+   assert.equal(new URL(connection).searchParams.get('sslrootcert'),path);assert.equal(env.PGSSLMODE,'verify-full');
+   assert(!Object.hasOwn(env,'CHAT_DB_SSL_ROOT_CERT_PEM'));assert(!connection.includes(fixturePem));
+   if(process.platform!=='win32'){assert.equal(statSync(path).mode&0o777,0o600);assert.equal(statSync(resolve(path,'..')).mode&0o777,0o700);}
+   if(fails)throw Error('CHAT_SYNTHETIC_ACTION_FAILURE');return 'ok';
+  });
+  if(fails)await assert.rejects(execute,/CHAT_SYNTHETIC_ACTION_FAILURE/);else assert.equal(await execute(),'ok');
+  assert(path);assert(!existsSync(path));assert(!existsSync(resolve(path,'..')));
+ }
+});
+test('certificate configuration rejects missing, malformed, expired and non-PEM input without residue',async()=>{
+ const context={CHAT_DB_POOLER_HOST:'aws-0-ap-south-1.pooler.supabase.com',CHAT_DATABASE_PASSWORD:'synthetic-private'};
+ const directories=()=>readdirSync(tmpdir()).filter(name=>name.startsWith('chat-inbox-tls-')).sort();
+ const before=directories();
+ for(const pem of [undefined,'',null,'private-value','-----BEGIN PRIVATE KEY-----\nprivate-value\n-----END PRIVATE KEY-----',fixturePem+'private-value',fixturePem+fixturePem,fixturePem.replaceAll('\n','\\n'),'-----BEGIN CERTIFICATE-----\ninvalidbase64\n-----END CERTIFICATE-----','x'.repeat(65537)]){
+  await assert.rejects(()=>withDatabaseConnection('fairswaptest',{...context,CHAT_DB_SSL_ROOT_CERT_PEM:pem},()=>assert.fail('Invalid certificate must not reach action')),error=>/^CHAT_DB_SSL_ROOT_CERT_(REQUIRED|INVALID)$/.test(error.message));
+ }
+ assert.deepEqual(directories(),before);
+ const cert=new X509Certificate(fixturePem);
+ assert.throws(()=>validateRootCertificate(fixturePem,Date.parse(cert.validFrom)-1),/CHAT_DB_SSL_ROOT_CERT_INVALID/);
+ assert.throws(()=>validateRootCertificate(fixturePem,Date.parse(cert.validTo)+1),/CHAT_DB_SSL_ROOT_CERT_INVALID/);
+ assert.equal(validateRootCertificate(fixturePem.replaceAll('\n','\r\n')),fixturePem.trim()+'\n');
+ assert.throws(()=>databaseConnection('fairswaptest',context),/CHAT_DB_SSL_ROOT_CERT_FILE_REQUIRED/);
+});
+test('TLS and DNS diagnostics win over generic connection prefixes and expose no upstream content',()=>{
+ for(const [raw,category]of [['failed to connect: x509: certificate signed by unknown authority','TLS_CERTIFICATE_FAILURE'],['ERROR: certificate verify failed (SQLSTATE 08001)','TLS_CERTIFICATE_FAILURE'],['SSL error: certificate has expired','TLS_CERTIFICATE_FAILURE'],['root certificate file does not exist','TLS_CERTIFICATE_FAILURE'],['TLS: failed to verify certificate','TLS_CERTIFICATE_FAILURE'],['ERROR: could not translate host name (SQLSTATE 08001)','DNS_FAILURE'],['dial tcp: i/o timeout','TCP_FAILURE'],['ERROR: connection refused (SQLSTATE 08006)','TCP_FAILURE'],['ERROR: migration syntax (SQLSTATE 42601)','UNEXPECTED_SQL_FAILURE']]){
+  const result=diagnoseCliFailure(raw+' postgresql://private-user:private-password@private-host/postgres '+fixturePem);
+  assert.equal(result.category,category);assert(!JSON.stringify(result).includes('private'));assert(!JSON.stringify(result).includes('BEGIN CERTIFICATE'));
+ }
 });

@@ -25,8 +25,11 @@ export function classifyCliFailure(output){
   ??text.match(/(?:^|[,{\s])["']?code["']?\s*[:=]\s*["']([0-9A-Z]{5})["']/im)?.[1]?.toUpperCase()
   ??text.match(/ERROR:\s+([0-9A-Z]{5}):/i)?.[1]?.toUpperCase();
  if(state?.startsWith('28')||/password authentication failed|no password supplied|authentication failed|failed SASL auth|SASL authentication failed|SCRAM authentication failed|tenant or user not found/i.test(text))return 'AUTHENTICATION_FAILURE';
- if(state?.startsWith('08'))return 'CONNECTION_FAILURE';
- if(/connection refused|failed to connect|could not connect|connection timed out|network is unreachable|no such host|certificate verify failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ECONNRESET|could not translate host name|temporary failure in name resolution|name or service not known|server closed the connection/i.test(text))return 'CONNECTION_FAILURE';
+ // Specific transport evidence takes precedence over a generic connection SQLSTATE.
+ if(/x509|certificate verify failed|certificate.*(?:expired|not yet valid)|unknown authority|unable to (?:get.*issuer|verify.*certificate)|root certificate file|failed to (?:load|read|parse).*cert|tls.*(?:certificate|verify)|ssl.*(?:certificate|verify)/i.test(text))return 'TLS_CERTIFICATE_FAILURE';
+ if(/could not translate host name|temporary failure in name resolution|name or service not known|no such host|ENOTFOUND|EAI_AGAIN/i.test(text))return 'DNS_FAILURE';
+ if(/connection refused|connection timed out|network is unreachable|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ECONNRESET|server closed the connection|dial tcp.*i\/o timeout/i.test(text))return 'TCP_FAILURE';
+ if(state?.startsWith('08')||/failed to connect|could not connect/i.test(text))return 'CONNECTION_FAILURE';
  if(/remote migration versions not found|ErrMissingLocal/i.test(text))return 'MISSING_LOCAL_HISTORY';
  if(/CHAT_HISTORY_WORKSPACE_(?:MISMATCH|DUPLICATE|INVALID)/.test(text))return 'LOCAL_HISTORY_WORKSPACE_FAILURE';
  if(/CHAT_FIXTURE_BOOTSTRAP_SEED_CHANGED|CHAT_NATIVE_CLI_SEED_HISTORY_REQUIRED/.test(text))return 'FIXTURE_CONFIGURATION_FAILURE';
