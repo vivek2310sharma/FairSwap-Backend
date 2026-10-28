@@ -110,6 +110,25 @@ export async function launchReadinessChecks(db, test, rollback) {
   const {readFileSync}=await import('node:fs');
   const monitoring=readFileSync(new URL('./launch-monitoring.sql',import.meta.url),'utf8');
   await db.exec(monitoring);
+  // Exercise the actual monitor statement against the existing cron fixture;
+  // no second publication/reminder/notification fixture suite is introduced.
+  const missingRun=monitoring.match(/select j\.jobname,\r?\n j\.active and[\s\S]*?(?=;)/)?.[0];
+  assert(missingRun,'Missing scheduler monitor statement');
+  const job=await q("select jobid from cron.job where jobname='ratings-v1-publication'");
+  await db.query('delete from cron.job_run_details where jobid=$1',[job]);
+  try {
+   await db.query('update cron.job set active=true where jobid=$1',[job]);
+   assert.equal((await db.query(missingRun)).rows.find(r=>r.jobname==='ratings-v1-publication').missing_recent_run_alert,true);
+   await db.query("insert into cron.job_run_details(jobid,status,start_time,end_time) values($1,'succeeded',clock_timestamp(),clock_timestamp())",[job]);
+   assert.equal((await db.query(missingRun)).rows.find(r=>r.jobname==='ratings-v1-publication').missing_recent_run_alert,false);
+   await db.query("update cron.job_run_details set start_time=clock_timestamp()-interval '11 minutes' where jobid=$1",[job]);
+   assert.equal((await db.query(missingRun)).rows.find(r=>r.jobname==='ratings-v1-publication').missing_recent_run_alert,true);
+   await db.query('update cron.job set active=false where jobid=$1',[job]);
+   assert.equal((await db.query(missingRun)).rows.find(r=>r.jobname==='ratings-v1-publication').missing_recent_run_alert,false);
+  } finally {
+   await db.query('update cron.job set active=false where jobid=$1',[job]);
+   await db.query('delete from cron.job_run_details where jobid=$1',[job]);
+  }
   assert.equal(await q("select count(*)::int from public.profile_rating_stats where score<0 or score>10 or (counted_review_count<3 and score is not null)"),0);
  });
  await test('launch rollback preserves evidence and unrelated jobs, closes all Ratings gates',async()=>{
