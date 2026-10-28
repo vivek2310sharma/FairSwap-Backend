@@ -1,5 +1,13 @@
 # Ratings V1 backend contract
 
+Operational delta, 28 October 2026: additive migration
+`20261028104504_ratings_operations_v1.sql` preserves the six original Ratings files.
+It links new notification receipts to persisted notifications, retries initial
+notification failures through reminders, and adds service-only aggregate monitoring
+and Test-only allowlisted fixture processing. No consumer/staff contract or activation
+default changes. See `docs/operations/RATINGS_V1_OPERATIONS.md` for environment inputs,
+five-minute monitor scheduling, incident ownership, recovery and deployment order.
+
 Candidate, 26 October 2026. Backend only; no hosted changes or consumer activation.
 Observed local base HEAD: `213b57c84e2b3767e3ab3499846dd280bf3315c3` on `main`.
 No fetch/pull or synchronization was authorized. Existing local work is inventoried in

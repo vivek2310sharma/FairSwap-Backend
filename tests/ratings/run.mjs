@@ -5,6 +5,7 @@ import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 import {consumerContractChecks} from './consumer-contract.mjs';
 import {launchReadinessChecks} from './launch-readiness.mjs';
+import {operationsChecks} from './operations.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const read=p=>readFileSync(root+p,'utf8');
 // Load only the selected engine: native adapter path validation is platform-specific.
@@ -201,5 +202,6 @@ try {
  await owner();await db.exec(read('supabase/forward-migrations/ratings/tests/security.sql'));
  await test('catalog security assertions pass',async()=>{});
  await launchReadinessChecks(db,test,read('releases/candidates/ratings-v1/rollback-disable.sql'));
+ await operationsChecks(db,test);
  console.log(`PASS ${checks} automated database checks; no hosted or external network operations`);
 } catch(e) {console.error('FAIL',e.message,e.code??'',e.where??'');process.exitCode=1;} finally {await db.close();}
