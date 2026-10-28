@@ -323,6 +323,51 @@ describe("IDV Security Gate & Lifecycle Remediation Checks", () => {
     });
     expect(prodConfig.SETU_ENVIRONMENT).toBe("production");
 
+    // Valid production sandbox compatibility mode: allow sandbox credentials on FairSwapProd
+    const prodSandboxCompat = readIdvEnvConfig({
+      SUPABASE_PROJECT_REF: "kriuhwppxgxsyyrbjsau",
+      SUPABASE_URL: "https://kriuhwppxgxsyyrbjsau.supabase.co",
+      SETU_ENVIRONMENT: "sandbox",
+      SETU_ALLOW_SANDBOX_ON_PROD: "true",
+      SETU_API_BASE_URL: "https://dg-sandbox.setu.co",
+      SETU_REDIRECT_BASE_URL: "https://fairswap.in/account/verification",
+    });
+    expect(prodSandboxCompat.SETU_ENVIRONMENT).toBe("sandbox");
+    expect(prodSandboxCompat.SETU_ALLOW_SANDBOX_ON_PROD).toBe(true);
+
+    // Reject sending sandbox credentials to Setu production endpoint even when SETU_ALLOW_SANDBOX_ON_PROD=true
+    expect(() =>
+      readIdvEnvConfig({
+        SUPABASE_PROJECT_REF: "kriuhwppxgxsyyrbjsau",
+        SUPABASE_URL: "https://kriuhwppxgxsyyrbjsau.supabase.co",
+        SETU_ENVIRONMENT: "sandbox",
+        SETU_ALLOW_SANDBOX_ON_PROD: "true",
+        SETU_API_BASE_URL: "https://dg.setu.co", // Dangerous!
+        SETU_REDIRECT_BASE_URL: "https://fairswap.in/account/verification",
+      })
+    ).toThrow(/never send sandbox credentials to production endpoint/);
+
+    // Reject sandbox environment on production when SETU_ALLOW_SANDBOX_ON_PROD is false / unset
+    expect(() =>
+      readIdvEnvConfig({
+        SUPABASE_PROJECT_REF: "kriuhwppxgxsyyrbjsau",
+        SUPABASE_URL: "https://kriuhwppxgxsyyrbjsau.supabase.co",
+        SETU_ENVIRONMENT: "sandbox",
+        SETU_API_BASE_URL: "https://dg-sandbox.setu.co",
+        SETU_REDIRECT_BASE_URL: "https://fairswap.in/account/verification",
+      })
+    ).toThrow(/use Setu production environment only/);
+
+    // Both canonical staging callback URLs are accepted
+    const stagingCanonicalAlt = readIdvEnvConfig({
+      SUPABASE_PROJECT_REF: "wpppxlnbzqynvhpeuavd",
+      SUPABASE_URL: "https://wpppxlnbzqynvhpeuavd.supabase.co",
+      SETU_ENVIRONMENT: "sandbox",
+      SETU_API_BASE_URL: "https://dg-sandbox.setu.co",
+      SETU_REDIRECT_BASE_URL: "https://fairswap-web-git-staging-fairswap.vercel.app/account/verification",
+    });
+    expect(stagingCanonicalAlt.SETU_REDIRECT_BASE_URL).toBe("https://fairswap-web-git-staging-fairswap.vercel.app/account/verification");
+
     // Mismatched staging project ref with production env
     expect(() =>
       readIdvEnvConfig({
