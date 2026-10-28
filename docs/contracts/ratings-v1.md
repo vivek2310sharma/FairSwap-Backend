@@ -435,3 +435,104 @@ Use automated monitoring; no owner manual testing is required before deployment.
 Rollback source through a protected PR and prior app deployment as applicable;
 keep all four flags false and both Ratings jobs inactive. Preserve all data, audit,
 receipts and migration history. Do not delete trades or reverse historical SQL.
+
+### Challenge-time Auth input and hosted acceptance blockers (28 October 2026)
+
+Patch base: `8a30e77df131a8db338651a2033839047052857c`, isolated detached checkout;
+the existing dirty Backend checkout is preserved. No commits, remote writes,
+deployments, credential changes or hosted mutations were performed.
+
+Secure input names only: `RATINGS_AUTH_TARGET`, `RATINGS_AUTH_URL`,
+`RATINGS_AUTH_PUBLISHABLE_KEY`, `RATINGS_AUTH_MODE`,
+`RATINGS_AUTH_SELLER_EMAIL`, `RATINGS_AUTH_SELLER_PASSWORD`,
+`RATINGS_AUTH_BUYER_EMAIL`, `RATINGS_AUTH_BUYER_PASSWORD`,
+`RATINGS_AUTH_OUTSIDER_EMAIL`, `RATINGS_AUTH_OUTSIDER_PASSWORD`,
+`RATINGS_AUTH_STAFF_EMAIL`, `RATINGS_AUTH_STAFF_PASSWORD`,
+`RATINGS_AUTH_STAFF_FACTOR_ID`, `RATINGS_AUTH_STAFF_TOTP_SECRET`,
+`RATINGS_AUTH_STAFF_TOTP_MODE`, `RATINGS_AUTH_STAFF_TOTP_CODE_FD`.
+Existing bearer mode retains `RATINGS_AUTH_SELLER_TOKEN`,
+`RATINGS_AUTH_BUYER_TOKEN`, `RATINGS_AUTH_OUTSIDER_TOKEN`,
+`RATINGS_AUTH_STAFF_AAL1_TOKEN`, `RATINGS_AUTH_STAFF_AAL2_TOKEN`.
+
+Password Auth mode remains `password-totp`. TOTP input mode defaults to `seed`;
+opt into `code` to supply one six-digit code through an inherited pipe descriptor
+3..255. Do not supply a seed in code mode. Preflight checks all other inputs and
+the open pipe before SDK creation. After successful staff challenge creation, a
+fixed, identity-free readiness message tells the trusted pipe writer to supply
+the code. Reading is bounded to 30 seconds and eight bytes including line ending;
+there is one verification attempt, no enrollment, refresh or automatic retry.
+The trusted writer must close its end and must not prefill a stale code. Do not
+use argv, echoed terminal input, files, chat or artifacts for codes. In an embedded
+operator runtime, the optional code-supplier callback receives only an abort signal
+at the same stage; it must honor cancellation. The acceptance callback receives
+only target/URL/publishable key and the five issued bearer tokens, never passwords,
+emails, factor IDs, TOTP seeds, code inputs or the inherited environment.
+Server verification and the unchanged Auth/PostgREST matrix establish acceptance;
+reading a code or decoding a JWT does not establish AAL2. Local sign-out does not
+immediately invalidate already-issued access JWTs. CLI preflight failure exits 2
+with NOT RUN; failures after preflight exit 1 with sanitized FAIL output.
+
+Hosted Auth: **NOT RUN**, no `RATINGS_AUTH_*` operator inputs available. Hosted
+direct-write denials also remain unverified; the existing 25 hosted-matrix denials
+are direct reads. No genuine hosted JWT or AAL2 receipt is claimed.
+
+Hosted enabled-state runner: **BLOCKED / NOT RUN; not introduced**. Existing
+publication/reminder jobs process a global backlog. The disposable PG17 fixtures
+create Auth users, grant staff membership and install a notification-failure
+trigger; they cannot be replayed on hosted Test accounts. A process `finally` or
+signal handler cannot guarantee OFF restoration after forced termination, nor
+prevent global jobs from touching nonfixture trades. Secure participant consent,
+dedicated fixture IDs and an independently enforced expiring isolation mechanism
+are unavailable. An unconditional global activation runner would violate the
+fixture-isolation and interrupted-process recovery requirements of PR #61's work
+order. No hosted enabled-state acceptance is complete in this patch.
+
+Separate additive migration proposal, **not implemented or applied**: a Test-only
+acceptance lease and fixture allowlist, checked against the exact project inside
+every enabled worker path, with hard database-time expiry and independently
+scheduled OFF recovery. Enable and force RLS on private lease/fixture tables;
+revoke all client/public access, use explicit least-privilege operator grants and
+private empty-search-path functions. Preserve existing RLS and production worker
+behavior. Review locking against concurrent sold capture, fixture-only restoration
+of derived scores/notifications and crash recovery before approving this design.
+Until that contract is reviewed and verified, reuse the existing native suite.
+Later hosted automation must observe real `cron.job_run_details`, persisted in-app
+rows and authenticated recipient/outsider reads, genuine staff AAL2 operations,
+retry/deduplication, publication, moderation and fixture-limited cleanup. Never
+substitute SQL role settings, forged JWTs or direct worker calls for those proofs.
+
+Ratings notifications are **in-app only**, through `create_notification` into
+`public.notifications`, with `support_reply` and `/account/ratings`. No external
+WhatsApp/SMS/email provider was added or tested. Aggregate monitoring now also
+alerts when an active Ratings cron has no recorded run or its latest start is
+older than its cadence-specific silence limit: publication (`*/5 * * * *`)
+10 minutes; reminders (`17 * * * *`) 75 minutes, in both Test and Production.
+An hourly reminder last started 15 minutes ago does not alert. Inactive jobs
+do not raise scheduler-silence alerts. A separate scheduler-configuration alert
+detects a cron expression differing from these expected schedules, even while
+inactive; the existing missing-jobs alert detects absent jobs. Disposable PG17
+checks exercise both jobs with recent, absent and overdue run histories, inactive
+schedules and cron drift. SQL monitoring is not an installed alert route. A genuine
+on-call owner and alert sink remain a separate protected task and acceptance gap.
+
+File inventory: `tests/ratings/auth-sessions.mjs`, `auth-sessions.test.mjs`,
+`auth-test-only.mjs`, `auth-test-only.test.mjs`, `launch-readiness.mjs`,
+`launch-monitoring.sql`, and this contract. No migrations or CI changes.
+
+Automated evidence from this isolated patch: Node 24.15.0; 19 offline Auth tests
+(including inherited-pipe timing, timeout/abort, cleanup, redaction and the unchanged
+42-request acceptance matrix); 7 contract tests; 52 supplementary PGlite checks;
+54 native PostgreSQL 17.6 checks. Native cluster shutdown and fixture-directory
+cleanup completed. Native Auth/JWT/cron remain fixtures. Migration verifier passed
+58/58 after restoring canonical Git blob bytes for the clone's CRLF-converted
+immutable files; no migration diff. Typecheck and all 93 existing network-blocked
+unit tests passed. Initial missing dependencies,
+Windows sandbox initdb/esbuild restrictions and a CRLF-sensitive new monitor-test
+selector were resolved before the passing checks. Hosted checks have no PASS receipt.
+
+ChatGPT integrates via protected GitHub CI, Test first, then Production source and
+read-only verification. All Ratings gates remain OFF pending final launch approval.
+After later activation, monitor threshold-three scores, reminder duplication,
+publication lag, moderation queues and fraud reporting. Rollback returns Test
+settings/jobs to OFF, restores only isolated fixtures and uses protected Git revert;
+preserve real account, audit and migration history. No owner manual test gate.

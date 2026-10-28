@@ -1,6 +1,7 @@
 import './offline-guard.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
 import {configuration,verifyAuth} from './auth-test-only.mjs';
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 // Deliberately unsigned offline fixtures; never sent to a hosted service.
@@ -57,6 +58,15 @@ test('transport failures cannot leak credentials through exported errors',async(
  });
 });
 
+test('CLI reports NOT RUN with no secure runtime inputs',()=>{
+ const result=spawnSync(process.execPath,['--import','./tests/ratings/offline-guard.mjs','tests/ratings/auth-test-only.mjs'],{
+  cwd:new URL('../../',import.meta.url),windowsHide:true,encoding:'utf8',
+  env:{SystemRoot:process.env.SystemRoot,PATH:process.env.PATH}
+ });
+ assert.equal(result.status,2);assert.equal(result.stdout,'');
+ assert.equal(result.stderr,'NOT RUN Test-only Auth; secure Test inputs unavailable or invalid (details suppressed)\n');
+});
+
 const passwordEnv={...env,RATINGS_AUTH_MODE:'password-totp',RATINGS_AUTH_STAFF_FACTOR_ID:'factor',RATINGS_AUTH_STAFF_TOTP_SECRET:'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'};
 for(const role of ['SELLER','BUYER','OUTSIDER','STAFF'])for(const field of ['EMAIL','PASSWORD'])passwordEnv[`RATINGS_AUTH_${role}_${field}`]='offline-fixture';
 function sdkFlow(failure) {
@@ -95,6 +105,15 @@ test('password mode feeds SDK-issued sessions through the unchanged 42-request a
  assert.deepEqual(await verifyAuth(passwordEnv,transport(r=>{requests++;return r;}),sdk.factory),{identities:4,tokens:5,directReadDenials:25});
  assert.equal(requests,42);assert.deepEqual(sdk.counts(),{created:4,cleaned:4});
  assert.deepEqual(sdk.steps,['password','password','password','password','factors','challenge','verify']);
+});
+
+test('one-time-code mode preserves the full identity, JWT, RLS and HTTP matrix',async()=>{
+ const sdk=sdkFlow();let requests=0,codes=0;
+ const inputs={...passwordEnv,RATINGS_AUTH_STAFF_TOTP_MODE:'code',RATINGS_AUTH_STAFF_TOTP_SECRET:undefined};
+ assert.deepEqual(await verifyAuth(inputs,transport(r=>{requests++;return r;}),sdk.factory,async()=>{
+  assert.equal(sdk.steps.at(-1),'challenge');codes++;return '123456';
+ }),{identities:4,tokens:5,directReadDenials:25});
+ assert.equal(requests,42);assert.equal(codes,1);assert.deepEqual(sdk.counts(),{created:4,cleaned:4});
 });
 test('SDK failures and missing verified factors fail closed and clean acquired sessions',async()=>{
  for(const failure of ['login','factor','mfa']) {

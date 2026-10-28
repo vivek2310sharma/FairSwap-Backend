@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {pathToFileURL} from 'node:url';
-import {target,withSessions} from './auth-sessions.mjs';
+import {target,withSessions,sessionInputs} from './auth-sessions.mjs';
 
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const testUrl='https://wpppxlnbzqynvhpeuavd.supabase.co';
@@ -68,15 +68,23 @@ async function run(env,transport) {
  }
  return {identities:4,tokens:5,directReadDenials:25};
 }
-export async function verifyAuth(env,transport=globalThis.fetch,clientFactory) {
+export async function verifyAuth(env,transport=globalThis.fetch,clientFactory,codeProvider) {
  try {
   assert(env.RATINGS_AUTH_MODE===undefined||['tokens','password-totp'].includes(env.RATINGS_AUTH_MODE),'Invalid Auth mode');
   return env.RATINGS_AUTH_MODE==='password-totp'
-   ?await withSessions(env,e=>run(e,transport),clientFactory):await run(env,transport);
+   ?await withSessions(env,e=>run(e,transport),clientFactory,codeProvider):await run(env,transport);
  }
  catch {throw new Error('Test-only Auth acceptance failed (details suppressed)');}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
- try{const result=await verifyAuth(process.env);console.log('PASS Test-only Auth disabled-state checks',result);}
- catch{console.error('FAIL Test-only Auth checks; verify required inputs and disabled-state authorization (details suppressed)');process.exitCode=1;}
+ let ready=false;
+ try {
+  assert(process.env.RATINGS_AUTH_MODE===undefined||['tokens','password-totp'].includes(process.env.RATINGS_AUTH_MODE));
+  if(process.env.RATINGS_AUTH_MODE==='password-totp')sessionInputs(process.env);else configuration(process.env);
+  ready=true;
+  const result=await verifyAuth(process.env);console.log('PASS Test-only Auth disabled-state checks',result);
+ } catch {
+  console.error(ready?'FAIL Test-only Auth checks (details suppressed)':'NOT RUN Test-only Auth; secure Test inputs unavailable or invalid (details suppressed)');
+  process.exitCode=ready?1:2;
+ }
 }
