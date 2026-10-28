@@ -3,7 +3,7 @@
 // Scheduled or securely dispatched worker that executes bounded Setu DigiLocker token revocations.
 
 import { createClient } from "@supabase/supabase-js";
-import { runIdvRevocationRetryWorker, sanitizeRevocationError } from "../_shared/idv/idv-revocation-worker";
+import { runIdvRevocationRetryWorker, sanitizeRevocationError } from "../_shared/idv/idv-revocation-worker.ts";
 
 declare const Deno: {
   env: {

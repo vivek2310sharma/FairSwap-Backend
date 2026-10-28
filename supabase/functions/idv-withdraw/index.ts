@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { readIdvEnvConfig, createSetuRevocationClient } from "../_shared/idv/idv-config";
+import { readIdvEnvConfig, createSetuRevocationClient } from "../_shared/idv/idv-config.ts";
 
 declare const Deno: {
   env: {

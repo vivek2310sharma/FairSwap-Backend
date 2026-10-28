@@ -1,4 +1,4 @@
-import { readIdvEnvConfig, isIdvOperational, createSetuClientFromEnv } from "../_shared/idv/idv-config";
+import { readIdvEnvConfig, isIdvOperational, createSetuClientFromEnv } from "../_shared/idv/idv-config.ts";
 import { createClient } from "@supabase/supabase-js";
 
 declare const Deno: {

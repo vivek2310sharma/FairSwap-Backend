@@ -11,7 +11,7 @@ import {
   createSetuRevocationClient,
   isIdvRevocationCapable,
   type IdvEnvConfig,
-} from "./idv-config";
+} from "./idv-config.ts";
 
 export const RevocationWorkerConfigSchema = z.object({
   batchSize: z.coerce.number().int().min(1).max(50).default(10),

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SetuDigiLockerClient, type SetuConfig } from "./setu-client";
+import { SetuDigiLockerClient, type SetuConfig } from "./setu-client.ts";
 
 export const idvEnvConfigSchema = z.object({
   FAIRSWAP_IDV_ENABLED: z.string().default("false").transform((v) => v.toLowerCase() === "true"),

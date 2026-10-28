@@ -1,5 +1,5 @@
-import { readIdvEnvConfig, isIdvOperational, createSetuClientFromEnv } from "../_shared/idv/idv-config";
-import { SETU_DOCUMENT_CATALOGUE } from "../_shared/idv/setu-client";
+import { readIdvEnvConfig, isIdvOperational, createSetuClientFromEnv } from "../_shared/idv/idv-config.ts";
+import { SETU_DOCUMENT_CATALOGUE } from "../_shared/idv/setu-client.ts";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
