@@ -51,6 +51,27 @@ export function verifyHistoryWorkspace(directory,ledger,{pending=false}={}){
  for(const name of files){const file=join(target,name),stat=lstatSync(file);if(!stat.isFile()||stat.isSymbolicLink()||stat.size===0)throw Error('CHAT_HISTORY_WORKSPACE_INVALID_FILE');chmodSync(file,0o600);}
  return files.length;
 }
+// Capture metadata only, in one read-only snapshot bound to the fixed environment.
+export function historyCaptureSql(environment){
+ const target=manifest.environments[environment];if(!target)throw Error('CHAT_ENVIRONMENT_REQUIRED');
+ return `begin transaction isolation level repeatable read read only;
+${identityGuard(target.projectRef)}
+do $capture$ begin
+ if current_setting('server_version_num')::integer/10000<>17 then raise exception 'CHAT_PG17_REQUIRED';end if;
+end $capture$;
+select jsonb_build_object('projectRef',${literal(target.projectRef)},'baseCommit',${literal(manifest.baseCommit)},'observedAt',to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),'reviewEvidence','https://github.com/vivek2310sharma/FairSwap-Backend/actions','ledger',coalesce(jsonb_agg(jsonb_build_object('version',version,'name',name,'statementsSha256',encode(sha256(convert_to(coalesce(to_jsonb(statements)::text,'null'),'UTF8')),'hex')) order by version),'[]'::jsonb)) from supabase_migrations.schema_migrations;
+commit;
+`;
+}
+export function parseHistoryCapture(output){
+ try{
+  const lines=output.split('\n').filter(line=>line.trim().startsWith('{'));
+  if(lines.length!==1)throw Error();
+  const value=JSON.parse(lines[0]);
+  if(!Array.isArray(value.ledger)||value.ledger.length===0)throw Error();
+  return value;
+ }catch{throw Error('CHAT_HISTORY_CAPTURE_INVALID');}
+}
 const literal=s=>"'"+s.replaceAll("'","''")+"'";
 export function buildPlan(environment,input,now=Date.now()){
  const snapshot=validateSnapshot(environment,input,now);

@@ -17,12 +17,6 @@ on:
       bundle_sha256:
         type: string
         required: true
-      test_ledger_sha256:
-        type: string
-        required: true
-      prod_ledger_sha256:
-        type: string
-        required: true
 permissions:
   contents: read
   actions: read
@@ -61,6 +55,7 @@ jobs:
     outputs:
       artifact_id: ${{ steps.receipt.outputs.artifact-id }}
       receipt_sha: ${{ steps.proof.outputs.sha256 }}
+      ledger_sha: ${{ steps.proof.outputs.ledger_sha }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -71,21 +66,19 @@ jobs:
           node-version: '24.15.0'
       - run: corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
       - run: bash scripts/release/install-inbox-cli.sh
-      - name: Separately authorized Test release and automatic postflight
+      - name: Owner-authorized Test release and automatic postflight
         env:
           CHAT_RELEASE_ENABLED: ${{ vars.CHAT_INBOX_RELEASE_ENABLED }}
           CHAT_ENVIRONMENT_ENABLED: ${{ vars.CHAT_INBOX_ENVIRONMENT_ENABLED }}
           CHAT_WEB_FLAG_OFF_CONFIRMED: ${{ vars.CHAT_WEB_FLAG_OFF_CONFIRMED }}
-          CHAT_BACKEND_AUTHORITY_RECEIPT: ${{ vars.CHAT_BACKEND_AUTHORITY_RECEIPT }}
-          CHAT_APPROVED_LEDGER_JSON: ${{ vars.CHAT_APPROVED_LEDGER_JSON }}
           CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
           CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
-          CHAT_RELEASE_ADMIN_ATTESTATION_JSON: ${{ vars.CHAT_RELEASE_ADMIN_ATTESTATION_JSON }}
-          LEDGER_SHA: ${{ inputs.test_ledger_sha256 }}
           BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
-        run: node scripts/release/protected-inbox-release.mjs fairswaptest "$LEDGER_SHA" "$BUNDLE_SHA"
+        run: node scripts/release/protected-inbox-release.mjs fairswaptest "$BUNDLE_SHA"
       - id: proof
-        run: echo "sha256=$(sha256sum release-receipt/receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "sha256=$(sha256sum release-receipt/receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          node --input-type=module -e 'import {readFileSync,appendFileSync} from "node:fs"; const r=JSON.parse(readFileSync("release-receipt/receipt.json")); appendFileSync(process.env.GITHUB_OUTPUT,`ledger_sha=${r.capturedLedgerSha256}\n`)'
       - id: receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -120,20 +113,16 @@ jobs:
           EXPECTED_RECEIPT_SHA: ${{ needs.test.outputs.receipt_sha }}
         run: cd test-evidence && printf '%s  receipt.json\n' "$EXPECTED_RECEIPT_SHA" | sha256sum --check --status
       - run: bash scripts/release/install-inbox-cli.sh
-      - name: Separately approved owner Production release and automatic postflight
+      - name: Owner-authorized Production release and automatic postflight
         env:
           CHAT_RELEASE_ENABLED: ${{ vars.CHAT_INBOX_RELEASE_ENABLED }}
           CHAT_ENVIRONMENT_ENABLED: ${{ vars.CHAT_INBOX_ENVIRONMENT_ENABLED }}
           CHAT_WEB_FLAG_OFF_CONFIRMED: ${{ vars.CHAT_WEB_FLAG_OFF_CONFIRMED }}
-          CHAT_BACKEND_AUTHORITY_RECEIPT: ${{ vars.CHAT_BACKEND_AUTHORITY_RECEIPT }}
-          CHAT_APPROVED_LEDGER_JSON: ${{ vars.CHAT_APPROVED_LEDGER_JSON }}
           CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
           CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
-          CHAT_RELEASE_ADMIN_ATTESTATION_JSON: ${{ vars.CHAT_RELEASE_ADMIN_ATTESTATION_JSON }}
-          TEST_LEDGER_SHA: ${{ inputs.test_ledger_sha256 }}
-          LEDGER_SHA: ${{ inputs.prod_ledger_sha256 }}
+          TEST_LEDGER_SHA: ${{ needs.test.outputs.ledger_sha }}
           BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
-        run: node scripts/release/protected-inbox-release.mjs fairswapprod "$LEDGER_SHA" "$BUNDLE_SHA" "$TEST_LEDGER_SHA"
+        run: node scripts/release/protected-inbox-release.mjs fairswapprod "$BUNDLE_SHA" "$TEST_LEDGER_SHA"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: chat-inbox-prod-${{ github.run_id }}-${{ github.run_attempt }}
@@ -180,9 +169,6 @@ jobs:
       - name: Approved Test protection audit only
         env:
           CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
-          CHAT_RELEASE_ADMIN_ATTESTATION_JSON: ${{ vars.CHAT_RELEASE_ADMIN_ATTESTATION_JSON }}
-          CHAT_APPROVED_LEDGER_JSON: ${{ vars.CHAT_APPROVED_LEDGER_JSON }}
-          LEDGER_SHA: ${{ inputs.test_ledger_sha256 }}
           BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
         run: node scripts/release/audit-inbox-only.mjs FairSwapTest "$BUNDLE_SHA"
   audit_production:
@@ -203,8 +189,5 @@ jobs:
       - name: Separately approved owner Production protection audit only
         env:
           CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
-          CHAT_RELEASE_ADMIN_ATTESTATION_JSON: ${{ vars.CHAT_RELEASE_ADMIN_ATTESTATION_JSON }}
-          CHAT_APPROVED_LEDGER_JSON: ${{ vars.CHAT_APPROVED_LEDGER_JSON }}
-          LEDGER_SHA: ${{ inputs.prod_ledger_sha256 }}
           BUNDLE_SHA: ${{ inputs.bundle_sha256 }}
         run: node scripts/release/audit-inbox-only.mjs FairSwapProd "$BUNDLE_SHA"

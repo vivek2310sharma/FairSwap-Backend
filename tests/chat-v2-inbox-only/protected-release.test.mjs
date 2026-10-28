@@ -7,10 +7,17 @@ import {join,resolve,basename} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {auditProtection} from '../../scripts/release/inbox-protection.mjs';
-import {buildPlan,hash,classifyCliFailure,diagnoseCliFailure,verifyHistoryWorkspace} from '../../scripts/release/protected-inbox-plan.mjs';
-import {verifyTestReceipt} from '../../scripts/release/protected-inbox-release.mjs';
+import {buildPlan,hash,classifyCliFailure,diagnoseCliFailure,verifyHistoryWorkspace,historyCaptureSql,parseHistoryCapture} from '../../scripts/release/protected-inbox-plan.mjs';
+import {verifyTestReceipt,release,bundleHash} from '../../scripts/release/protected-inbox-release.mjs';
 import {manifest} from '../../scripts/release/chat-v2-inbox-only.mjs';
-import {auditFixture,fixtureApi} from './audit-fixture.mjs';
+import {auditFixture as originalFixture,fixtureApi} from './audit-fixture.mjs';
+async function auditFixture(...args){
+ const fixture=await originalFixture(...args);
+ fixture.responses['/rulesets/25821687'].bypass_actors=[{actor_id:5,actor_type:'RepositoryRole',bypass_mode:'always'}];
+ fixture.responses['/rulesets/25352225'].bypass_actors=[];
+ return fixture;
+}
+
 const input={projectRef:manifest.environments.fairswaptest.projectRef,baseCommit:manifest.baseCommit,observedAt:new Date().toISOString(),reviewEvidence:'https://github.com/vivek2310sharma/FairSwap-Backend/pull/60',ledger:[{version:'20260914000011',name:'create_communication',statementsSha256:hash(JSON.stringify(['fixture baseline']))}]};
 test('hosted execution removes custom history writes and keeps exact source identity',()=>{
  const plan=buildPlan('fairswaptest',input);assert(!/insert into supabase_migrations/i.test(plan.execution));assert(plan.execution.includes('CHAT_EXACT_LEDGER_MISMATCH'));assert(plan.postflight.includes('CHAT_CLI_HISTORY_REQUIRED'));assert.equal(plan.sourceSha256,manifest.sha256);assert.equal(plan.executionSha256,hash(plan.execution));
@@ -30,11 +37,11 @@ test('existing foundation must use a protected recovery receipt, never silent hi
 });
 test('Production requires successful Test evidence from this exact run, attempt and source',()=>{
  const expected={sha:'a'.repeat(40),runId:'1',runAttempt:'1',bundle:'b'.repeat(64),testLedgerSha256:'f'.repeat(64)};
- const receipt={schema:2,approvedLedgerSha256:expected.testLedgerSha256,governanceOwner:'vivek2310sharma',actor:'vivek2310sharma',triggeringActor:'vivek2310sharma',environment:'FairSwapTest',status:'verified',sourceCommit:expected.sha,runId:'1',runAttempt:'1',bundleSha256:expected.bundle,sourceSha256:manifest.sha256,flagsOff:5,historySha256:'c'.repeat(64),protectionSnapshotSha256:'d'.repeat(64),ownerAttestationSha256:'e'.repeat(64)};
+ const receipt={schema:3,version:manifest.version,cliVersion:'2.117.0',postgresVersionNum:170006,webFlagOffConfirmed:true,capturedLedgerSha256:expected.testLedgerSha256,governanceOwner:'vivek2310sharma',actor:'vivek2310sharma',triggeringActor:'vivek2310sharma',environment:'FairSwapTest',status:'verified',sourceCommit:expected.sha,runId:'1',runAttempt:'1',bundleSha256:expected.bundle,sourceSha256:manifest.sha256,flagsOff:5,historySha256:'c'.repeat(64),protectionSnapshotSha256:'d'.repeat(64),executionSha256:'e'.repeat(64)};
  verifyTestReceipt(receipt,expected);
- for(const delta of [{runId:'2'},{runAttempt:'2'},{status:'failed'},{environment:'FairSwapProd'},{flagsOff:4},{sourceCommit:'d'.repeat(40)},{bundleSha256:'e'.repeat(64)}])assert.throws(()=>verifyTestReceipt({...receipt,...delta},expected),/SAME_RUN_TEST/);
- for(const field of ['protectionSnapshotSha256','ownerAttestationSha256'])assert.throws(()=>verifyTestReceipt({...receipt,[field]:undefined},expected),/SAME_RUN_TEST/);
- for(const delta of [{schema:1},{actor:'contributor'},{triggeringActor:'contributor'},{governanceOwner:'contributor'},{approvedLedgerSha256:'0'.repeat(64)}])assert.throws(()=>verifyTestReceipt({...receipt,...delta},expected),/SAME_RUN_TEST/);
+ for(const delta of [{runId:'2'},{runAttempt:'2'},{status:'failed'},{environment:'FairSwapProd'},{flagsOff:4},{webFlagOffConfirmed:false},{version:'20990101000000'},{cliVersion:'0.0.0'},{postgresVersionNum:150008},{sourceCommit:'d'.repeat(40)},{bundleSha256:'e'.repeat(64)}])assert.throws(()=>verifyTestReceipt({...receipt,...delta},expected),/SAME_RUN_TEST/);
+ for(const field of ['protectionSnapshotSha256','executionSha256'])assert.throws(()=>verifyTestReceipt({...receipt,[field]:undefined},expected),/SAME_RUN_TEST/);
+ for(const delta of [{schema:1},{actor:'contributor'},{triggeringActor:'contributor'},{governanceOwner:'contributor'},{capturedLedgerSha256:'0'.repeat(64)}])assert.throws(()=>verifyTestReceipt({...receipt,...delta},expected),/SAME_RUN_TEST/);
 });
 test('unavailable administration APIs block before credentials can be used for DB work',async()=>{
  const fixture=await auditFixture();
@@ -129,5 +136,71 @@ test('native fixture generation records genuine seed migrations before planning 
  }finally{
   assert.equal(resolve(directory),directory);assert.equal(resolve(directory,'..'),resolve(tmpdir()));assert(basename(directory).startsWith('chat-inbox-native.'));
   rmSync(directory,{recursive:true,force:true});
+ }
+});
+
+test('automatic history capture is environment-bound, PG17, read-only and metadata-only',()=>{
+ for(const environment of ['fairswaptest','fairswapprod']){
+  const sql=historyCaptureSql(environment);
+  assert(sql.startsWith('begin transaction isolation level repeatable read read only;'));
+  assert(sql.includes(manifest.environments[environment].projectRef));assert(sql.includes('CHAT_PG17_REQUIRED'));
+  assert(sql.includes('statementsSha256'));assert(!/select.*messages|password|insert into|update /i.test(sql));
+ }
+ const capture={...input,reviewEvidence:'https://github.com/vivek2310sharma/FairSwap-Backend/actions'};assert.deepEqual(parseHistoryCapture(JSON.stringify(capture)),capture);
+ for(const output of ['',JSON.stringify({ledger:[]}),JSON.stringify(capture)+'\n'+JSON.stringify(capture),'{bad'])assert.throws(()=>parseHistoryCapture(output),/CHAT_HISTORY_CAPTURE_INVALID/);
+ const plan=buildPlan('fairswaptest',capture);assert(plan.execution.includes('CHAT_EXACT_LEDGER_MISMATCH'));assert(plan.postflight.includes('CHAT_POST_LEDGER_DRIFT'));
+});
+
+test('single-dispatch orchestration captures each current ledger and gates Production on same-run Test evidence',async()=>{
+ const directory=mkdtempSync(join(tmpdir(),'chat-one-dispatch-')),previous=process.cwd();
+ const bundle=bundleHash(),events=[],testFixture=await auditFixture('FairSwapTest',bundle),prodFixture=await auditFixture('FairSwapProd',bundle);
+ const context={PATH:process.env.PATH,GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR:'vivek2310sharma',GITHUB_TRIGGERING_ACTOR:'vivek2310sharma',GITHUB_REPOSITORY:'vivek2310sharma/FairSwap-Backend',GITHUB_REF:'refs/heads/main',GITHUB_SHA:testFixture.evidence.sourceCommit,GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'1',CHAT_RELEASE_ENABLED:'true',CHAT_ENVIRONMENT_ENABLED:'true',CHAT_WEB_FLAG_OFF_CONFIRMED:'true',CHAT_DATABASE_PASSWORD:'synthetic-offline-password',CHAT_RELEASE_AUDIT_TOKEN:'fixture-token'};
+ const makeRunner=(environment,{drift=false,wrongIdentity=false,badPost=false}={})=>{
+  const snapshot={...input,observedAt:new Date().toISOString(),projectRef:manifest.environments[environment].projectRef,reviewEvidence:'https://github.com/vivek2310sharma/FairSwap-Backend/actions'};
+  // Distinct histories, including a later version, must never be interchanged.
+  if(environment==='fairswaptest')snapshot.ledger=[...snapshot.ledger,{version:'20261028091220',name:'digilocker_fixture',statementsSha256:hash('digilocker fixture')}];
+  assert.equal(snapshot.ledger.some(row=>row.version==='20261028091220'),environment==='fairswaptest');
+  if(environment==='fairswapprod')snapshot.ledger=[...snapshot.ledger,{version:'20990101000000',name:'later_release',statementsSha256:hash('later')}];
+  let preflights=0;
+  return (binary,args,sql)=>{
+   if(args[0]==='--version')return '2.117.0';
+   if(args.includes('--help'))return '--include-all --db-url';
+   if(sql===historyCaptureSql(environment)){events.push(environment+':capture');return JSON.stringify({...snapshot,projectRef:wrongIdentity?'foreign':snapshot.projectRef});}
+   if(binary==='psql'&&sql.endsWith('rollback;\n')){
+    assert(sql.includes(JSON.stringify(snapshot.ledger)));events.push(environment+':preflight');
+    if(drift&&++preflights===2)throw {stderr:'ERROR: CHAT_EXACT_LEDGER_MISMATCH (SQLSTATE P0001)'};
+    return '';
+   }
+   if(binary==='supabase'&&args[1]==='fetch'){
+    const isolated=args[args.indexOf('--workdir')+1];
+    for(const row of snapshot.ledger)writeFileSync(join(isolated,'supabase/migrations',row.version+'_'+row.name+'.sql'),'select 1;');
+    events.push(environment+':fetch');return '';
+   }
+   if(binary==='supabase'&&args[1]==='up'){
+    const isolated=args[args.indexOf('--workdir')+1],execution=readFileSync(join(isolated,'supabase/migrations',manifest.version+'_'+manifest.name+'.sql'),'utf8');
+    assert(execution.includes('CHAT_EXACT_LEDGER_MISMATCH'));assert(execution.includes(JSON.stringify(snapshot.ledger)));assert(args.includes('--include-all'));events.push(environment+':up');return '';
+   }
+   if(binary==='psql'&&sql.includes('CHAT_POST_LEDGER_DRIFT')){events.push(environment+':postflight');return JSON.stringify({version:manifest.version,flagsOff:badPost?4:5,postgresVersionNum:170006,historySha256:'a'.repeat(64)});}
+   assert.fail('unexpected mocked operation');
+  };
+ };
+ try{
+  mkdirSync(join(directory,'test'));process.chdir(join(directory,'test'));
+  const testReceipt=await release('fairswaptest',bundle,undefined,{context,fetcher:fixtureApi(testFixture.responses),runner:makeRunner('fairswaptest')});
+  assert.equal(testReceipt.schema,3);assert.equal(testReceipt.capturedLedgerSha256,testReceipt.ledgerSha256);
+  const receiptFile=join(process.cwd(),'release-receipt/receipt.json');
+  mkdirSync(join(directory,'prod/test-evidence'),{recursive:true});copyFileSync(receiptFile,join(directory,'prod/test-evidence/receipt.json'));process.chdir(join(directory,'prod'));
+  await assert.rejects(()=>release('fairswapprod',bundle,'0'.repeat(64),{context,fetcher:()=>assert.fail('no API before receipt validation'),runner:()=>assert.fail('no DB')}),/SAME_RUN_TEST/);
+  const prodReceipt=await release('fairswapprod',bundle,testReceipt.capturedLedgerSha256,{context,fetcher:fixtureApi(prodFixture.responses),runner:makeRunner('fairswapprod')});
+  assert.notEqual(prodReceipt.capturedLedgerSha256,testReceipt.capturedLedgerSha256);
+  assert(events.indexOf('fairswaptest:postflight')<events.indexOf('fairswapprod:capture'));
+  for(const [name,options,expected]of [['drift',{drift:true},/UNEXPECTED_SQL_FAILURE/],['identity',{wrongIdentity:true},/CHAT_/],['postflight',{badPost:true},/POSTFLIGHT_RECEIPT_INVALID/]]){
+   mkdirSync(join(directory,name));process.chdir(join(directory,name));const start=events.length;
+   await assert.rejects(()=>release('fairswaptest',bundle,undefined,{context,fetcher:fixtureApi(testFixture.responses),runner:makeRunner('fairswaptest',options)}),expected);
+   if(name!=='postflight')assert(!events.slice(start).includes('fairswaptest:up'));
+   assert(!readdirSync('.').includes('release-receipt'));
+  }
+ }finally{
+  process.chdir(previous);assert.equal(resolve(directory,'..'),resolve(tmpdir()));assert(basename(directory).startsWith('chat-one-dispatch-'));rmSync(directory,{recursive:true,force:true});
  }
 });
