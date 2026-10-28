@@ -1,0 +1,36 @@
+{
+  "release": "ratings-v1-operations-rebased",
+  "status": "PREPARED_NOT_DEPLOYED",
+  "environment": "staging",
+  "project": {
+    "name": "FairSwapTest",
+    "ref": "wpppxlnbzqynvhpeuavd"
+  },
+  "sourceBases": {
+    "FairSwap-Backend": "a36dc5b5b02e0cc840985cc950eb9d836d9890ca",
+    "FairSwap-Web": "722bd55463045b2f2d653bfff6f058815d543897",
+    "FairSwap-HelpCenter": "ea9997e469cf5f41e3864637f55ea7ece8857397"
+  },
+  "prerequisiteRatingsVersions": [
+    "20261026083608",
+    "20261026083610",
+    "20261026083612",
+    "20261026083613",
+    "20261026083614",
+    "20261026094908",
+    "20261028104504"
+  ],
+  "applyOrder": [
+    {
+      "version": "20261028122328",
+      "path": "supabase/forward-migrations/ratings/20261028122328_ratings_operations_compatibility.sql",
+      "sha256": "f77cf16752bacebe6118aa1dbde1dd9b43deb637e41377ba55942f51ad7baef4"
+    }
+  ],
+  "hostedLedgerVerified": false,
+  "featureFlags": "All Ratings flags OFF; IDV state untouched",
+  "preflight": "Verify actual environment ledger, matching project, PG17, backups, private exporter chain, inactive Ratings jobs and all Ratings gates OFF; never reapply installed versions or replace unrelated migrations.",
+  "schedule": "External five-minute monitor and independent ten-minute missing-success/failure alarms; optional paid-plan Vercel cron; no scheduler provisioned here.",
+  "runbook": "docs/operations/RATINGS_V1_OPERATIONS.md",
+  "owner": "Vivek Kumar"
+}

@@ -6,6 +6,16 @@ export async function operationsChecks(db,test) {
  const owner=()=>db.exec('reset role;set role postgres');
  await owner();
  await db.exec('select app_security.ratings_provision_inactive_jobs()');
+ await test('monitor detects configuration drift without enabling Ratings or modifying IDV',async()=>{
+  await db.exec(`begin;
+   update public.profile_rating_stats set counted_review_count=0,published_review_count=0,score=null,communication_average=null,payment_item_average=null,meetup_average=null;
+   update app_security.ratings_settings set min_reviews=4;
+   do $$ begin if not (app_security.ratings_operational_health()->'codes' ? 'invalid_reputation') then raise exception 'THRESHOLD_DRIFT_NOT_DETECTED'; end if; end $$;
+   rollback;`);
+  await db.exec(`do $$ begin perform set_config('cron.log_run','off',true);
+   if not (app_security.ratings_operational_health()->'codes' ? 'schedule_drift') then raise exception 'CRON_LOG_DRIFT_NOT_DETECTED'; end if; end $$;`);
+  assert.equal(await q("select count(*)::int from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='app_security' and c.relname in ('idv_verification_attempts','idv_identity_records','idv_audit_events') and c.relrowsecurity"),3);
+ });
  await test('operations denies consumer diagnostics, fixture enrollment and global workers',async()=>{
   for(const role of ['anon','authenticated','service_role']) {
    await db.exec(`set role ${role}`);
@@ -121,6 +131,18 @@ export async function operationsChecks(db,test) {
   assert.equal(await q('select count(*)::int from app_security.rating_notification_receipts where trade_id=$1',[t]),0);
   await db.exec('drop trigger ratings_fail on public.notifications;select app_security.rating_reminders();select app_security.rating_reminders()');
   assert.equal(await q('select count(*)::int from app_security.rating_notification_receipts where trade_id=$1 and notification_id is not null',[t]),2);
+  await db.exec('update app_security.ratings_settings set enabled=false,jobs_enabled=false,public_reads=false,staff_enabled=false;update cron.job set active=false');
+ });
+ await test('wrong-recipient notification writes roll back and normal reminder replay recovers',async()=>{
+  await db.exec('update app_security.ratings_settings set enabled=true,jobs_enabled=true');
+  await db.exec(`create function public.ratings_wrong_recipient() returns trigger language plpgsql as $$begin new.user_id='${seller}'::uuid;return new;end$$;
+   create trigger ratings_wrong_recipient before insert on public.notifications for each row execute function public.ratings_wrong_recipient()`);
+  const t=await q("insert into public.rating_trades(seller_id,buyer_id,state) values($1,$2,'pending_buyer') returning id",[seller,buyer]);
+  assert.equal(await q('select count(*)::int from app_security.rating_notification_receipts where trade_id=$1',[t]),0);
+  await db.exec('drop trigger ratings_wrong_recipient on public.notifications;select app_security.rating_reminders();select app_security.rating_reminders()');
+  assert.equal(await q('select count(*)::int from app_security.rating_notification_receipts r join public.notifications n on n.id=r.notification_id and n.user_id=r.user_id where r.trade_id=$1',[t]),2);
+  await db.query("update public.notifications set user_id=$1 where id=(select notification_id from app_security.rating_notification_receipts where trade_id=$2 and user_id=$3)",[seller,t,buyer]);
+  assert((await codes()).includes('notification_missing'));
   await db.exec('update app_security.ratings_settings set enabled=false,jobs_enabled=false,public_reads=false,staff_enabled=false;update cron.job set active=false');
  });
 }

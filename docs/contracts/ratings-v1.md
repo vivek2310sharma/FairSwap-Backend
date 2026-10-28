@@ -1,5 +1,10 @@
 # Ratings V1 backend contract
 
+Rebased compatibility delta, 28 October 2026: the source-integrated operations
+foundation stays immutable. `20261028122328_ratings_operations_compatibility.sql`
+adds recipient/route persistence validation and configuration-drift monitoring.
+It adds no table, grant, policy, activation or change to DigiLocker contracts.
+
 Operational delta, 28 October 2026: additive migration
 `20261028104504_ratings_operations_v1.sql` preserves the six original Ratings files.
 It links new notification receipts to persisted notifications, retries initial

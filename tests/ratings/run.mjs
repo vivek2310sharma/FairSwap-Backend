@@ -71,6 +71,9 @@ try {
   await db.exec(read('supabase/forward-migrations/ratings/'+f));
  }
  const version=await q('select version()');console.log('Engine: '+version);
+ // Install the current DigiLocker foundation alongside Ratings. No activation or
+ // worker invocation occurs; this catches cross-feature schema/ACL collisions.
+ await db.exec(read('supabase/forward-migrations/idv/20261026183000_idv_digilocker_foundation.sql'));
  if(nativePort)assert.match(version,/PostgreSQL 17\./);
  await test('all activation flags default off and scheduler does nothing',async()=>{
   assert.equal(await q(`select count(*)::int from app_security.ratings_settings where enabled or public_reads or jobs_enabled or staff_enabled`),0);
