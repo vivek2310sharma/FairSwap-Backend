@@ -1,5 +1,13 @@
 # Ratings V1 operations — release delta, 28 October 2026
 
+Reconciled against Backend main `a36dc5b5b02e0cc840985cc950eb9d836d9890ca`.
+The operations foundation is already source-integrated; do not replay it as a new
+file or rewrite any of the seven existing Ratings migrations. The new release delta
+is `20261028122328_ratings_operations_compatibility.sql`. It validates the persisted
+notification's recipient/route and alerts on cron-history disablement or score-threshold
+drift, with existing RLS, ACLs and all flags preserved. DigiLocker source and SQL remain
+unchanged; the automated SQL suite installs its current foundation alongside Ratings.
+
 Responsible operator: **Vivek Kumar, FairSwap release owner**. Route the existing
 `OPERATIONS_ALERT_WEBHOOK_URL` sink to the operator's monitored incident channel.
 No webhook URL, service key, private case text or participant identifier belongs in
@@ -7,8 +15,10 @@ logs or release receipts. This document is a release procedure, not hosted evide
 
 ## Dependencies and environment configuration
 
-Apply only `20261028104504_ratings_operations_v1.sql`, after the six existing Ratings
-migrations through `20261026094908_ratings_consumer_contract.sql`. Do not alter or
+Apply `20261028122328_ratings_operations_compatibility.sql` after the existing
+`20261028104504_ratings_operations_v1.sql` foundation and six original Ratings versions.
+Verify each environment's actual ledger first: apply a prerequisite only if absent,
+using the reviewed isolated release plan. Do not alter or
 reapply any existing migration, run raw `db push`, or copy Test-only migrations to
 Prod. The new migration is transactional, additive and backward compatible with
 existing consumer RPCs. New private tables have RLS enabled and forced, deny all
@@ -67,6 +77,10 @@ dimension invariants; duplicate receipt/delivery identifiers (also prevented by
 unique constraints); missing linked notification persistence; overdue initial action
 notifications; and any unresolved dispute **or review report** older than 24 hours.
 The 24-hour threshold is an operator escalation target, not a public service SLA.
+`invalid_reputation` also covers `min_reviews` drift from three; `schedule_drift`
+also covers `cron.log_run=off`. A version-1 notification linked to the wrong recipient
+or route triggers `notification_missing`; new worker writes reject and roll back such
+links before committing either receipt or notification.
 Historical receipts have `delivery_version=0`: preserve them as idempotency evidence;
 do not recreate notifications when old persistence cannot be unambiguously proven.
 New deliveries have version 1 and a unique notification FK. Missing version-1
@@ -156,7 +170,7 @@ chain/ACLs, and environment-specific migration histories in isolated workspaces.
    configuration for FairSwapProd; deploy the compatible Admin candidate through its
    existing release process. Do not assume this task verified the Admin repository.
 3. Deploy HelpCenter corrections; all four drafts remain withheld from production by
-   `src/lib/content.ts` until the existing all-locale human editorial gate is satisfied.
+   `src/lib/content.ts` until each locale's current human editorial gate is satisfied.
 4. Verify scheduler receipts, flags-OFF state, inactive Ratings job metadata and monitor
    health automatically in each environment. Record exact deployment IDs, migration
    versions and evidence. Coordinated activation is outside this source task.
