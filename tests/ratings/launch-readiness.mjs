@@ -114,20 +114,42 @@ export async function launchReadinessChecks(db, test, rollback) {
   // no second publication/reminder/notification fixture suite is introduced.
   const missingRun=monitoring.match(/select j\.jobname,\r?\n j\.active and[\s\S]*?(?=;)/)?.[0];
   assert(missingRun,'Missing scheduler monitor statement');
-  const job=await q("select jobid from cron.job where jobname='ratings-v1-publication'");
-  await db.query('delete from cron.job_run_details where jobid=$1',[job]);
-  try {
-   await db.query('update cron.job set active=true where jobid=$1',[job]);
-   assert.equal((await db.query(missingRun)).rows.find(r=>r.jobname==='ratings-v1-publication').missing_recent_run_alert,true);
-   await db.query("insert into cron.job_run_details(jobid,status,start_time,end_time) values($1,'succeeded',clock_timestamp(),clock_timestamp())",[job]);
-   assert.equal((await db.query(missingRun)).rows.find(r=>r.jobname==='ratings-v1-publication').missing_recent_run_alert,false);
-   await db.query("update cron.job_run_details set start_time=clock_timestamp()-interval '11 minutes' where jobid=$1",[job]);
-   assert.equal((await db.query(missingRun)).rows.find(r=>r.jobname==='ratings-v1-publication').missing_recent_run_alert,true);
-   await db.query('update cron.job set active=false where jobid=$1',[job]);
-   assert.equal((await db.query(missingRun)).rows.find(r=>r.jobname==='ratings-v1-publication').missing_recent_run_alert,false);
-  } finally {
-   await db.query('update cron.job set active=false where jobid=$1',[job]);
-   await db.query('delete from cron.job_run_details where jobid=$1',[job]);
+  for(const [name,schedule,limit,recent] of [
+   ['ratings-v1-publication','*/5 * * * *',10,[0,9]],
+   ['ratings-v1-reminders','17 * * * *',75,[0,15,74]],
+  ]) {
+   const original=(await db.query('select jobid,active,schedule from cron.job where jobname=$1',[name])).rows[0];
+   assert(original,`Missing fixture job: ${name}`);
+   const job=original.jobid;
+   assert.equal(await q('select count(*)::int from cron.job_run_details where jobid=$1',[job]),0);
+   const alerts=async(silence,drift=false)=>{
+    const row=(await db.query(missingRun)).rows.find(r=>r.jobname===name);
+    assert.equal(row.missing_recent_run_alert,silence,`${name}: scheduler silence`);
+    assert.equal(row.scheduler_configuration_alert,drift,`${name}: scheduler configuration`);
+   };
+   try {
+    await db.query('update cron.job set active=true,schedule=$2 where jobid=$1',[job,schedule]);
+    await alerts(true); // Active, no recorded runs.
+    await db.query('update cron.job set active=false where jobid=$1',[job]);
+    await alerts(false); // Inactive, no recorded runs.
+    await db.query('update cron.job set active=true where jobid=$1',[job]);
+    await db.query("insert into cron.job_run_details(jobid,status,start_time,end_time) values($1,'succeeded',clock_timestamp()-interval '2 days',clock_timestamp()-interval '2 days')",[job]);
+    await alerts(true); // History exists, but is overdue even beyond one day.
+    await db.query("insert into cron.job_run_details(jobid,status,start_time,end_time) values($1,'succeeded',clock_timestamp(),clock_timestamp())",[job]);
+    for(const minutes of [...recent,limit+1]) {
+     await db.query("update cron.job_run_details set start_time=clock_timestamp()-make_interval(mins=>$2),end_time=clock_timestamp()-make_interval(mins=>$2) where jobid=$1 and start_time>clock_timestamp()-interval '1 day'",[job,minutes]);
+     await alerts(minutes>limit);
+    }
+    await db.query('update cron.job set active=false where jobid=$1',[job]);
+    await alerts(false); // Inactive, overdue runs.
+    for(const active of [false,true]) {
+     await db.query("update cron.job set active=$2,schedule='* * * * *' where jobid=$1",[job,active]);
+     await alerts(active,true); // Cron drift is visible even while inactive.
+    }
+   } finally {
+    await db.query('update cron.job set active=$2,schedule=$3 where jobid=$1',[job,original.active,original.schedule]);
+    await db.query('delete from cron.job_run_details where jobid=$1',[job]);
+   }
   }
   assert.equal(await q("select count(*)::int from public.profile_rating_stats where score<0 or score>10 or (counted_review_count<3 and score is not null)"),0);
  });

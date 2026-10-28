@@ -504,8 +504,15 @@ substitute SQL role settings, forged JWTs or direct worker calls for those proof
 Ratings notifications are **in-app only**, through `create_notification` into
 `public.notifications`, with `support_reply` and `/account/ratings`. No external
 WhatsApp/SMS/email provider was added or tested. Aggregate monitoring now also
-alerts when an active Ratings cron has no run started within ten minutes; inactive
-jobs do not alert. SQL monitoring is not an installed alert route. A genuine
+alerts when an active Ratings cron has no recorded run or its latest start is
+older than its cadence-specific silence limit: publication (`*/5 * * * *`)
+10 minutes; reminders (`17 * * * *`) 75 minutes, in both Test and Production.
+An hourly reminder last started 15 minutes ago does not alert. Inactive jobs
+do not raise scheduler-silence alerts. A separate scheduler-configuration alert
+detects a cron expression differing from these expected schedules, even while
+inactive; the existing missing-jobs alert detects absent jobs. Disposable PG17
+checks exercise both jobs with recent, absent and overdue run histories, inactive
+schedules and cron drift. SQL monitoring is not an installed alert route. A genuine
 on-call owner and alert sink remain a separate protected task and acceptance gap.
 
 File inventory: `tests/ratings/auth-sessions.mjs`, `auth-sessions.test.mjs`,

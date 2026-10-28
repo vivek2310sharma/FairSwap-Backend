@@ -37,10 +37,15 @@ select count(*) filter(where r.status='failed') as failed_runs_alert,
  and r.start_time>=clock_timestamp()-interval '1 day';
 -- An active scheduler can silently stop recording runs without emitting a
 -- failed/starting/running row. Inactive launch gates must not page on this.
+-- Match the verified Test/Production cadences; alert separately on cron drift.
 select j.jobname,
- j.active and coalesce(max(r.start_time)<clock_timestamp()-interval '10 minutes',true)
-  as missing_recent_run_alert
- from cron.job j left join cron.job_run_details r on r.jobid=j.jobid
- where j.jobname in ('ratings-v1-publication','ratings-v1-reminders')
- group by j.jobid,j.jobname,j.active;
+ j.active and coalesce(max(r.start_time)<clock_timestamp()-e.silence_threshold,true)
+  as missing_recent_run_alert,
+ j.schedule is distinct from e.schedule as scheduler_configuration_alert
+ from cron.job j join (values
+  ('ratings-v1-publication','*/5 * * * *',interval '10 minutes'),
+  ('ratings-v1-reminders','17 * * * *',interval '75 minutes')
+ ) e(jobname,schedule,silence_threshold) on e.jobname=j.jobname
+ left join cron.job_run_details r on r.jobid=j.jobid
+ group by j.jobid,j.jobname,j.active,j.schedule,e.schedule,e.silence_threshold;
 commit;
