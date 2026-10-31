@@ -183,70 +183,180 @@ Test `821f536ad89962bc345586f175c86d23`, Prod
 source-drift fingerprint, not an artifact-authentication mechanism. Exact function
 behavior and metadata remain subject to fresh release preflight.
 
-## Read-only environment-specific release automation
+## Protected release workflow
 
-`tests/fsw-sec-003/release-gate.mjs` has only `prepare`, `preflight`, and `postflight`
-commands. It cannot apply, repair, reset or deploy. No hosted command was run here.
-It uses already protected libpq services named exactly `FairSwapTest` and
-`FairSwapProd`, existing CLI authentication/database access, and CLI 2.117.0. No
-credentials are printed, placed in command arguments, source files or receipts.
-No new application/deployment environment variable or secret name is introduced.
-A later protected release must supply existing access; missing access fails closed.
+`.github/workflows/fsw-sec-003-protected-release.yml` is a single owner-only
+`workflow_dispatch` on protected `main`. Input `approved_sha` must equal the exact
+reviewed workflow/source commit. `FSW_SEC_003_RELEASE_ENABLED=true` is an explicit
+repository/environment enable variable, not an application variable. Concurrency
+cannot cancel an in-progress release. No automatic deployment follows a merge.
 
-`prepare` independently captures each target's exact full version/name/statement
-hash ledger with read-only SQL, validates verified TLS and its project-specific
-hostname/user/session port, and records RPC owners/ACLs/signatures/body hashes and
-all six search tables' RLS/policies/table/column grants. Captures expire in 15
-minutes. It links a **fresh isolated workspace**, executes authentic CLI
-`migration fetch --linked`, verifies exact filenames and every historical SQL file
-against that target's ledger statement digest, recaptures live metadata to detect
-races, copies the single checksum-pinned candidate, verifies complete pending
-workspace membership and requires a genuine dry-run naming exactly that candidate.
-Nothing manufactures historical files or ledger rows. Additive history is accepted
-only as genuinely fetched, independently captured target history; it is never
-copied between environments or inferred from the old snapshot counts.
+Order: successful independent `backend-ci.yml` push run at that exact SHA → protected
+FairSwapTest approval, migration and automated postflight → checksum-bound successful
+Test receipt validation in a credential-free job → separate protected FairSwapProd approval, migration and postflight.
+Existing environment approvals, branch rules and required checks remain in force.
+The existing GET-only protection auditor checks main head, owner/triggering actor,
+reviewer, bypass and collaborator rules, and environment-only credential placement;
+it confers no Chat-specific release or recovery exception. All existing workflows
+remain enabled. New synthetic tests join independent CI without removing checks.
+No Web, Admin, HelpCenter, Android or iOS release is involved.
 
-`preflight` is the immediate-before-apply recheck of fresh live metadata and every
-historical/pending workspace byte. `postflight` requires exactly the one expected
-CLI ledger entry with the measured statement digest; all earlier history and all
-captured RLS/ACL/policy/owner/signature/security metadata must remain identical.
-It verifies the new private function body exactly and leaves each environment's
-public wrapper fingerprint intact. Production preparation requires the matching
-successful Test postflight receipt for this candidate. Receipts are created with
-exclusive mode-0600 files and never overwrite earlier evidence. They are local
-metadata evidence, not signed workflow attestations or deployment authorization.
-Preserve existing protected release/recovery and CI safeguards; the Chat release
-exception does not authorize this release.
+Changed files for this workflow implementation:
 
-Example invocation sequence after review, using separate fresh absolute workspaces
-and new receipt paths (credential values stay in existing protected service/CLI
-configuration):
+- `.github/workflows/fsw-sec-003-protected-release.yml`: protected dispatch and receipt transfer.
+- `scripts/release/fsw-sec-003-release.mjs`: dedicated orchestration and sanitized receipts.
+- `scripts/release/install-fsw-sec-003-pg.sh`: same pinned PG17.6 source, TLS-enabled build.
+- `tests/fsw-sec-003/protected-release.test.mjs`: injected, synthetic release/failure tests.
+- `.github/workflows/backend-ci.yml`: adds the new test file to the existing search test command.
+- This README. Existing unrelated checkout changes are preserved.
 
-```sh
-node tests/fsw-sec-003/release-gate.mjs prepare FairSwapTest /absolute/psql /absolute/supabase /absolute/fresh-test /absolute/test-pre.json
-node tests/fsw-sec-003/release-gate.mjs preflight FairSwapTest /absolute/psql /absolute/test-pre.json
-# ChatGPT's separately authorized supported CLI-managed Test migration, then automated gates.
-node tests/fsw-sec-003/release-gate.mjs postflight FairSwapTest /absolute/psql /absolute/test-pre.json /absolute/test-post.json
-node tests/fsw-sec-003/release-gate.mjs prepare FairSwapProd /absolute/psql /absolute/supabase /absolute/fresh-prod /absolute/prod-pre.json /absolute/test-post.json
-node tests/fsw-sec-003/release-gate.mjs preflight FairSwapProd /absolute/psql /absolute/prod-pre.json
-# ChatGPT's separately authorized supported CLI-managed Production migration.
-node tests/fsw-sec-003/release-gate.mjs postflight FairSwapProd /absolute/psql /absolute/prod-pre.json /absolute/prod-post.json
-```
+`release-gate.mjs` and `capture-release.sql` remain unchanged. Their independent
+history, byte, function and RLS validators are reused. Their standalone commands
+are read-only preparation tools, not a substitute for protected release authority.
+Approved SQL SHA-256 remains
+`b9746cdf49299af84bbbfc5f79b51dd7d67a737202a2d54c55f8743fc15770bd`;
+none of the 58 historical migrations changes.
 
-Release limitations/blockers: complete Linux CI and the independently authorized
-hosted prepare/preflight/postflight sequence have not run. Effective hosted Data API
-schema configuration must be confirmed by the protected release's read-only
-configuration evidence: SQL captures `pgrst.db_schemas` when configured and rejects
-`app_security`, but a null DB setting cannot attest PostgREST process-level config.
-The standalone tool does not claim that missing evidence is proof of privacy. It
-preserves the setting and the migration never changes API exposure. The real local
-HTTP suite proves the intended `public`-only API configuration only. No manual or
-exploratory hosted/user-data test is authorized or needed by this preparation.
+### Credentials and supported CLI path
 
-Order: FairSwapTest Backend migration → automated gates/postflight → identical
-reviewed FairSwapProd migration → automated postflight. No Web release. Owner
-inspects production normal search, category/city/price filters, pagination,
-Hindi/English behavior, errors and latency after deployment; no owner predeployment
-test or approval gate is added.
+| Existing protected input | Use / requirement |
+| --- | --- |
+| `FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN` | Test-only CLI link and Management API reads; previously proven project metadata access only, not sufficient release permissions by assumption |
+| `FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN` | Independent Prod-only equivalent; no cross-project token substitution |
+| `CHAT_DATABASE_PASSWORD` | Existing environment-only database password; explicitly reused for this reviewed database release, with no Chat authorization inference |
+| `CHAT_DB_SSL_ROOT_CERT_PEM` | Existing environment-specific trusted CA; valid CA/time/PEM required |
+| `CHAT_DB_POOLER_HOST` | Existing environment-specific raw session-pooler host, fixed 5432 and `postgres.<expected-ref>` |
+| `CHAT_RELEASE_AUDIT_TOKEN` | Existing environment-only GitHub protection-read token; complete ruleset/bypass/environment metadata required |
+| `github.token` | Read-only Actions evidence for exact-commit independent CI |
 
-Rollback: reviewed forward compensating SQL migration; never erase ledger history.
+No application variables, credentials or permissions are created. `FSW_ENVIRONMENT`,
+`FSW_PSQL`, `FSW_CLI`, `APPROVED_SHA`, `TEST_RECEIPT_SHA` and `FSW_RELEASE_ENABLED`
+are workflow-local bindings, not secrets. The existing Supabase tokens are recorded
+as repository-level secrets; their scope does not itself confer deployment authority.
+They are supplied only to the respective protected job. Any eventual relocation
+must preserve their names and existing consumers and is outside this local task.
+
+CLI 2.117.0 is installed using the existing archive/checksum installer. Fresh private
+workspaces execute genuine `init`, `link --project-ref` and `migration fetch --linked`.
+The link-generated project-ref is verified. Linked preparation needs the matching
+Supabase Management API token as well as the existing database password. Missing
+password blocks before link, avoiding CLI temporary-role creation. Missing API
+access blocks; no login, secret creation, password reset or privilege widening occurs.
+The [CLI link contract](https://supabase.com/docs/reference/cli/supabase-link) documents
+`SUPABASE_DB_PASSWORD`. The pinned implementation's
+[connection configuration](https://github.com/supabase/cli/blob/v2.117.0/apps/cli-go/internal/utils/flags/db_url.go)
+and [TLS preservation](https://github.com/supabase/cli/blob/v2.117.0/apps/cli-go/internal/utils/connect.go)
+were inspected for this path.
+
+Unlike the Chat release's URL-only preparation, linked preparation here is genuine;
+no link cache or migration ledger is fabricated. Every historical fetched statement
+checksum and filename must match independently captured target history. Only then
+is the single pinned candidate copied. Genuine `db push --db-url <verified-url>
+--dry-run` must list exactly that pending candidate. Apply uses the same supported
+`db push --db-url` path and explicit session/TLS URL, avoiding an implicit linked
+endpoint/fallback for deployment. Passwords stay in subprocess environment, never
+arguments; raw subprocess output is captured privately and never logged. No repair,
+reset, raw historical-directory push, include-all, seed or roles flags are used.
+
+The existing PG17.6 fixture build disables OpenSSL. The release-only helper verifies
+the same pinned archive and enables OpenSSL, without changing the original fixture
+build. Both clients require `verify-full`, the trusted CA and session port 5432.
+All fetched histories, CLI caches, passwords and certificates stay under a private
+mode-0700 temporary parent, removed on normal success/failure. Abrupt runner death
+relies on GitHub's ephemeral runner disposal. Only allowlisted receipts are uploaded.
+
+### Exposure, recovery and authority gates
+
+Each target independently requires read-only
+`GET /v1/projects/{ref}/postgrest` immediately before release and after migration.
+Only exactly `public` is accepted as `db_schema`; absent/unknown config, any extra
+schema (including `app_security`), denied reads or transport failures block.
+Only the project ref and schema allowlist are retained; the response's optional
+JWT secret and all other fields are discarded without hashing, logging or persistence.
+The [Management API schema](https://api.supabase.com/api/v1-json) specifies
+`rest:read` / `data_api_config_read`; secret-config read access is unnecessary.
+A null `pgrst.db_schemas` SQL setting never substitutes for this evidence.
+
+The same token must support the CLI's required link metadata reads, including its
+API-key/service configuration reads. Existing project-read scope is not assumed to
+suffice. The workflow must stop if it is insufficient. No genuinely missing secret
+can be asserted from local source: credential availability and permissions remain
+UNVERIFIED. If current scoped tokens cannot satisfy link and read-only configuration
+access, a separately authorized environment-scoped least-privilege credential and
+reviewed wiring are required; no broader token is silently substituted.
+
+The earlier Chat no-backup/authority exception is explicitly excluded. Before any
+database access, each job requires a reviewed, sanitized recovery record at
+`releases/candidates/fsw-sec-003/recovery/<FairSwapTest|FairSwapProd>.json` in the
+approved source commit. **Neither record exists in this checkout.** This intentionally
+blocks release with `FSW_REVIEWED_RECOVERY_AND_AUTHORITY_EVIDENCE_REQUIRED`.
+Do not invent records to make the gate pass.
+
+A record must contain `status: PASS`, exact `environment`, `projectRef`, candidate
+`sha256`, `verifiedAt` within 24 hours, `backupId`, `backupAvailable: true`,
+`automatedRestoreVerified: true`, `exclusiveBackendAuthority: true` and SHA-256
+references `backupSha256`, `automatedRestoreReceiptSha256`,
+`privilegedWriterInventorySha256`, `retiredWriterProofSha256`. Restore and authority
+references are reviewed evidence assertions, not independently discovered proof;
+review must inspect the actual automated restore result and authority/retirement
+proof behind those digests. A boolean or arbitrary digest alone supplies no evidence.
+No manual/exploratory predeployment test is required or authorized.
+
+Backup availability is independently rechecked using read-only
+`GET /v1/projects/{ref}/database/backups` (`database:read` / `backups_read`). The
+reviewed ID must identify exactly one `COMPLETED` backup, created within 24 hours.
+`backupSha256` is SHA-256 of UTF-8 `JSON.stringify` over exactly these keys, in order:
+`{id,status,inserted_at,is_physical_backup}`. Both recovery freshness and live backup
+availability are checked again immediately before apply. Unavailable restore,
+exclusive-authority or recovery evidence is a blocker; no waiver is inferred.
+Backup contents are never downloaded or uploaded by this workflow.
+
+### Postflight, receipts and recovery
+
+Fresh metadata must preserve the independent environment's full prior ledger,
+public wrapper, function owner/signatures/ACL/security, all captured table/column
+grants, RLS and policies. Additional read-only schema inspection preserves owners,
+ACLs and effective role privileges on `public` and `app_security`, rejecting client
+schema CREATE privileges. The installed private SQL body must match exactly; the
+single new CLI ledger entry must match measured statement digest
+`9cc72ec137f4078b39e1c57065592ec008a63afae2a6b85cc8b06aa206b29c15`.
+
+Success/failure receipts contain only identity, phase, migration-attempt status,
+allowlisted blocker codes and evidence digests. Raw SQL/history/catalog/API response
+bodies and credentials never enter artifacts. Mode-0600 receipts are exclusively
+created with SHA256SUMS; artifacts cannot overwrite earlier evidence. Production
+uses the artifact ID and receipt hash output by the successful Test job and rechecks
+status, run, attempt, commit, project, migration SHA/version, postflight and freshness
+(maximum 24 hours) before any Production read. A failed or rerun Test receipt cannot
+start Production. Separate protected environment approvals are retained.
+
+If migration was attempted and postflight failed, stop and review the failure receipt;
+do not rerun blindly or infer rollback. Rollback is a reviewed forward compensating
+SQL migration, preserving all history. No automatic destructive recovery is added.
+
+### Local verification and remaining blockers
+
+On local `main` at `8f3abe1cb7a5053a7ce2f741ae66d6d969f0c180` (different from the
+requested `068f8168...` baseline), existing dirty/untracked work was preserved.
+No fetch, commit, push, PR, dispatch or hosted operation occurred.
+
+PASS: Node 24.21.0, `node --test tests/fsw-sec-003/release-gate.test.mjs
+ tests/fsw-sec-003/protected-release.test.mjs`: 60 tests (37 existing + 23 new),
+zero failed/skipped. This includes complete injected Test→Prod flow, wrong target/SHA,
+stale receipt/run/attempt, missing permissions, TLS failure, duplicate migration,
+unexpected pending migrations, history mismatch and catalog/schema drift.
+PASS: immutable migration manifest (58/58), candidate digest and shell/JS syntax.
+
+NOT RUN: pinned CI Node 24.15.0, Linux TLS build, full independent/native/HTTP CI,
+real linked CLI preparation and hosted acceptance. Synthetic tests do not prove
+network/TLS behavior or credential permissions. The 115 SQL and 40 HTTP suites are
+retained in independent CI; this implementation did not rerun them locally.
+
+BLOCKED for release: missing reviewed per-environment recovery/authority evidence;
+exact new reviewed main commit and successful CI; live environment/branch protection,
+credential/least-privilege access, effective exposure and backup checks remain
+unverified until separately authorized orchestration. No production writes are
+necessary to complete this local implementation.
+
+After deployment, owner production checks: English/Hindi search, category/city/price
+filters, pagination, errors and latency. No owner testing before deployment is added.
