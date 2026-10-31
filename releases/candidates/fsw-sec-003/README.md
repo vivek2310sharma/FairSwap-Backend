@@ -368,3 +368,14 @@ filters, pagination, errors and latency. No owner testing before deployment is a
 A separate owner-dispatched evidence workflow now prepares independent protected
 Test/Prod metadata receipts. It does not enable or modify deployment gates.
 See [collection contract, permissions, trust boundary and remaining blockers](EVIDENCE_GAPS.md#protected-read-only-producer-added-locally--fsw-sec-003-continuation).
+
+## FSW-SEC-003 owner Free-plan backup waiver — source continuation
+
+For the exact two approved FairSwap project refs and pinned candidate only, the owner accepted the risk of no provider-managed backup or backup-dependent restore verification: [PR #75 waiver record](https://github.com/vivek2310sharma/FairSwap-Backend/pull/75#issuecomment-6549137816). The release now records `WAIVED_BY_OWNER` separately from verified checks; it must never claim `PASS` for backups or restoration.
+
+The original protected Test → Production workflow remains unchanged. Effective public-only PostgREST schema configuration, exclusive writer-authority evidence (with independently authenticated proof), privileged-writer retirement inventory, complete environment-specific migration histories, CI, pinned CLI/PG17, TLS, RLS/grants and postflight checks remain mandatory. The 31 October read-only audit [run #41240954746](https://github.com/vivek2310sharma/FairSwap-Backend/actions/runs/41240954746) established protection and project isolation, but Data API configuration access remains unverified; this waiver does **not** waive Data API exposure.
+
+Codex reports **127/127 local automated tests** passing for this scoped change, with the 58 canonical migrations unchanged. Hosted operation and GitHub CI for this change require independent verification. No database, Web, Admin, HelpCenter, Android, iOS or Vercel changes are involved.
+
+Owner production inspection after a separately authorized release: English/Hindi search; category/city/price filters; pagination, errors and latency. Rollback is a **reviewed forward compensating migration** retaining immutable history, with **no guaranteed data restoration** on Free without an independent recoverable backup.
+
