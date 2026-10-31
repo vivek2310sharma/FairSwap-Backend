@@ -89,6 +89,14 @@ jobs:
             node tests/ratings/run.mjs
           ./node_modules/.bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution Bundler --module ESNext src/lib/ratings/contract.ts src/lib/ratings/score.ts
 
+      - name: Require all 115 public search regression checks (pinned PGlite)
+        timeout-minutes: 2
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            node tests/fsw-sec-003/run-disposable.mjs \
+            --pglite-module tests/ratings/node_modules/@electric-sql/pglite/dist/index.js
+          node --test tests/fsw-sec-003/release-gate.test.mjs
+
       - name: Run validator regression checks
         timeout-minutes: 1
         run: node --test scripts/ci/verification.test.mjs
@@ -214,6 +222,24 @@ jobs:
           node --experimental-strip-types --test tests/ratings/contract.test.mjs
           node node_modules/typescript/bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution Bundler --module ESNext src/lib/ratings/contract.ts src/lib/ratings/score.ts
           bash tests/ratings/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+
+      - name: Install checksum-pinned disposable PostgREST
+        timeout-minutes: 2
+        run: node tests/fsw-sec-003/install-postgrest.mjs
+      - name: Require native PostgreSQL 17.6 public search regression
+        timeout-minutes: 4
+        run: |
+          bash tests/fsw-sec-003/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+
+      - name: Install existing checksum-pinned Supabase CLI for disposable rehearsal
+        timeout-minutes: 2
+        run: bash scripts/release/install-inbox-cli.sh
+      - name: Require authentic CLI ledger, fetch, dry-run and capture contract
+        timeout-minutes: 3
+        run: |
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP" \
+            node tests/fsw-sec-003/cli-rehearsal.mjs \
+            "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin" "$(command -v supabase)"
 
   ratings-hosted-readiness-pg17:
     needs: unit-integrity
