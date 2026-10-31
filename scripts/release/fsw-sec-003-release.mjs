@@ -44,6 +44,25 @@ export function authorize(environment,c) {
  backupWaiver(environment);
 }
 function binding(environment,c) {return {environment,projectRef:refs[environment],sourceCommit:c.GITHUB_SHA,runId:c.GITHUB_RUN_ID,runAttempt:c.GITHUB_RUN_ATTEMPT,sha256:SHA,version:VERSION};}
+// Explicit one-candidate exception; no signed verification result is fabricated.
+export function authorityDeferral(environment,c,options={}) {
+ need(c.FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED==='true','AUTHORITY_DEFERRAL_DISABLED');
+ authorize(environment,c);
+ const pinned=backupWaiver(environment,options);
+ need(candidate===join(root,'releases/candidates/fsw-sec-003/supabase/migrations/20261031110408_fsw_sec_003_public_search_hardening.sql'),'AUTHORITY_DEFERRAL_PATH_REQUIRED');
+ return {status:'DEFERRED_PRELAUNCH_BY_OWNER',repository:c.GITHUB_REPOSITORY,
+  ...binding(environment,c),file:pinned.file,
+  migrationPath:'releases/candidates/fsw-sec-003/supabase/migrations/'+pinned.file,
+  actor:c.GITHUB_ACTOR,triggeringActor:c.GITHUB_TRIGGERING_ACTOR,branch:c.GITHUB_REF,
+  scope:['independent-authority-signature','privileged-writer-inventory','credential-retirement-evidence']};
+}
+function authorityEvidence(environment,bytes,c) {
+ if(c.FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED==='true') {
+  const record=authorityDeferral(environment,c);
+  return {authorityEvidence:record,authoritySha256:sha(canonicalJson(record))};
+ }
+ return {authoritySha256:recovery(environment,bytes,Date.now(),c)};
+}
 export function verifyTestReceipt(bytes,expectedHash,c,now=Date.now()) {
  need(/^[a-f0-9]{64}$/.test(expectedHash??'')&&sha(bytes)===expectedHash,'TEST_RECEIPT_CHECKSUM_REQUIRED');
  const r=JSON.parse(bytes);
@@ -53,6 +72,11 @@ export function verifyTestReceipt(bytes,expectedHash,c,now=Date.now()) {
  need(Number.isFinite(Date.parse(r.completedAt))&&now-Date.parse(r.completedAt)>=0&&now-Date.parse(r.completedAt)<=24*3600000,'FRESH_TEST_RECEIPT_REQUIRED');
  for(const key of ['beforeSha256','afterSha256','schemaSecuritySha256','protectionSha256','authoritySha256','exposureSha256'])need(/^[a-f0-9]{64}$/.test(r[key]??''),'COMPLETE_TEST_RECEIPT_REQUIRED');
  assert.deepEqual(r.backupRecovery,backupWaiver('FairSwapTest'),'owner waiver scope/status must match');
+ if(c.FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED==='true') {
+  const expected=authorityDeferral('FairSwapTest',{...c,FSW_ENVIRONMENT:'FairSwapTest'});
+  assert.deepEqual(r.authorityEvidence,expected,'exact Test authority deferral required');
+  need(r.authoritySha256===sha(canonicalJson(expected)),'TEST_AUTHORITY_DEFERRAL_HASH_REQUIRED');
+ } else need(r.authorityEvidence===undefined,'UNEXPECTED_TEST_AUTHORITY_DEFERRAL');
  return r;
 }
 async function getJson(url,token,fetcher,code) {
@@ -79,7 +103,7 @@ export async function requireCi(c,fetcher=fetch) {
  need(latest.head_sha===c.GITHUB_SHA&&latest.head_branch==='main'&&latest.status==='completed'&&latest.conclusion==='success','SUCCESSFUL_EXACT_COMMIT_CI_REQUIRED');
 }
 // The existing reviewed per-environment record remains mandatory for writer authority.
-// The owner waived only backup/restore, never exclusive authority or its evidence.
+// Default path remains mandatory unless the exact prelaunch exception is enabled.
 // Independent evidence service signs canonical JSON with an offline Ed25519 key.
 // The trusted key is protected environment configuration, NEVER supplied by evidence.
 export function recovery(environment,bytes,now=Date.now(),context=process.env) {
@@ -144,8 +168,8 @@ export async function release(environment,{context: c=process.env,fetcher=fetch,
   catch(error){throw Error(/^CHAT_[A-Z_]+$/.test(error?.message??'')?'FSW_PROTECTION_'+error.message:'FSW_PROTECTION_UNVERIFIABLE');}
   receipt.protectionSha256=p.snapshotSha256;
   phase='authority';
-  if(recoveryBytes===undefined){try{recoveryBytes=readFileSync(join(root,'releases/candidates/fsw-sec-003/recovery',environment+'.json'));}catch{throw Error('FSW_REVIEWED_AUTHORITY_EVIDENCE_REQUIRED');}}
-  receipt.authoritySha256=recovery(environment,recoveryBytes,Date.now(),c);
+  if(c.FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED!=='true'&&recoveryBytes===undefined){try{recoveryBytes=readFileSync(join(root,'releases/candidates/fsw-sec-003/recovery',environment+'.json'));}catch{throw Error('FSW_REVIEWED_AUTHORITY_EVIDENCE_REQUIRED');}}
+  Object.assign(receipt,authorityEvidence(environment,recoveryBytes,c));
   phase='exposure';const exposed=await exposure(environment,c.SUPABASE_ACCESS_TOKEN,fetcher);receipt.exposureSha256=sha(JSON.stringify(exposed));
   need(c.CHAT_DATABASE_PASSWORD&&c.CHAT_DB_SSL_ROOT_CERT_PEM,'EXISTING_DATABASE_CREDENTIAL_REQUIRED');
   need(/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/.test(c.CHAT_DB_POOLER_HOST??''),'SESSION_POOLER_HOST_REQUIRED');
@@ -176,7 +200,7 @@ export async function release(environment,{context: c=process.env,fetcher=fetch,
   const push=extra=>run(cli,['db','push','--db-url',url,...extra,'--workdir',workspace],env);
   phase='dry_run';verifyDryRun(push(['--dry-run']));
   phase='preflight';
-  recovery(environment,recoveryBytes,Date.now(),c);
+  assert.deepEqual(authorityEvidence(environment,recoveryBytes,c),{authoritySha256:receipt.authoritySha256,...(receipt.authorityEvidence?{authorityEvidence:receipt.authorityEvidence}:{})});
   assert.deepEqual(receipt.backupRecovery,backupWaiver(environment));
   assert.deepEqual(await exposure(environment,c.SUPABASE_ACCESS_TOKEN,fetcher),exposed);
   await requireCi(c,fetcher);

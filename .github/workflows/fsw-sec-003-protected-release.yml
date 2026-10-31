@@ -43,6 +43,7 @@ jobs:
     outputs:
       artifact_id: ${{ steps.receipt.outputs.artifact-id }}
       receipt_sha: ${{ steps.proof.outputs.sha256 }}
+      authority_deferred: ${{ steps.proof.outputs.authority_deferred }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -57,6 +58,7 @@ jobs:
       - name: Protected migration and automated postflight
         env:
           APPROVED_SHA: ${{ inputs.approved_sha }}
+          FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED: ${{ vars.FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED || 'false' }}
           FSW_AUTHORITY_PUBLIC_KEY_PEM: ${{ vars.FSW_AUTHORITY_PUBLIC_KEY_PEM }}
           FSW_RELEASE_ENABLED: ${{ vars.FSW_SEC_003_RELEASE_ENABLED }}
           FSW_ENVIRONMENT: FairSwapTest
@@ -71,7 +73,11 @@ jobs:
           export FSW_CLI="$(command -v supabase)"
           node scripts/release/fsw-sec-003-release.mjs FairSwapTest
       - id: proof
-        run: echo "sha256=$(sha256sum fsw-release-receipt/receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+        env:
+          AUTHORITY_DEFERRED: ${{ vars.FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED || 'false' }}
+        run: |
+          echo "authority_deferred=$AUTHORITY_DEFERRED" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum fsw-release-receipt/receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - id: receipt
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -110,6 +116,10 @@ jobs:
           printf '%s  receipt.json\n' "$TEST_RECEIPT_SHA" | sha256sum --check --status
       - name: Require successful same-run Test receipt before starting protected Production
         env:
+          FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED: ${{ needs.test.outputs.authority_deferred }}
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          FSW_RELEASE_ENABLED: 'true'
+          FSW_ENVIRONMENT: FairSwapTest
           TEST_RECEIPT_SHA: ${{ needs.test.outputs.receipt_sha }}
         run: |
           node --input-type=module <<'NODE'
@@ -149,6 +159,7 @@ jobs:
       - name: Protected migration and automated postflight
         env:
           APPROVED_SHA: ${{ inputs.approved_sha }}
+          FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED: ${{ vars.FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED || 'false' }}
           FSW_AUTHORITY_PUBLIC_KEY_PEM: ${{ vars.FSW_AUTHORITY_PUBLIC_KEY_PEM }}
           FSW_RELEASE_ENABLED: ${{ vars.FSW_SEC_003_RELEASE_ENABLED }}
           FSW_ENVIRONMENT: FairSwapProd
