@@ -10,7 +10,7 @@ import {canonicalJson} from '../../scripts/release/inbox-protection.mjs';
 const keys=generateKeyPairSync('ed25519');
 const publicKey=keys.publicKey.export({type:'spki',format:'pem'});
 const signed=payload=>JSON.stringify({payload,signature:sign(null,Buffer.from(canonicalJson(payload)),keys.privateKey).toString('base64')});
-import {release,authorize,exposure,recovery,backupWaiver,verifyTestReceipt,verifySchemas,requireCi} from '../../scripts/release/fsw-sec-003-release.mjs';
+import {release,authorityDeferral,authorize,exposure,recovery,backupWaiver,verifyTestReceipt,verifySchemas,requireCi} from '../../scripts/release/fsw-sec-003-release.mjs';
 import {refs,SHA,FILE,VERSION,NAME,LEDGER_SHA,sha} from './release-gate.mjs';
 const sql=readFileSync(new URL('../../releases/candidates/fsw-sec-003/supabase/migrations/'+FILE,import.meta.url),'utf8');
 const certificate=rootCertificates.find(p=>{const c=new X509Certificate(p);return c.ca&&Date.parse(c.validFrom)<Date.now()&&Date.parse(c.validTo)>Date.now();});
@@ -153,4 +153,43 @@ test('forged signature, unsigned legacy record and absent trust anchor fail clos
  record.payload=JSON.parse(proof()).payload;
  record.signature=sign(null,Buffer.from(canonicalJson(record.payload)),foreign.privateKey).toString('base64');
  assert.throws(()=>recovery('FairSwapTest',JSON.stringify(record),Date.now(),ctx()));
+});
+
+const deferred={FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED:'true'};
+test('explicit deferral permits absent evidence, records exact exception and authenticates Test to Prod',async()=>{
+ const t=await simulate('FairSwapTest',{context:deferred,noRecovery:true});assert.ifError(t.failure);
+ assert.deepEqual(t.receipt.authorityEvidence,authorityDeferral('FairSwapTest',{...ctx(),...deferred}));
+ assert.equal(t.receipt.authorityEvidence.status,'DEFERRED_PRELAUNCH_BY_OWNER');
+ assert.equal(t.calls.filter(c=>c[0]==='GET'&&c[1].includes('/postgrest')).length,3);
+ const p=await simulate('FairSwapProd',{context:{...deferred,TEST_RECEIPT_SHA:sha(t.bytes)},testReceiptBytes:t.bytes,noRecovery:true});assert.ifError(p.failure);
+ assert.equal(p.receipt.authorityEvidence.projectRef,refs.FairSwapProd);
+ assert.throws(()=>verifyTestReceipt(t.bytes,sha(t.bytes),ctx()));
+ for(const mutate of [r=>delete r.authorityEvidence,r=>r.authorityEvidence.status='PASS',r=>r.authorityEvidence.sourceCommit='b'.repeat(40),r=>r.authorityEvidence.projectRef=refs.FairSwapProd,r=>r.authorityEvidence.scope.push('exposure'),r=>r.authoritySha256=sha('forged'),r=>r.postflight=false,r=>r.migrationAttempted=false]) {
+  const r=JSON.parse(t.bytes);mutate(r);const bytes=JSON.stringify(r);
+  assert.throws(()=>verifyTestReceipt(bytes,sha(bytes),{...ctx(),...deferred}));
+ }
+ const signedTest=await simulate();assert.throws(()=>verifyTestReceipt(signedTest.bytes,sha(signedTest.bytes),{...ctx(),...deferred}));
+});
+test('absent, false and malformed flags preserve Ed25519 requirements',async()=>{
+ for(const flag of [undefined,'false','TRUE','1']) {
+  const r=await simulate('FairSwapTest',{context:{FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED:flag},noRecovery:true});assert.ok(r.failure);
+  assert.equal(r.calls.some(c=>c.includes('--yes')),false);
+  assert.throws(()=>authorityDeferral('FairSwapTest',{...ctx(),FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED:flag}));
+  assert.equal(recovery('FairSwapTest',proof(),Date.now(),{...ctx(),FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED:flag}).length,64);
+ }
+});
+test('deferral cannot drift to another candidate, target, owner, branch or source',()=>{
+ const c={...ctx(),...deferred};
+ for(const patch of [{GITHUB_ACTOR:'other'},{GITHUB_TRIGGERING_ACTOR:'other'},{GITHUB_REF:'refs/heads/other'},{APPROVED_SHA:'b'.repeat(40)},{GITHUB_REPOSITORY:'other/repo'},{FSW_ENVIRONMENT:'FairSwapProd'}])assert.throws(()=>authorityDeferral('FairSwapTest',{...c,...patch}));
+ for(const options of [{candidateSha256:sha('other')},{version:'20261101000000'},{file:'unrelated.sql'},{projectRef:refs.FairSwapProd}])assert.throws(()=>authorityDeferral('FairSwapTest',c,options));
+ assert.throws(()=>authorityDeferral('other',c));
+});
+for(const [name,options] of Object.entries({ci:{ciFailure:true},exposure:{exposed:'public,app_security'},permission:{exposurePermissionDenied:true},protection:{protectionDenied:true},catalog:{catalogDrift:true}}))test('prelaunch exception retains independent gate: '+name,async()=>{
+ const r=await simulate('FairSwapTest',{...options,context:deferred,noRecovery:true});assert.ok(r.failure);assert.equal(r.receipt.status,'FAIL');
+});
+test('workflow binds credential-free verifier to trusted Test output and each protected target to its variable',()=>{
+ const w=readFileSync(new URL('../../.github/workflows/fsw-sec-003-protected-release.yml',import.meta.url),'utf8');
+ assert.equal(w.split("FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED: ${{ vars.FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED || 'false' }}").length-1,2);
+ assert.ok(w.includes('FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED: ${{ needs.test.outputs.authority_deferred }}'));
+ assert.ok(w.includes('authority_deferred: ${{ steps.proof.outputs.authority_deferred }}'));
 });

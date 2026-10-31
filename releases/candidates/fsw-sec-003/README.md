@@ -379,3 +379,53 @@ Codex reports **127/127 local automated tests** passing for this scoped change, 
 
 Owner production inspection after a separately authorized release: English/Hindi search; category/city/price filters; pagination, errors and latency. Rollback is a **reviewed forward compensating migration** retaining immutable history, with **no guaranteed data restoration** on Free without an independent recoverable backup.
 
+## Current prelaunch authority exception — 31 October 2026
+
+This section supersedes earlier statements that authority evidence cannot be deferred.
+The owner accepted a one-candidate exception through the supplied FSW-SEC-003
+prelaunch handoff. Protected Test and Prod environment variable
+`FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED` defaults to false; only exact `true`
+enables it. Keep `FSW_SEC_003_RELEASE_ENABLED` disabled until the reviewed release.
+The runner independently enforces owner and triggering owner `vivek2310sharma`,
+workflow dispatch, main, exact approved source SHA, run/attempt, pinned SQL
+`20261031110408` / SHA-256
+`b9746cdf49299af84bbbfc5f79b51dd7d67a737202a2d54c55f8743fc15770bd`,
+and Test `wpppxlnbzqynvhpeuavd` or Prod `kriuhwppxgxsyyrbjsau`.
+
+Only independent authority signature, exhaustive privileged-writer inventory and
+credential-retirement evidence become `DEFERRED_PRELAUNCH_BY_OWNER`.
+Cryptographic verification is deferred, not passed. The immutable same-run release
+receipt records the exact scope, migration path/hash/version, target, source,
+owner actors and run/attempt, plus a canonical digest of that record. This digest
+is not a signature. Authentication comes from the successful Test producer's job
+outputs, immutable artifact ID, checksum and same-run/source verification.
+The credential-free verifier uses the Test producer's flag output; Prod independently
+requires its own protected flag and rejects a mismatched or altered Test exception.
+With the flag absent/false, the Ed25519 evidence path remains required unchanged.
+
+Residual risk: exclusive writer authority and retired-credential access remain
+unverified; another privileged writer may still exist. The backup-only
+`WAIVED_BY_OWNER` exception remains separate; recoverable data is not guaranteed.
+No SQL, prior 58 migrations, application/API grants, JWT config or moderation changes.
+All exposure, protection, exact-SHA CI, TLS/PG17/CLI, history, dry-run, schema and
+migration postflight gates remain mandatory. GET provider PostgREST configuration
+before apply and after apply must independently show exactly `public`.
+
+Provider blocker from the handoff: audit 41240954746 reported
+`READ_PERMISSION_UNAVAILABLE` for both projects. An authorized token administrator
+must grant each existing separately scoped token Data API Configuration: Read
+(`rest:read` / `data_api_config_read`), without write expansion or token disclosure.
+Current permissions and exposure were not checked by this local implementation.
+
+Release order after GitHub review/CI/merge and protected configuration: Test apply
+and automated postflight -> authenticate immutable Test receipt -> Prod apply and
+automated postflight. Owner production inspection covers English/Hindi search,
+category/city/price filters, pagination, boundary inputs, error rate and latency.
+No owner staging test is required. Postlaunch: complete provider-authenticated
+writer and retirement inventories, establish the independent Ed25519 producer and
+protected trust anchor, disable the deferral in both environments and require the
+signed path before later releases. This exception cannot transfer to another SQL.
+Source rollback reverts these files; hosted SQL recovery requires a reviewed forward
+compensating migration preserving history. No deployment or hosted writes occurred.
+
+GitHub integration verified that the new runner, workflow and tests reconcile exactly with the reviewed Backend baseline `366bceb4b9132686cd24b189f37ac629f9f9d52a`. Only this new documentation section was appended, preserving the existing main-branch audit record.
