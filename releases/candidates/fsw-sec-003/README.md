@@ -267,6 +267,8 @@ relies on GitHub's ephemeral runner disposal. Only allowlisted receipts are uplo
 
 ### Exposure, recovery and authority gates
 
+See [the recovery/authority evidence audit](EVIDENCE_GAPS.md) for available source records, unproven permissions, evidence provenance gaps, and the required automated evidence producers. This audit is documentation only and does **not** authorize a hosted migration.
+
 Each target independently requires read-only
 `GET /v1/projects/{ref}/postgrest` immediately before release and after migration.
 Only exactly `public` is accepted as `db_schema`; absent/unknown config, any extra
