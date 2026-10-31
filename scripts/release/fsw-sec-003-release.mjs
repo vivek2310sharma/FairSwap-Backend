@@ -21,6 +21,17 @@ function validateRootCertificate(value) {
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const candidate=join(root,'releases/candidates/fsw-sec-003/supabase/migrations',FILE);
 const need=(condition,code)=>{if(!condition)throw Error('FSW_'+code);};
+// Explicit owner risk acceptance for this candidate only (Backend PR #75).
+// Independent literals prevent a future candidate/ref change from inheriting the waiver.
+export function backupWaiver(environment,{candidateSha256=SHA,projectRef=refs[environment],version=VERSION,file=FILE}={}) {
+ const approvedRefs={FairSwapTest:'wpppxlnbzqynvhpeuavd',FairSwapProd:'kriuhwppxgxsyyrbjsau'};
+ need(Object.hasOwn(approvedRefs,environment)&&projectRef===approvedRefs[environment],'BACKUP_WAIVER_TARGET_REQUIRED');
+ need(candidateSha256==='b9746cdf49299af84bbbfc5f79b51dd7d67a737202a2d54c55f8743fc15770bd'&&
+  version==='20261031110408'&&file==='20261031110408_fsw_sec_003_public_search_hardening.sql','BACKUP_WAIVER_CANDIDATE_REQUIRED');
+ return {status:'WAIVED_BY_OWNER',environment,projectRef,sha256:candidateSha256,version,file,
+  authorization:'https://github.com/vivek2310sharma/FairSwap-Backend/pull/75',
+  scope:['provider-managed-backup','backup-dependent-restore']};
+}
 export function authorize(environment,c) {
  try{requireOwnerActors(c);}catch{throw Error('FSW_OWNER_DISPATCH_REQUIRED');}
  need(Object.hasOwn(refs,environment),'ENVIRONMENT_REQUIRED');
@@ -29,6 +40,7 @@ export function authorize(environment,c) {
  need(/^[1-9][0-9]*$/.test(c.GITHUB_RUN_ID??'')&&/^[1-9][0-9]*$/.test(c.GITHUB_RUN_ATTEMPT??''),'RUN_ID_REQUIRED');
  need(c.FSW_RELEASE_ENABLED==='true','RELEASE_DISABLED');
  verifyCandidate();
+ backupWaiver(environment);
 }
 function binding(environment,c) {return {environment,projectRef:refs[environment],sourceCommit:c.GITHUB_SHA,runId:c.GITHUB_RUN_ID,runAttempt:c.GITHUB_RUN_ATTEMPT,sha256:SHA,version:VERSION};}
 export function verifyTestReceipt(bytes,expectedHash,c,now=Date.now()) {
@@ -38,7 +50,8 @@ export function verifyTestReceipt(bytes,expectedHash,c,now=Date.now()) {
  need(r.migrationAttempted===true&&r.phase==='postflight','COMPLETED_TEST_MIGRATION_REQUIRED');
  need(r.schema===1&&r.status==='PASS'&&r.postflight===true&&r.cliVersion==='2.117.0'&&r.tls==='verify-full','SUCCESSFUL_TEST_RECEIPT_REQUIRED');
  need(Number.isFinite(Date.parse(r.completedAt))&&now-Date.parse(r.completedAt)>=0&&now-Date.parse(r.completedAt)<=24*3600000,'FRESH_TEST_RECEIPT_REQUIRED');
- for(const key of ['beforeSha256','afterSha256','schemaSecuritySha256','protectionSha256','recoverySha256','exposureSha256'])need(/^[a-f0-9]{64}$/.test(r[key]??''),'COMPLETE_TEST_RECEIPT_REQUIRED');
+ for(const key of ['beforeSha256','afterSha256','schemaSecuritySha256','protectionSha256','authoritySha256','exposureSha256'])need(/^[a-f0-9]{64}$/.test(r[key]??''),'COMPLETE_TEST_RECEIPT_REQUIRED');
+ assert.deepEqual(r.backupRecovery,backupWaiver('FairSwapTest'),'owner waiver scope/status must match');
  return r;
 }
 async function getJson(url,token,fetcher,code) {
@@ -64,26 +77,16 @@ export async function requireCi(c,fetcher=fetch) {
  const latest=data.workflow_runs[0];
  need(latest.head_sha===c.GITHUB_SHA&&latest.head_branch==='main'&&latest.status==='completed'&&latest.conclusion==='success','SUCCESSFUL_EXACT_COMMIT_CI_REQUIRED');
 }
-// No Chat backup/authority exception. Evidence must be reviewed in this commit;
-// absent, stale, or incomplete recovery/authority proof blocks before any DB access.
+// The existing reviewed per-environment record remains mandatory for writer authority.
+// The owner waived only backup/restore, never exclusive authority or its evidence.
 export function recovery(environment,bytes,now=Date.now()) {
- let r;try{r=JSON.parse(bytes);}catch{throw Error('FSW_REVIEWED_RECOVERY_AND_AUTHORITY_EVIDENCE_REQUIRED');}
- need(r.environment===environment&&r.projectRef===refs[environment]&&r.sha256===SHA&&r.status==='PASS','RECOVERY_TARGET_REQUIRED');
- need(Number.isFinite(Date.parse(r.verifiedAt))&&now-Date.parse(r.verifiedAt)>=0&&now-Date.parse(r.verifiedAt)<=24*3600000,'FRESH_RECOVERY_EVIDENCE_REQUIRED');
- for(const key of ['backupSha256','automatedRestoreReceiptSha256','privilegedWriterInventorySha256','retiredWriterProofSha256'])need(/^[a-f0-9]{64}$/.test(r[key]??''),'RECOVERY_AND_EXCLUSIVE_AUTHORITY_PROOF_REQUIRED');
- need(r.backupAvailable===true&&r.automatedRestoreVerified===true&&r.exclusiveBackendAuthority===true,'RECOVERY_AND_EXCLUSIVE_AUTHORITY_REQUIRED');
+ backupWaiver(environment);
+ let r;try{r=JSON.parse(bytes);}catch{throw Error('FSW_REVIEWED_AUTHORITY_EVIDENCE_REQUIRED');}
+ need(r&&r.environment===environment&&r.projectRef===refs[environment]&&r.sha256===SHA&&r.status==='PASS','AUTHORITY_TARGET_REQUIRED');
+ need(Number.isFinite(Date.parse(r.verifiedAt))&&now-Date.parse(r.verifiedAt)>=0&&now-Date.parse(r.verifiedAt)<=24*3600000,'FRESH_AUTHORITY_EVIDENCE_REQUIRED');
+ for(const key of ['privilegedWriterInventorySha256','retiredWriterProofSha256'])need(/^[a-f0-9]{64}$/.test(r[key]??''),'EXCLUSIVE_AUTHORITY_PROOF_REQUIRED');
+ need(r.exclusiveBackendAuthority===true,'EXCLUSIVE_AUTHORITY_REQUIRED');
  return sha(bytes);
-}
-export async function verifyBackup(environment,bytes,token,fetcher=fetch,now=Date.now()) {
- const evidence=JSON.parse(bytes);
- const data=await getJson(`https://api.supabase.com/v1/projects/${refs[environment]}/database/backups`,token,fetcher,'BACKUP');
- need(Array.isArray(data?.backups),'BACKUP_AVAILABILITY_UNKNOWN');
- const matches=data.backups.filter(x=>x.id===evidence.backupId);
- need(matches.length===1,'REVIEWED_BACKUP_UNAVAILABLE');
- const row=matches[0];
- need(row.status==='COMPLETED'&&Number.isSafeInteger(row.id)&&typeof row.is_physical_backup==='boolean','COMPLETED_BACKUP_REQUIRED');
- need(Number.isFinite(Date.parse(row.inserted_at))&&now-Date.parse(row.inserted_at)>=0&&now-Date.parse(row.inserted_at)<=24*3600000,'FRESH_BACKUP_REQUIRED');
- need(sha(JSON.stringify({id:row.id,status:row.status,inserted_at:row.inserted_at,is_physical_backup:row.is_physical_backup}))===evidence.backupSha256,'REVIEWED_BACKUP_CHANGED');
 }
 const schemaSql=`BEGIN READ ONLY;
 SET LOCAL statement_timeout='15s';
@@ -108,16 +111,16 @@ export async function release(environment,{context: c=process.env,fetcher=fetch,
  };
  try {
   authorize(environment,c);
+  receipt.backupRecovery=backupWaiver(environment);
   if(environment==='FairSwapProd')verifyTestReceipt(testReceiptBytes??readFileSync(resolve('test-evidence/receipt.json')),c.TEST_RECEIPT_SHA,c);
   phase='ci';await requireCi(c,fetcher);
   phase='protection';let p;
   try{p=await protection(environment,c.CHAT_RELEASE_AUDIT_TOKEN,fetcher,{sourceCommit:c.GITHUB_SHA,bundleSha256:SHA,actor:c.GITHUB_ACTOR,triggeringActor:c.GITHUB_TRIGGERING_ACTOR});}
   catch(error){throw Error(/^CHAT_[A-Z_]+$/.test(error?.message??'')?'FSW_PROTECTION_'+error.message:'FSW_PROTECTION_UNVERIFIABLE');}
   receipt.protectionSha256=p.snapshotSha256;
-  phase='recovery';
-  if(recoveryBytes===undefined){try{recoveryBytes=readFileSync(join(root,'releases/candidates/fsw-sec-003/recovery',environment+'.json'));}catch{throw Error('FSW_REVIEWED_RECOVERY_AND_AUTHORITY_EVIDENCE_REQUIRED');}}
-  receipt.recoverySha256=recovery(environment,recoveryBytes);
-  await verifyBackup(environment,recoveryBytes,c.SUPABASE_ACCESS_TOKEN,fetcher);
+  phase='authority';
+  if(recoveryBytes===undefined){try{recoveryBytes=readFileSync(join(root,'releases/candidates/fsw-sec-003/recovery',environment+'.json'));}catch{throw Error('FSW_REVIEWED_AUTHORITY_EVIDENCE_REQUIRED');}}
+  receipt.authoritySha256=recovery(environment,recoveryBytes);
   phase='exposure';const exposed=await exposure(environment,c.SUPABASE_ACCESS_TOKEN,fetcher);receipt.exposureSha256=sha(JSON.stringify(exposed));
   need(c.CHAT_DATABASE_PASSWORD&&c.CHAT_DB_SSL_ROOT_CERT_PEM,'EXISTING_DATABASE_CREDENTIAL_REQUIRED');
   need(/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/.test(c.CHAT_DB_POOLER_HOST??''),'SESSION_POOLER_HOST_REQUIRED');
@@ -148,7 +151,8 @@ export async function release(environment,{context: c=process.env,fetcher=fetch,
   const push=extra=>run(cli,['db','push','--db-url',url,...extra,'--workdir',workspace],env);
   phase='dry_run';verifyDryRun(push(['--dry-run']));
   phase='preflight';
-  recovery(environment,recoveryBytes);await verifyBackup(environment,recoveryBytes,c.SUPABASE_ACCESS_TOKEN,fetcher);
+  recovery(environment,recoveryBytes);
+  assert.deepEqual(receipt.backupRecovery,backupWaiver(environment));
   assert.deepEqual(await exposure(environment,c.SUPABASE_ACCESS_TOKEN,fetcher),exposed);
   await requireCi(c,fetcher);
   verifyHistory(before,migrations,true);verifyPreflight(environment,before,capture());assert.deepEqual(schemas(),schemaBefore);

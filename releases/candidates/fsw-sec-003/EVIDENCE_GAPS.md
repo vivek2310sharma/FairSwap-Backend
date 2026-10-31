@@ -1,5 +1,16 @@
 # FSW-SEC-003 — Recovery and deployment-authority evidence gaps
 
+## Current owner-authorized Free-plan backup waiver (FSW-SEC-003 only)
+
+The FairSwap owner explicitly accepts proceeding **without provider-managed automatic backup and backup-dependent restore verification** on the Free plan for only the pinned search-hardening candidate `20261031110408_fsw_sec_003_public_search_hardening.sql`, raw SHA-256 `b9746cdf49299af84bbbfc5f79b51dd7d67a737202a2d54c55f8743fc15770bd`, and only FairSwapTest (`wpppxlnbzqynvhpeuavd`) followed by FairSwapProd (`kriuhwppxgxsyyrbjsau`). See the [owner's recorded acceptance](https://github.com/vivek2310sharma/FairSwap-Backend/pull/75#issuecomment-6549137816). **No backup, recovery or restoration is claimed to have passed. Risk includes unrecoverable data loss and downtime.**
+
+The release orchestrator records this limited waiver as `backupRecovery.status: WAIVED_BY_OWNER` in sanitized receipts and requires the exact same scope in the authenticated Test receipt before Prod. No provider backup listing is requested by this protected release. This supersedes only the backup and backup-dependent restore prerequisites in older audit notes below; it does **not** authorize migration deployment or affect the independently dispatched read-only metadata-audit workflow.
+
+All other checks remain: explicit owner-only GitHub dispatch and protected environment approvals; exact CI/source/SQL checksum, genuine per-project migration-history fetch/dry-run, TLS and PG17/CLI pins, RLS/ACL/catalog integrity, effective Data API exposure, complete privileged-writer inventory and independently authenticated Backend-exclusive deployment authority. The existing authority validator still checks evidence fields/digest *format* without independent provenance verification; **this unwaived proof gap must be resolved before any hosted migration**. Neither per-environment authority record has been provided.
+
+The owner waiver is recorded here for the source change only. The protected release remains disabled pending the other gates, and no migration or hosted write is authorized by this documentation.
+
+
 **Audit checkpoint:** 31 October 2026  
 **Source baseline:** FairSwap-Backend `main` at `1753606d9ad7f412aaee775f64ba08da7cc0fda9`  
 **Status:** **BLOCKED** — documentation/evidence inventory only; no hosted write, release dispatch, waiver, or recovery attestation.
