@@ -4,9 +4,17 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 const root = fileURLToPath(new URL('../../', import.meta.url));
-if (process.argv.length !== 4 || process.argv[2] !== '--pglite-module') throw Error('Use --pglite-module <installed local PGlite entry>; accepts no database URL');
-const { PGlite } = await import(pathToFileURL(path.resolve(process.argv[3])).href);
-const db = new PGlite();
+const native = process.argv[2] === '--native';
+let db;
+if (native && process.argv.length === 5) {
+ const { NativeDatabase } = await import('./native-adapter.mjs');
+ db = new NativeDatabase(process.argv[3], process.argv[4]);
+ const version = (await db.query("select current_setting('server_version_num') as version")).rows[0].version;
+ assert.equal(version, '170006', 'exact PostgreSQL 17.6 required');
+} else if (!native && process.argv.length === 4 && process.argv[2] === '--pglite-module') {
+ const { PGlite } = await import(pathToFileURL(path.resolve(process.argv[3])).href);
+ db = new PGlite();
+} else throw Error('Use --pglite-module <installed entry> or --native <absolute PG17.6 bin> <private fixture socket>; no database URLs');
 const read = p => readFileSync(path.join(root,p),'utf8');
 const candidateDir = 'releases/candidates/fsw-sec-003/supabase/migrations';
 const files = readdirSync(path.join(root,candidateDir)).filter(f=>f.endsWith('.sql'));
@@ -27,6 +35,14 @@ try {
  await db.exec(baseline + discovery.slice(discovery.indexOf('REVOKE ALL ON FUNCTION app_security.impl_search_public_listings')));
  await db.exec('analyze');
  const catalogBefore=await snapshot();
+ assert.equal(catalogBefore.length,2);
+ for(const fn of catalogBefore) {
+  assert.equal(fn.provolatile,'s'); assert.deepEqual(fn.proconfig,['search_path=""']);
+  assert.equal(String(fn.prorettype),'3802'); // jsonb
+  assert.equal(fn.prosecdef,fn.proargnames[0]==='p_query');
+ }
+ const owner=(await db.query('select oid from pg_roles where rolname=current_user')).rows[0].oid;
+ assert.ok(catalogBefore.every(fn=>fn.proowner===owner));
  const validArgs=['',"query => 'laptop', sort => 'relevance'", "query => 'साइकिल'", "query => 'the'", "query => '!!!'", "category_slug => 'goods', price_min => 1000, price_max => 5000", "sort => 'price_asc'", "sort => 'price_desc'", "sort => null", "page => 2, per_page => 12", "page => 1000", "query => '  laptop  '"];
  const before=[];
  for(const args of validArgs) before.push(await rpc(args));
@@ -83,6 +99,7 @@ try {
   await db.exec('reset role');
  }
  check((await db.query("select relrowsecurity from pg_class where oid='public.listings'::regclass")).rows[0].relrowsecurity,'RLS retained');
- console.log(JSON.stringify({status:'PASS',tests,engine:(await db.query('select version()')).rows[0],fixtureRows:130,plansIdentical:true,planRootNodes:beforePlans.map(p=>p['Node Type']),baselineMsPerCall:beforeMs,candidateMsPerCall:afterMs,scope:'in-memory PostgreSQL; reduced schema, no Auth/PostgREST/network or hosted data'},null,2));
+ assert.equal(tests, 115, 'all 115 checks must execute');
+ console.log(JSON.stringify({status:'PASS',tests,engine:(await db.query('select version()')).rows[0],fixtureRows:130,plansIdentical:true,planRootNodes:beforePlans.map(p=>p['Node Type']),baselineMsPerCall:beforeMs,candidateMsPerCall:afterMs,scope:native ? 'native PostgreSQL 17.6; reduced synthetic schema; no hosted data' : 'in-memory PostgreSQL; reduced schema; no hosted data'},null,2));
 } catch(e) { console.error('FAIL',e.message,e.code,e.where); process.exitCode=1; }
 finally { await db.close(); }

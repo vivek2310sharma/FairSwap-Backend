@@ -6,15 +6,35 @@ ledgers and the two search functions' catalog metadata, never listing/user data.
 Existing unrelated dirty files were preserved. Observed Backend `main` HEAD:
 `8f3abe1cb7a5053a7ce2f741ae66d6d969f0c180`; Web `main` HEAD:
 `b09ac522ff58e40bfc90937ecb74b19c633725ba`. No fetch/pull; these are not verified
-synchronized bases. Web source, generated types, manifests and CI remain unchanged.
+synchronized bases. Web source, generated types and package manifests remain unchanged. This continuation
+changes only Backend files and performed no Git operation. Draft PR #74 is
+owner-reported; it was not queried or modified.
 
-## Exact new files
+## Exact files changed for the release-gate continuation
 
-- `releases/candidates/fsw-sec-003/supabase/migrations/20261031110408_fsw_sec_003_public_search_hardening.sql`
-- `releases/candidates/fsw-sec-003/history-snapshot.json`
-- `releases/candidates/fsw-sec-003/README.md`
-- `tests/fsw-sec-003/fixture.sql`
+Modified:
+
+- `.github/workflows/backend-ci.yml`
 - `tests/fsw-sec-003/run-disposable.mjs`
+- `releases/candidates/fsw-sec-003/README.md`
+
+Added:
+
+- `tests/fsw-sec-003/native-adapter.mjs`
+- `tests/fsw-sec-003/run-native.sh`
+- `tests/fsw-sec-003/postgrest-pin.json`
+- `tests/fsw-sec-003/install-postgrest.mjs`
+- `tests/fsw-sec-003/http-contract.mjs`
+- `tests/fsw-sec-003/capture-release.sql`
+- `tests/fsw-sec-003/release-gate.mjs`
+- `tests/fsw-sec-003/release-gate.test.mjs`
+- `tests/fsw-sec-003/cli-rehearsal.mjs`
+
+The fixture, original history snapshot, approved migration and 58 historical
+migrations are unchanged. The migration remains
+`supabase/migrations/20261031110408_fsw_sec_003_public_search_hardening.sql` within
+this isolated candidate directory. Raw reviewed SHA-256:
+`b9746cdf49299af84bbbfc5f79b51dd7d67a737202a2d54c55f8743fc15770bd`.
 
 CLI 2.117.0 generated the version via `supabase migration new
 fsw_sec_003_public_search_hardening --workdir releases/candidates/fsw-sec-003`.
@@ -56,42 +76,93 @@ filters; no Web change or deployment is required. Native clients were not change
 or executed; valid contract compatibility is inferred from unchanged signatures and
 response behavior, not a native build.
 
-## Executed evidence
+## Mandatory CI gates and executed evidence
 
-- PASS: `node scripts/verify-migration-manifest.mjs`: all 58 immutable files match.
-- PASS: `git diff --check` (tracked changes); new candidate SQL/test files also
-  inspected for whitespace. No historical SQL or existing tests were edited.
-- PASS: 115 standalone automated checks, zero skips, on in-memory PostgreSQL 18.3
-  (installed PGlite 0.5.8), 130 synthetic rows, two client roles. Coverage includes
-  100/101 ASCII/Hindi/emoji lengths, padded/oversized payloads, page boundaries and
-  integer extremes, per-page defaults/clamps, malformed numeric/UUID filters,
-  invalid conditions/categories/prices/sorts, empty searches, Hindi/English,
-  pagination, all nonactive statuses, expired active listings, suspended sellers,
-  location privacy, valid response equality, catalog identity/ACL/security equality,
-  drift rejection and representative plan equality.
+The existing `unit-integrity` job now requires the full 115-check search suite,
+using the existing Ratings lockfile's PGlite 0.5.8, plus release-validator tests.
+The existing `ratings-native-pg17` job now requires the same search suite on exact
+native PostgreSQL 17.6, real loopback PostgREST RPC verification, and an authentic
+CLI migration/fetch/dry-run rehearsal. Its existing checksum-pinned PG17.6 builder
+and CLI 2.117.0 installer are reused unchanged. A download/install/startup failure,
+missing dependency or failed assertion is fatal; there are no skips or optional
+success paths. All five existing jobs, their dependencies and the aggregate
+`backend-ci-success` requirements are retained. No Actions permission was widened.
 
-Reproduce from Backend root without a database URL or hosted credentials:
+Concise workflow additions (existing steps remain):
 
-```sh
-node tests/fsw-sec-003/run-disposable.mjs --pglite-module '../FairSwap-Web/node_modules/.pnpm/@electric-sql+pglite@0.5.8/node_modules/@electric-sql/pglite/dist/index.js'
+```diff
+ unit-integrity:
++  require search PGlite 115 checks using tests/ratings/node_modules
++  node --test tests/fsw-sec-003/release-gate.test.mjs
+ ratings-native-pg17:
++  install checksum-pinned PostgREST test binary
++  bash tests/fsw-sec-003/run-native.sh <existing PG17.6 bin>
++  install existing checksum-pinned Supabase CLI 2.117.0
++  node tests/fsw-sec-003/cli-rehearsal.mjs <PG bin> <CLI>
 ```
 
-The runner uses reduced synthetic table prerequisites and the actual old function,
-public wrapper, grants and discovery indexes. It does not reconstruct the full
-Supabase schema or simulate PostgREST/Auth. The existing pgTAP/CI registration is
-untouched; this standalone suite is not silently registered as a baseline suite.
-NOT RUN: native PostgreSQL 17, existing pgTAP/security CI suites, HTTP RPC transport,
-full-chain migration replay, Web typecheck/lint/build (no Web edits), hosted tests.
-The repository's Linux/Docker-only DB runner is forbidden on this laptop and was
-not invoked. Preserve and run existing CI gates during ChatGPT review/release.
+PASS locally, with synthetic fixtures only:
 
-Five warmed batches of 50 calls each over the same valid scenarios and fixture:
-baseline ms/call `[0.734, 0.700, 0.680, 0.673, 0.663]`; candidate
-`[0.673, 0.669, 0.663, 0.655, 0.693]`. Medians: 0.680 vs 0.669 ms.
-Both representative EXPLAIN JSON plans (keyword count/fetch) matched exactly;
-the runner also compares the complete listing-query/return tail byte-for-byte.
-No observed avoidable regression in this small WASM fixture. These timings do not
-prove native/hosted latency; bounds limit single-request work, not request rate.
+- 115/115 checks on PGlite 0.5.8 / PostgreSQL 18.3.
+- 115/115 checks on real native PostgreSQL 17.6 built from the existing Ratings
+  source checksum pin. Same exact SQL candidate, 130 synthetic rows, both client
+  roles; explicit owner, argument/return type, stable definer/invoker, search_path,
+  ACL, pagination, Unicode/oversize, filters, privacy and visibility checks.
+- 40/40 actual HTTP RPC checks on PostgREST 12.2.12 against that disposable native
+  database. Anonymous and synthetic HS256 JWT authenticated calls; JSON shape,
+  pagination, Hindi, lengths/pages, controlled invalid-filter/type errors,
+  inaccessible implementation RPC and rejected `app_security` schema profile.
+  HTTP binds only 127.0.0.1; PostgreSQL normally exposes only a private Unix socket.
+- 37/37 release-validator tests, including wrong environment, stale metadata,
+  missing TLS, wrong PG major, duplicate/changed histories, fabricated fetched
+  SQL, checksum drift, extra pending migrations, ACL/RLS/signature/security drift,
+  installed body mismatch and required successful Test receipt before Prod.
+- Authentic CLI 2.117.0 rehearsal: generated synthetic seed version (never an
+  invented ledger row), genuine CLI install and fetch, fetched SQL digest check,
+  actual read-only catalog capture, genuine CLI dry-run parsing, exact candidate
+  installation and CLI ledger digest check. The rehearsal uses a fresh local
+  cluster and synthetic user only; `--include-all` occurs only in that disposable
+  fixture because its CLI-generated seed is newer than the approved candidate.
+  The release-preparation path does not use `--include-all`.
+- All 58 migration bytes match via `node scripts/verify-migration-manifest.mjs`.
+  JavaScript/shell syntax checks, workflow YAML parsing and whitespace checks pass.
+
+CLI serialization differs from raw migration bytes. The **measured**, normalized
+CLI ledger statement SHA-256 for this exact candidate under CLI 2.117.0 is
+`9cc72ec137f4078b39e1c57065592ec008a63afae2a6b85cc8b06aa206b29c15`.
+Both this and the raw artifact digest are pinned independently. Postflight checks
+both installed private function body and authentic ledger statement digest.
+
+Reproduce from Backend root:
+
+```sh
+npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
+node tests/fsw-sec-003/run-disposable.mjs --pglite-module tests/ratings/node_modules/@electric-sql/pglite/dist/index.js
+node --test tests/fsw-sec-003/release-gate.test.mjs
+# CI/Linux: reuse existing checksum-pinned source builder and CLI installer.
+bash tests/ratings/build-native-pg17.sh
+node tests/fsw-sec-003/install-postgrest.mjs
+bash tests/fsw-sec-003/run-native.sh /absolute/PG17.6/install/bin
+node tests/fsw-sec-003/cli-rehearsal.mjs /absolute/PG17.6/install/bin /absolute/supabase-2.117.0
+```
+
+Local evidence used macOS ARM64, Node 24.21.0 and the pinned macOS PostgREST archive;
+CI retains Node 24.15.0 and uses the independently checksum-pinned Linux static
+archive. macOS HTTP tests point the child process's standard dynamic-library search
+path at the locally built PG17.6 lib directory; no machine installation is needed.
+Neither PostgREST nor PGlite is a new application/package dependency.
+
+The runner checks the complete listing-query/return tail byte-for-byte against the
+old implementation and compares representative EXPLAIN JSON plans; both match.
+Native median client wall time was 4.760 ms before and 4.740 ms after, dominated by
+starting psql per assertion. These are synthetic regression timings, not hosted
+latency evidence. The approved SQL and its ordinary query count remain unchanged.
+
+NOT RUN / release acceptance still required: GitHub CI on Linux and pinned CI Node,
+full existing CI/pgTAP suites, full historical-chain replay and hosted target
+preflight/postflight. The source changes make search tests mandatory; they do not
+prove an installed or passing GitHub run. Disposable HTTP infrastructure is available
+and verified locally; there is no remaining local HTTP infrastructure blocker.
 
 ## Live history compatibility and release safeguards
 
@@ -112,36 +183,70 @@ Test `821f536ad89962bc345586f175c86d23`, Prod
 source-drift fingerprint, not an artifact-authentication mechanism. Exact function
 behavior and metadata remain subject to fresh release preflight.
 
-After review, ChatGPT's separately authorized release must:
+## Read-only environment-specific release automation
 
-1. Capture each environment's full current ledger independently; compare exact
-   version/name sequences to this snapshot. Stop for review on additive history,
-   missing versions, name changes, an existing candidate version or function drift.
-   Capture full function definitions/owners/ACLs, RLS/grants and API exposed schemas
-   for before/after checks; confirm `app_security` remains unexposed.
-2. Use authentic CLI `migration fetch` history in separate disposable Test and Prod
-   release workspaces, following existing Backend release safeguards. Compare the
-   fetched identities exactly to that target's live ledger; copy only this reviewed
-   candidate as pending SQL. Never manufacture ledger rows or placeholder historical
-   files, repair history, use raw `supabase/migrations`, or reuse Test history for Prod.
-   Review SHA-256 of the candidate artifact and a CLI dry-run showing precisely one
-   pending migration before any write. The scoped Chat release exception does not
-   authorize this release; retain applicable environment/recovery protections.
-3. Run the existing mandatory CI/SQL/security gates and native PG17 synthetic
-   validation. Apply Backend to FairSwapTest first using supported atomic CLI-managed
-   migration/history handling. Verify unchanged prior ledger, single new candidate,
-   wrapper/ACL/owner/RLS/catalog invariants and automated synthetic gates.
-4. Apply the identical reviewed candidate to FairSwapProd after staging automated
-   gates, using independently verified Prod history. Verify the same invariants and
-   unchanged prior ledger. No owner predeployment/manual testing gate is added.
+`tests/fsw-sec-003/release-gate.mjs` has only `prepare`, `preflight`, and `postflight`
+commands. It cannot apply, repair, reset or deploy. No hosted command was run here.
+It uses already protected libpq services named exactly `FairSwapTest` and
+`FairSwapProd`, existing CLI authentication/database access, and CLI 2.117.0. No
+credentials are printed, placed in command arguments, source files or receipts.
+No new application/deployment environment variable or secret name is introduced.
+A later protected release must supply existing access; missing access fails closed.
 
-Deployment order: Backend staging migration → staging Web only if subsequently
-changed → automated gates → Backend production migration → production Web only if
-subsequently changed. This patch needs no Web release and no environment variables.
+`prepare` independently captures each target's exact full version/name/statement
+hash ledger with read-only SQL, validates verified TLS and its project-specific
+hostname/user/session port, and records RPC owners/ACLs/signatures/body hashes and
+all six search tables' RLS/policies/table/column grants. Captures expire in 15
+minutes. It links a **fresh isolated workspace**, executes authentic CLI
+`migration fetch --linked`, verifies exact filenames and every historical SQL file
+against that target's ledger statement digest, recaptures live metadata to detect
+races, copies the single checksum-pinned candidate, verifies complete pending
+workspace membership and requires a genuine dry-run naming exactly that candidate.
+Nothing manufactures historical files or ledger rows. Additive history is accepted
+only as genuinely fetched, independently captured target history; it is never
+copied between environments or inferred from the old snapshot counts.
 
-After production deployment, owner inspection: normal search; category/city/price
-filtering; pagination; Hindi/English results; error rate and latency. No owner test
-is requested before deployment.
+`preflight` is the immediate-before-apply recheck of fresh live metadata and every
+historical/pending workspace byte. `postflight` requires exactly the one expected
+CLI ledger entry with the measured statement digest; all earlier history and all
+captured RLS/ACL/policy/owner/signature/security metadata must remain identical.
+It verifies the new private function body exactly and leaves each environment's
+public wrapper fingerprint intact. Production preparation requires the matching
+successful Test postflight receipt for this candidate. Receipts are created with
+exclusive mode-0600 files and never overwrite earlier evidence. They are local
+metadata evidence, not signed workflow attestations or deployment authorization.
+Preserve existing protected release/recovery and CI safeguards; the Chat release
+exception does not authorize this release.
 
-Rollback: reviewed forward compensating SQL migration; if Web later changes, revert
-its commit or restore its previous Vercel deployment. Never delete migration history.
+Example invocation sequence after review, using separate fresh absolute workspaces
+and new receipt paths (credential values stay in existing protected service/CLI
+configuration):
+
+```sh
+node tests/fsw-sec-003/release-gate.mjs prepare FairSwapTest /absolute/psql /absolute/supabase /absolute/fresh-test /absolute/test-pre.json
+node tests/fsw-sec-003/release-gate.mjs preflight FairSwapTest /absolute/psql /absolute/test-pre.json
+# ChatGPT's separately authorized supported CLI-managed Test migration, then automated gates.
+node tests/fsw-sec-003/release-gate.mjs postflight FairSwapTest /absolute/psql /absolute/test-pre.json /absolute/test-post.json
+node tests/fsw-sec-003/release-gate.mjs prepare FairSwapProd /absolute/psql /absolute/supabase /absolute/fresh-prod /absolute/prod-pre.json /absolute/test-post.json
+node tests/fsw-sec-003/release-gate.mjs preflight FairSwapProd /absolute/psql /absolute/prod-pre.json
+# ChatGPT's separately authorized supported CLI-managed Production migration.
+node tests/fsw-sec-003/release-gate.mjs postflight FairSwapProd /absolute/psql /absolute/prod-pre.json /absolute/prod-post.json
+```
+
+Release limitations/blockers: complete Linux CI and the independently authorized
+hosted prepare/preflight/postflight sequence have not run. Effective hosted Data API
+schema configuration must be confirmed by the protected release's read-only
+configuration evidence: SQL captures `pgrst.db_schemas` when configured and rejects
+`app_security`, but a null DB setting cannot attest PostgREST process-level config.
+The standalone tool does not claim that missing evidence is proof of privacy. It
+preserves the setting and the migration never changes API exposure. The real local
+HTTP suite proves the intended `public`-only API configuration only. No manual or
+exploratory hosted/user-data test is authorized or needed by this preparation.
+
+Order: FairSwapTest Backend migration → automated gates/postflight → identical
+reviewed FairSwapProd migration → automated postflight. No Web release. Owner
+inspects production normal search, category/city/price filters, pagination,
+Hindi/English behavior, errors and latency after deployment; no owner predeployment
+test or approval gate is added.
+
+Rollback: reviewed forward compensating SQL migration; never erase ledger history.

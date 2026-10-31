@@ -1,0 +1,12 @@
+{
+  "version": "12.2.12",
+  "source": "https://github.com/PostgREST/postgrest/releases/tag/v12.2.12",
+  "linux-x64": {
+    "url": "https://github.com/PostgREST/postgrest/releases/download/v12.2.12/postgrest-v12.2.12-linux-static-x86-64.tar.xz",
+    "sha256": "5de4092f1719da3353c40bf96c8dec6913f2254a7cd0b61cc05f233153b557d5"
+  },
+  "darwin-arm64": {
+    "url": "https://github.com/PostgREST/postgrest/releases/download/v12.2.12/postgrest-v12.2.12-macos-aarch64.tar.xz",
+    "sha256": "66eb150109409caea1b90c819418d326b2a5fd59789209e0dd45c87078c71909"
+  }
+}
