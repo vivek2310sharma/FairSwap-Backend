@@ -1,0 +1,84 @@
+name: Protected FSW-SEC-003 read-only evidence audit
+on:
+  workflow_dispatch:
+    inputs:
+      approved_sha:
+        description: Exact reviewed main source and workflow commit
+        required: true
+        type: string
+      target:
+        description: Independent metadata audit targets; no deployment
+        required: true
+        type: choice
+        default: both
+        options:
+          - both
+          - FairSwapTest
+          - FairSwapProd
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: fsw-sec-003-evidence-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
+      github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
+      inputs.approved_sha == github.sha
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ inputs.target == 'both' && fromJSON('["FairSwapTest","FairSwapProd"]') || fromJSON(format('["{0}"]', inputs.target)) }}
+    environment: ${{ matrix.environment }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      APPROVED_SHA: ${{ inputs.approved_sha }}
+      FSW_ENVIRONMENT: ${{ matrix.environment }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+      - name: Synthetic audit and existing release guards
+        run: node --test tests/fsw-sec-003/evidence-audit.test.mjs tests/fsw-sec-003/release-gate.test.mjs tests/fsw-sec-003/protected-release.test.mjs
+      - name: GET-only audit using existing credentials
+        id: collect
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets[matrix.environment == 'FairSwapTest' && 'FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN' || 'FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN'] }}
+          CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+        run: node scripts/release/fsw-sec-003-evidence-audit.mjs "$FSW_ENVIRONMENT"
+      - name: Preserve sanitized evidence, including UNVERIFIED results
+        if: ${{ always() && steps.collect.outputs.sha256 != '' }}
+        id: artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fsw-sec-003-audit-${{ matrix.environment }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            fsw-audit-receipt/receipt.json
+            fsw-audit-receipt/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+      - name: Retrieve only this producer's immutable artifact
+        if: ${{ always() && steps.artifact.outcome == 'success' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ steps.artifact.outputs.artifact-id }}
+          path: fsw-audit-verified
+          merge-multiple: true
+      - name: Verify trusted checksum, run, attempt, source, target and age without credentials
+        if: ${{ always() && steps.artifact.outcome == 'success' }}
+        env:
+          TRUSTED_RECEIPT_SHA: ${{ steps.collect.outputs.sha256 }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          import {verifyReceipt} from './scripts/release/fsw-sec-003-evidence-audit.mjs';
+          verifyReceipt(readFileSync('fsw-audit-verified/receipt.json'),process.env.TRUSTED_RECEIPT_SHA,process.env.FSW_ENVIRONMENT,process.env);
+          NODE

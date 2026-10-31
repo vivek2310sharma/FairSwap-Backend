@@ -95,7 +95,7 @@ jobs:
           env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
             node tests/fsw-sec-003/run-disposable.mjs \
             --pglite-module tests/ratings/node_modules/@electric-sql/pglite/dist/index.js
-          node --test tests/fsw-sec-003/release-gate.test.mjs tests/fsw-sec-003/protected-release.test.mjs
+          node --test tests/fsw-sec-003/release-gate.test.mjs tests/fsw-sec-003/protected-release.test.mjs tests/fsw-sec-003/evidence-audit.test.mjs
 
       - name: Run validator regression checks
         timeout-minutes: 1
