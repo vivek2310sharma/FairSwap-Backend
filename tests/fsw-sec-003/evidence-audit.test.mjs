@@ -76,7 +76,7 @@ for(const status of [200,401,429,500]) test('opposite target must return a genui
 });
 for(const route of ['/database/backups','/postgrest','/rulesets/25821687']) for(const status of [401,403,404,429,500]) test(route+' unavailable '+status+' is UNVERIFIED',async()=>{
   const r=await harness('FairSwapTest',{change:(url,data,reply)=>{if(url.endsWith(route)){reply.status=status;reply.ok=false;}}}).run();
-  assert.equal(r.status,'UNVERIFIED');
+  assert.equal(r.status,route.includes('backups')?'PASS':'UNVERIFIED');
   assert.equal(r.checks[route.includes('backups')?'backups':route.includes('postgrest')?'exposure':'protections'].status,'UNVERIFIED');
 });
 for(const key of ['SUPABASE_ACCESS_TOKEN','CHAT_RELEASE_AUDIT_TOKEN']) test('missing existing credential '+key,async()=>{
@@ -136,4 +136,13 @@ test('workflow remains isolated from deployments, uses protected independent job
   const w=readFileSync(new URL('../../'+workflow,import.meta.url),'utf8');
   for(const text of ['workflow_dispatch:','github.triggering_actor','inputs.approved_sha == github.sha','environment: ${{ matrix.environment }}','fail-fast: false','overwrite: false','always()','artifact-ids: ${{ steps.artifact.outputs.artifact-id }}','TRUSTED_RECEIPT_SHA: ${{ steps.collect.outputs.sha256 }}','persist-credentials: false'])assert.ok(w.includes(text),text);
   for(const text of ['push:','pull_request:','schedule:','write-all','id-token:','continue-on-error','FSW_SEC_003_RELEASE_ENABLED','CHAT_DATABASE_PASSWORD','supabase db','fsw-sec-003-release.mjs'])assert.ok(!w.includes(text),text);
+});
+
+test('waiver is exact and exposure remains independently mandatory',async()=>{
+ const h=harness('FairSwapTest');const r=await h.run();
+ assert.equal(r.backupRecovery.status,'WAIVED_BY_OWNER');
+ for(const mutate of [w=>w.scope.push('writer-authority'),w=>w.sha256='0'.repeat(64),w=>w.projectRef=refs.FairSwapProd,w=>w.version='20261101000000']){
+ const changed=structuredClone(r);mutate(changed.backupRecovery);const bytes=JSON.stringify(changed);
+ assert.throws(()=>verifyReceipt(bytes,hash(bytes),'FairSwapTest',h.c,now));
+ }
 });

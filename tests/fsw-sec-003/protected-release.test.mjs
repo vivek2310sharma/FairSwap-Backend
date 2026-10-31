@@ -5,14 +5,20 @@ import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,rmSync,existsSync} from
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {rootCertificates} from 'node:tls';
-import {X509Certificate} from 'node:crypto';
+import {X509Certificate,generateKeyPairSync,sign} from 'node:crypto';
+import {canonicalJson} from '../../scripts/release/inbox-protection.mjs';
+const keys=generateKeyPairSync('ed25519');
+const publicKey=keys.publicKey.export({type:'spki',format:'pem'});
+const signed=payload=>JSON.stringify({payload,signature:sign(null,Buffer.from(canonicalJson(payload)),keys.privateKey).toString('base64')});
 import {release,authorize,exposure,recovery,backupWaiver,verifyTestReceipt,verifySchemas,requireCi} from '../../scripts/release/fsw-sec-003-release.mjs';
 import {refs,SHA,FILE,VERSION,NAME,LEDGER_SHA,sha} from './release-gate.mjs';
 const sql=readFileSync(new URL('../../releases/candidates/fsw-sec-003/supabase/migrations/'+FILE,import.meta.url),'utf8');
 const certificate=rootCertificates.find(p=>{const c=new X509Certificate(p);return c.ca&&Date.parse(c.validFrom)<Date.now()&&Date.parse(c.validTo)>Date.now();});
-const ctx=(environment='FairSwapTest')=>({GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_REPOSITORY:'vivek2310sharma/FairSwap-Backend',GITHUB_REF:'refs/heads/main',GITHUB_ACTOR:'vivek2310sharma',GITHUB_TRIGGERING_ACTOR:'vivek2310sharma',GITHUB_SHA:'a'.repeat(40),APPROVED_SHA:'a'.repeat(40),GITHUB_RUN_ID:'12',GITHUB_RUN_ATTEMPT:'1',FSW_RELEASE_ENABLED:'true',FSW_ENVIRONMENT:environment,GITHUB_TOKEN:'synthetic-github-secret',SUPABASE_ACCESS_TOKEN:'synthetic-project-secret',CHAT_RELEASE_AUDIT_TOKEN:'synthetic-audit-secret',CHAT_DATABASE_PASSWORD:'synthetic-password',CHAT_DB_POOLER_HOST:'aws-0-eu-central-1.pooler.supabase.com',CHAT_DB_SSL_ROOT_CERT_PEM:certificate,FSW_PSQL:'/synthetic/psql',FSW_CLI:'/synthetic/supabase',PATH:process.env.PATH});
+const ctx=(environment='FairSwapTest')=>({FSW_AUTHORITY_PUBLIC_KEY_PEM:publicKey,GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_REPOSITORY:'vivek2310sharma/FairSwap-Backend',GITHUB_REF:'refs/heads/main',GITHUB_ACTOR:'vivek2310sharma',GITHUB_TRIGGERING_ACTOR:'vivek2310sharma',GITHUB_SHA:'a'.repeat(40),APPROVED_SHA:'a'.repeat(40),GITHUB_RUN_ID:'12',GITHUB_RUN_ATTEMPT:'1',FSW_RELEASE_ENABLED:'true',FSW_ENVIRONMENT:environment,GITHUB_TOKEN:'synthetic-github-secret',SUPABASE_ACCESS_TOKEN:'synthetic-project-secret',CHAT_RELEASE_AUDIT_TOKEN:'synthetic-audit-secret',CHAT_DATABASE_PASSWORD:'synthetic-password',CHAT_DB_POOLER_HOST:'aws-0-eu-central-1.pooler.supabase.com',CHAT_DB_SSL_ROOT_CERT_PEM:certificate,FSW_PSQL:'/synthetic/psql',FSW_CLI:'/synthetic/supabase',PATH:process.env.PATH});
 // Authority-only synthetic fixture: deliberately contains no backup/restore assertions.
-const proof=(environment='FairSwapTest')=>JSON.stringify({status:'PASS',environment,projectRef:refs[environment],sha256:SHA,verifiedAt:new Date().toISOString(),exclusiveBackendAuthority:true,privilegedWriterInventorySha256:sha('inventory'),retiredWriterProofSha256:sha('retirement')});
+const proof=(environment='FairSwapTest')=>signed({schema:1,producer:'fsw-independent-authority-v1',repository:'vivek2310sharma/FairSwap-Backend',sourceCommit:ctx().GITHUB_SHA,version:VERSION,status:'PASS',environment,projectRef:refs[environment],sha256:SHA,verifiedAt:new Date().toISOString(),exclusiveBackendAuthority:true,complete:true,
+ inventories:['management-tokens','database-logins','ci-service-accounts','integrations','external-manual-deployers'].map((category,i)=>({category,complete:true,providerEvidenceSha256:sha(category),writers:i===0?[{id:'backend',authority:'FairSwap-Backend'}]:[]})),
+ expectedWriterIds:['backend'],expectedRetiredCredentialIds:['legacy1','legacy2','legacy3','legacy4'],retiredCredentials:['legacy1','legacy2','legacy3','legacy4'].map(id=>({id,status:'revoked',providerEvidenceSha256:sha(id)})),privilegedWriterInventorySha256:sha('inventory'),retiredWriterProofSha256:sha('retirement')});
 const params=['query','category_id','category_slug','city_id','locality_id','condition','price_min','price_max','sort','page','per_page'];
 function snapshot(environment) {return {capturedAt:new Date().toISOString(),tls:true,serverVersion:'170006',exposedSchemas:null,connection:{host:ctx().CHAT_DB_POOLER_HOST,port:'5432',user:'postgres.'+refs[environment]},ledger:[{version:'20260914000001',name:'synthetic',statementsSha256:sha('select 1')}],functions:['app_security','public'].map(schema=>({schema,owner:'postgres',volatility:'s',config:['search_path=""'],returnType:'jsonb',definer:schema==='app_security',acl:'{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}',argNames:params.map(x=>schema==='app_security'?'p_'+x:x),bodySha256:sha(schema),bodyMd5:schema==='app_security'?'0ccc07eede6a6fa06b30acc06d9cdc10':environment==='FairSwapTest'?'821f536ad89962bc345586f175c86d23':'150b3b0298c05e2eb9733bd010e6f5a2'})),security:['categories','cities','listing_media','listings','localities','user_accounts'].map(table=>({table,rls:true}))};}
 const schemas=()=>['app_security','public'].map(schema=>({schema,owner:'postgres',acl:null,rolePrivileges:['anon','authenticated','service_role'].map(role=>({role,usage:true,create:false}))}));
@@ -47,7 +53,7 @@ function harness(environment='FairSwapTest',options={}) {
   if(args.includes('--dry-run'))return FILE+(options.extraPending?'\n20261101000000_unexpected.sql':'');
   assert.ok(args.includes('--yes'));applied=true;return '';
  };
- const evidence=JSON.parse(proof(environment));options.mutateAuthority?.(evidence);
+ const evidence=JSON.parse(proof(environment));options.mutateAuthority?.(evidence.payload);
  return {calls,fetcher,runner,protection:async()=>{if(options.protectionDenied)throw Error('CHAT_RULESET_BYPASS_UNVERIFIABLE');return {snapshotSha256:sha('protected')};},recoveryBytes:JSON.stringify(evidence)};
 }
 async function simulate(environment='FairSwapTest',options={}) {
@@ -97,7 +103,7 @@ test('authority evidence remains mandatory, fresh and environment/candidate boun
  }
  assert.throws(()=>recovery('FairSwapTest','null'));
  assert.throws(()=>recovery('OtherProject',proof()));
- assert.equal(recovery('FairSwapTest',proof()).length,64);
+ assert.equal(recovery('FairSwapTest',proof(),Date.now(),ctx()).length,64);
 });
 for(const [name,mutateAuthority] of Object.entries({missingInventory:x=>{delete x.privilegedWriterInventorySha256;},missingRetirement:x=>{delete x.retiredWriterProofSha256;},notExclusive:x=>{x.exclusiveBackendAuthority=false;},waivedAuthority:x=>{x.status='WAIVED_BY_OWNER';},staleAuthority:x=>{x.verifiedAt='2000-01-01T00:00:00Z';}}))test('waiver cannot bypass writer authority: '+name,async()=>{
  const r=await simulate('FairSwapTest',{mutateAuthority});assert.ok(r.failure);assert.equal(r.calls.some(c=>c.includes('init')||c.includes('--yes')),false);
@@ -132,4 +138,19 @@ test('Production consumes the exact successful same-run Test bytes and independe
   const r=await simulate('FairSwapProd',{testReceiptBytes:t.bytes,context:{TEST_RECEIPT_SHA:sha(t.bytes),...overrides}});
   assert.ok(r.failure);assert.equal(r.calls.length,0);
  }
+});
+
+for(const [name,mutate] of Object.entries({wrongProducer:r=>r.producer='owner',wrongProject:r=>r.projectRef=refs.FairSwapProd,missingWriter:r=>r.inventories[0].writers.pop(),missingCategory:r=>r.inventories.pop(),stale:r=>r.verifiedAt='2000-01-01T00:00:00.000Z',missingRetired:r=>r.retiredCredentials.pop(),broaderWaiver:r=>r.sha256=sha('another migration'),foreignWriter:r=>r.inventories[0].writers[0].authority='external'}))test('authenticated authority rejects '+name,()=>{
+ const payload=JSON.parse(proof()).payload;mutate(payload);
+ assert.throws(()=>recovery('FairSwapTest',signed(payload),Date.now(),ctx()));
+});
+test('forged signature, unsigned legacy record and absent trust anchor fail closed',()=>{
+ const record=JSON.parse(proof());record.payload.complete=false;
+ assert.throws(()=>recovery('FairSwapTest',JSON.stringify(record),Date.now(),ctx()));
+ assert.throws(()=>recovery('FairSwapTest',JSON.stringify(record.payload),Date.now(),ctx()));
+ assert.throws(()=>recovery('FairSwapTest',proof(),Date.now(),{}));
+ const foreign=generateKeyPairSync('ed25519');
+ record.payload=JSON.parse(proof()).payload;
+ record.signature=sign(null,Buffer.from(canonicalJson(record.payload)),foreign.privateKey).toString('base64');
+ assert.throws(()=>recovery('FairSwapTest',JSON.stringify(record),Date.now(),ctx()));
 });
