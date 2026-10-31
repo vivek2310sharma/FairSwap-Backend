@@ -40,3 +40,117 @@ At this audit checkpoint, **no** `releases/candidates/fsw-sec-003/recovery/FairS
 When separately approved and evidenced: **FairSwapTest** migration and automated postflight → immutable same-run Test receipt → **FairSwapProd** migration and automated postflight. After production, the owner checks English/Hindi search, category/city/price filters, pagination, error rate and latency. No owner predeployment manual testing is added.
 
 **Rollback:** reviewed forward compensating SQL migration; preserve migration history.
+
+## Protected read-only producer added locally — FSW-SEC-003 continuation
+
+The dedicated `fsw-sec-003-evidence-audit.yml` and
+`scripts/release/fsw-sec-003-evidence-audit.mjs` now prepare automated metadata
+collection. They have **not** been installed or dispatched on GitHub. Earlier
+statements above about no dedicated collector describe the prior inspection.
+The existing release workflow, orchestrator, recovery inputs and deployment gates
+are unchanged. No enable variable was set; deployment remains disabled by this work.
+
+Requested baseline: `6bd1c5b16963601c936de31b083ff94c32bc5a07`. Local `main` HEAD:
+`8f3abe1cb7a5053a7ce2f741ae66d6d969f0c180`. The requested object is unavailable
+locally; no fetch/pull or checkout was authorized/performed. Baseline equivalence
+is UNVERIFIED. Existing dirty/untracked files were preserved.
+
+### Collection and trust boundaries
+
+- Owner/triggering-owner dispatch on `main`, exact reviewed `approved_sha`, existing
+  protected FairSwapTest/FairSwapProd environments, pinned actions and Node 24.15.0.
+  `target` selects either environment or both; independent matrix jobs use
+  `fail-fast: false`. No Test evidence is copied into Prod. Missing Test credentials
+  cannot fall back to Production credentials.
+- Only existing `FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN`,
+  `FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN` and `CHAT_RELEASE_AUDIT_TOKEN` are referenced.
+  No credential creation, widening, relocation or new secret names. No database
+  passwords, runtime keys, CLI, SQL, backup downloads or restore endpoints.
+- GET target identity and require opposite-target 403/404 isolation. Denial or wrong
+  identity prevents backup/config reads. Backup and config failures are independent;
+  GitHub protection evidence is collected independently using the unchanged
+  `inbox-protection.mjs` two-snapshot policy (complete collaborator, ruleset/bypass,
+  branch, environment and secret-name metadata). Partial inventories cannot PASS.
+  The audit does not change protection policy or claim it inventories external writers.
+- Provider backup fields retained: ID, recognized status, creation time, type,
+  PITR/WAL flags and physical coverage bounds when returned. A PASS requires a
+  completed backup within 24 hours. This does not prove restorability, retention
+  policy, encryption/decryption access or Storage-object recovery. No backup ID
+  is silently substituted into a deployment recovery receipt.
+- Effective provider Data API `db_schema` is recorded; public-only passes, an
+  unexpected schema records FAIL, absent/malformed config is UNVERIFIED. This is
+  management configuration evidence, not a runtime HTTP/ACL/RLS acceptance test.
+- Only sanitized metadata and GitHub protection digests enter canonical receipts.
+  Provider payloads, credentials, error bodies and arbitrary error messages are
+  never persisted or logged. Redirects, non-JSON/non-200 responses, pagination,
+  missing fields, duplicate IDs and unknown shapes fail closed.
+- Receipts bind repository, producer workflow, source commit and source bundle,
+  environment/project, run ID/attempt and observation time. Local exclusive creation
+  prevents overwrites; upload-artifact v4 uses unique target/run/attempt names with
+  `overwrite: false`, 90-day retention and checksum sidecars. A credential-free
+  step downloads by the producer's immutable artifact ID and checks the digest
+  from the producer's trusted job output, binding and 24-hour freshness.
+  A checksum supplied by an artifact author alone is **not authentication**.
+  Future cross-run consumers must authenticate the successful reviewed producer,
+  source, run/attempt and immutable artifact ID using GitHub; never trust copied
+  JSON, its self-reported identity or its own checksum. Artifact deletion/expiry
+  removes availability; no permanent archival guarantee is claimed.
+- Overall metadata PASS requires all four metadata checks to pass. Missing access
+  or unexpected responses give UNVERIFIED and a failed collection job while still
+  uploading available sanitized evidence. `releaseEligible` remains false and
+  recovery/writer inventory/retirement remain UNVERIFIED even on metadata PASS.
+  No output is written into `recovery/` or consumed by existing deployment gates.
+
+### Permissions and remaining blockers — separately for both projects
+
+No current provider permissions were exercised. Historical October 18 scope checks
+remain the only recorded access evidence; they do not prove these endpoints work.
+Both environments need existing access to project metadata, backup listing
+(`database:read` / `backups_read`) and PostgREST config (`rest:read` /
+`data_api_config_read`). Secret config access is neither required nor requested.
+Existing GitHub audit access must expose complete environment/branch protections,
+collaborators, ruleset bypass lists and repository/environment secret **names**.
+An unavailable permission stays UNVERIFIED; do not mint or widen a token to pass.
+Repository-level scoped-token placement remains an authority limitation.
+
+Still requires separate authorization and automated evidence: restore the reviewed
+backup on a private disposable recovery target; prove encryption access, ledger,
+ACL/RLS, integrity, export and Storage coverage, measured RPO/RTO and retention.
+Never restore into Test or Prod. Separately obtain a complete provider-authenticated
+privileged-writer inventory (PATs, database logins, CI, services, integrations and
+external/manual deployers) and credential-ID-bound legacy retirement records.
+Owner attestations, freezes, collaborator/secret lists and inactivity are insufficient.
+No old token values or runtime key revocations are needed. Existing release evidence
+validation still requires separately authorized producer-authentication hardening;
+this collector does not repair or bypass that gate.
+
+Hosted Test: NOT RUN / UNVERIFIED. Hosted Prod: NOT RUN / UNVERIFIED.
+Synthetic coverage includes each environment independently, target/scope failures,
+missing permissions, forgery, expiry, malformed responses and incomplete inventories.
+Local reproduction: `node --test tests/fsw-sec-003/evidence-audit.test.mjs`.
+
+After separate release authorization: Test verification/migration → automated
+postflight → Prod verification/migration → automated postflight. Rollback for this
+change: revert only the audit-source additions. Future SQL rollback remains a
+forward compensating migration preserving history. No manual/exploratory tests.
+
+Provider contracts reviewed: [backup metadata](https://supabase.com/docs/reference/api/v1-list-all-backups),
+[Data API configuration](https://supabase.com/docs/reference/api/v1-get-postgrest-service-config).
+The changelog markdown endpoint could not be read through the documentation fetcher;
+no changelog compatibility claim is made.
+
+Validation for this continuation (Node 24.21.0): **PASS 113/113** Node tests
+(53 new audit tests plus 60 existing release tests), zero failures/skips.
+`node scripts/ci/verify-baseline.mjs`: PASS, 58 canonical migration hashes.
+`node --check scripts/release/fsw-sec-003-evidence-audit.mjs`, Ruby YAML parsing
+and `git diff --check`: PASS. Python/Node YAML parsers were unavailable; Ruby's
+bundled YAML parser supplied the syntax check. CI's Node 24.15.0 and hosted
+protection enforcement remain NOT RUN. No dependencies were installed.
+
+Exact files changed in this continuation only:
+
+- `.github/workflows/fsw-sec-003-evidence-audit.yml` (new)
+- `scripts/release/fsw-sec-003-evidence-audit.mjs` (new)
+- `tests/fsw-sec-003/evidence-audit.test.mjs` (new)
+- `releases/candidates/fsw-sec-003/EVIDENCE_GAPS.md` (append)
+- `releases/candidates/fsw-sec-003/README.md` (append)

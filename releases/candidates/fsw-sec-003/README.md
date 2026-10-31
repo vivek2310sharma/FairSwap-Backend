@@ -362,3 +362,9 @@ necessary to complete this local implementation.
 
 After deployment, owner production checks: English/Hindi search, category/city/price
 filters, pagination, errors and latency. No owner testing before deployment is added.
+
+## Read-only recovery/authority audit continuation
+
+A separate owner-dispatched evidence workflow now prepares independent protected
+Test/Prod metadata receipts. It does not enable or modify deployment gates.
+See [collection contract, permissions, trust boundary and remaining blockers](EVIDENCE_GAPS.md#protected-read-only-producer-added-locally--fsw-sec-003-continuation).
