@@ -10,6 +10,15 @@ export const workflow = '.github/workflows/fsw-sec-003-evidence-audit.yml';
 export const refs = Object.freeze({FairSwapTest:'wpppxlnbzqynvhpeuavd', FairSwapProd:'kriuhwppxgxsyyrbjsau'});
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const day = 86400000;
+export function backupDecision(environment) {
+ need(Object.hasOwn(refs,environment)&&refs[environment]===({FairSwapTest:'wpppxlnbzqynvhpeuavd',FairSwapProd:'kriuhwppxgxsyyrbjsau'})[environment],'WRONG_PROJECT');
+ return {status:'WAIVED_BY_OWNER',environment,projectRef:refs[environment],
+ sha256:'b9746cdf49299af84bbbfc5f79b51dd7d67a737202a2d54c55f8743fc15770bd',
+ version:'20261031110408',file:'20261031110408_fsw_sec_003_public_search_hardening.sql',
+ authorization:'https://github.com/vivek2310sharma/FairSwap-Backend/pull/75',
+ scope:['provider-managed-backup','backup-dependent-restore']};
+}
+const passed = checks => ['target','exposure','protections'].every(key=>checks[key]?.status==='PASS');
 export const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const need = (condition, code) => { if (!condition) throw Error(code); };
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -126,7 +135,7 @@ export async function collect(environment, {context:c = process.env, fetcher = f
   });
   const checks = {target,backups,exposure,protections};
   return {schema:1, kind:'fsw-sec-003-read-only-metadata', ...binding(environment,c), observedAt:new Date(now).toISOString(),
-    status:Object.values(checks).every(value => value.status === 'PASS') ? 'PASS':'UNVERIFIED', checks,
+    status:passed(checks) ? 'PASS':'UNVERIFIED', checks, backupRecovery:backupDecision(environment),
     releaseEligible:false, recovery:'UNVERIFIED', privilegedWriterInventory:'UNVERIFIED', retiredWriters:'UNVERIFIED'};
 }
 export function writeReceipt(receipt, directory) {
@@ -149,7 +158,9 @@ export function verifyReceipt(bytes, expectedHash, environment, c, now = Date.no
   need(age >= 0 && age <= day, 'FRESH_EVIDENCE_REQUIRED');
   need(object(receipt.checks) && Object.keys(receipt.checks).sort().join(',') === 'backups,exposure,protections,target' &&
     Object.values(receipt.checks).every(value => ['PASS','FAIL','UNVERIFIED'].includes(value?.status)), 'COMPLETE_CHECKS_REQUIRED');
-  const expected = Object.values(receipt.checks).every(value => value.status === 'PASS') ? 'PASS':'UNVERIFIED';
+  // Legacy receipts retain their original all-checks requirement.
+  if(receipt.backupRecovery!==undefined)need(canonicalJson(receipt.backupRecovery)===canonicalJson(backupDecision(environment)),'BACKUP_WAIVER_SCOPE_REQUIRED');
+  const expected = (receipt.backupRecovery ? passed(receipt.checks) : Object.values(receipt.checks).every(value => value.status === 'PASS')) ? 'PASS':'UNVERIFIED';
   need(receipt.status === expected, 'FALSE_PASS_FORBIDDEN');
   return receipt;
 }

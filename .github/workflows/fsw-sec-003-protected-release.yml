@@ -57,6 +57,7 @@ jobs:
       - name: Protected migration and automated postflight
         env:
           APPROVED_SHA: ${{ inputs.approved_sha }}
+          FSW_AUTHORITY_PUBLIC_KEY_PEM: ${{ vars.FSW_AUTHORITY_PUBLIC_KEY_PEM }}
           FSW_RELEASE_ENABLED: ${{ vars.FSW_SEC_003_RELEASE_ENABLED }}
           FSW_ENVIRONMENT: FairSwapTest
           SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN }}
@@ -148,6 +149,7 @@ jobs:
       - name: Protected migration and automated postflight
         env:
           APPROVED_SHA: ${{ inputs.approved_sha }}
+          FSW_AUTHORITY_PUBLIC_KEY_PEM: ${{ vars.FSW_AUTHORITY_PUBLIC_KEY_PEM }}
           FSW_RELEASE_ENABLED: ${{ vars.FSW_SEC_003_RELEASE_ENABLED }}
           FSW_ENVIRONMENT: FairSwapProd
           SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN }}

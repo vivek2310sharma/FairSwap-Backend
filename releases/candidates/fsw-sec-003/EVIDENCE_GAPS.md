@@ -1,5 +1,69 @@
 # FSW-SEC-003 — Recovery and deployment-authority evidence gaps
 
+## Current provenance hardening (supersedes historical validator descriptions below)
+
+The read-only audit records the exact PR #75 `WAIVED_BY_OWNER` backup decision
+separately from backup observations. Its overall metadata result requires target,
+public-only effective PostgREST exposure and protections, independent of backup
+availability. Legacy audit receipts retain their original all-checks validation.
+It remains metadata-only, never release authority. Backup observations are retained
+for backward-compatible consumers; no backup or restoration is claimed.
+
+The protected release now rejects unsigned recovery records. The existing
+`recovery/<environment>.json` path accepts an envelope `{payload, signature}`.
+Signature is standard base64 Ed25519 over UTF-8 `canonicalJson(payload)` from
+`inbox-protection.mjs`. The trusted SPKI PEM public key comes only from protected
+configuration `FSW_AUTHORITY_PUBLIC_KEY_PEM`; no payload-provided key is trusted.
+The signing private key must remain with an independent evidence service, outside
+this repository, release runner and owner-created evidence records. Key enrollment
+must independently authenticate that service; merely signing an owner assertion
+with a newly generated key is insufficient. No production key was created here.
+
+Payload schema 1 binds producer `fsw-independent-authority-v1`, repository,
+reviewed sourceCommit, exact environment/projectRef/candidate sha256/version,
+status PASS, canonical verifiedAt within 24 hours, complete=true and
+exclusiveBackendAuthority=true. Five complete inventories are mandatory:
+management-tokens, database-logins, ci-service-accounts, integrations and
+external-manual-deployers. Each carries providerEvidenceSha256 and writers
+with stable nonsecret id and authority FairSwap-Backend. expectedWriterIds must
+exactly match the unique union of writers. expectedRetiredCredentialIds must
+match retiredCredentials (id, status revoked, providerEvidenceSha256), with at
+least the four historical credentials covered and none active. Aggregate
+privilegedWriterInventorySha256 and retiredWriterProofSha256 remain required.
+
+The independent producer must enumerate all pages and all writer scopes, retain
+provider-authenticated source records under those hashes, independently resolve
+stable legacy credential IDs and reject missing records, unknown scopes, provider
+denials or truncation. Empty categories require positive provider completeness
+proof. The verifier authenticates the producer's signed claims, not raw provider
+records; a signature cannot itself establish enumeration truth. This repository
+contains the consumer, not an operational evidence producer. Existing unsigned
+records intentionally fail closed; paths, release receipt fields and SQL remain
+compatible. Both authority checks run before apply; Data API exposure is separately
+GET-verified before preparation, immediately before apply and after migration.
+
+External prerequisites remain UNVERIFIED for both projects: an independently
+operated evidence service with complete provider writer/credential audit access,
+authenticated enrollment of its public key in each protected environment, genuine
+fresh signed records, PostgREST read permission and complete GitHub protection
+metadata access. No old credential values are needed. No privileges were widened,
+credentials changed, hosted database touched, or GitHub operation performed.
+
+Requested baseline 5eeb2e9088fd9485d3ec4d95e474f84585ca4389 was absent in the coding agent's local checkout; GitHub integration independently verified Backend main at this baseline.
+local HEAD is 8f3abe1cb7a5053a7ce2f741ae66d6d969f0c180. Prior dirty/untracked
+work is preserved. Baseline equivalence and hosted evidence remain UNVERIFIED.
+After successful evidence verification: FairSwapTest → automated postflight →
+FairSwapProd → automated postflight. Production inspection scope: English/Hindi
+search, filters, pagination, errors and latency. No manual tests ran.
+Rollback: Git revert for source; reviewed forward compensating migration for
+subsequently applied SQL. No guaranteed data restoration without backups.
+
+Automated validation: PASS 137/137 Node tests (zero skipped), 58 canonical
+migration byte hashes, both changed script syntax checks, protected-workflow YAML
+syntax and git diff --check. CI Linux and hosted verification were NOT RUN.
+
+---
+
 ## Current owner-authorized Free-plan backup waiver (FSW-SEC-003 only)
 
 The FairSwap owner explicitly accepts proceeding **without provider-managed automatic backup and backup-dependent restore verification** on the Free plan for only the pinned search-hardening candidate `20261031110408_fsw_sec_003_public_search_hardening.sql`, raw SHA-256 `b9746cdf49299af84bbbfc5f79b51dd7d67a737202a2d54c55f8743fc15770bd`, and only FairSwapTest (`wpppxlnbzqynvhpeuavd`) followed by FairSwapProd (`kriuhwppxgxsyyrbjsau`). See the [owner's recorded acceptance](https://github.com/vivek2310sharma/FairSwap-Backend/pull/75#issuecomment-6549137816). **No backup, recovery or restoration is claimed to have passed. Risk includes unrecoverable data loss and downtime.**

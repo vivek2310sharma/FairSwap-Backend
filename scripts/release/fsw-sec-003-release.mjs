@@ -7,7 +7,8 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {VERSION,FILE,SHA,refs,sha,verifyCandidate,verifyCapture,verifyHistory,verifyPreflight,verifyPostflight,verifyDryRun} from '../../tests/fsw-sec-003/release-gate.mjs';
 import {auditProtection,requireOwnerActors} from './inbox-protection.mjs';
-import {X509Certificate} from 'node:crypto';
+import {X509Certificate,createPublicKey,verify} from 'node:crypto';
+import {canonicalJson} from './inbox-protection.mjs';
 // Same PEM/CA/time validation as the Chat tool without importing Chat SQL/dependencies.
 function validateRootCertificate(value) {
  need(typeof value==='string'&&value.length>0&&value.length<=65536,'TLS_ROOT_CERT_REQUIRED');
@@ -79,13 +80,37 @@ export async function requireCi(c,fetcher=fetch) {
 }
 // The existing reviewed per-environment record remains mandatory for writer authority.
 // The owner waived only backup/restore, never exclusive authority or its evidence.
-export function recovery(environment,bytes,now=Date.now()) {
+// Independent evidence service signs canonical JSON with an offline Ed25519 key.
+// The trusted key is protected environment configuration, NEVER supplied by evidence.
+export function recovery(environment,bytes,now=Date.now(),context=process.env) {
  backupWaiver(environment);
- let r;try{r=JSON.parse(bytes);}catch{throw Error('FSW_REVIEWED_AUTHORITY_EVIDENCE_REQUIRED');}
- need(r&&r.environment===environment&&r.projectRef===refs[environment]&&r.sha256===SHA&&r.status==='PASS','AUTHORITY_TARGET_REQUIRED');
- need(Number.isFinite(Date.parse(r.verifiedAt))&&now-Date.parse(r.verifiedAt)>=0&&now-Date.parse(r.verifiedAt)<=24*3600000,'FRESH_AUTHORITY_EVIDENCE_REQUIRED');
- for(const key of ['privilegedWriterInventorySha256','retiredWriterProofSha256'])need(/^[a-f0-9]{64}$/.test(r[key]??''),'EXCLUSIVE_AUTHORITY_PROOF_REQUIRED');
- need(r.exclusiveBackendAuthority===true,'EXCLUSIVE_AUTHORITY_REQUIRED');
+ let envelope,key;
+ try {envelope=JSON.parse(bytes);key=createPublicKey(context.FSW_AUTHORITY_PUBLIC_KEY_PEM);}catch{throw Error('FSW_AUTHENTICATED_AUTHORITY_REQUIRED');}
+ need(key.asymmetricKeyType==='ed25519'&&typeof envelope?.signature==='string'&&/^[A-Za-z0-9+/]{86}==$/.test(envelope.signature),'AUTHENTICATED_AUTHORITY_REQUIRED');
+ const r=envelope.payload;
+ need(r&&verify(null,Buffer.from(canonicalJson(r)),key,Buffer.from(envelope.signature,'base64')),'AUTHENTICATED_AUTHORITY_REQUIRED');
+ need(r.producer==='fsw-independent-authority-v1'&&r.schema===1,'AUTHORITY_PRODUCER_REQUIRED');
+ need(r.repository==='vivek2310sharma/FairSwap-Backend'&&r.sourceCommit===context.GITHUB_SHA,'AUTHORITY_SOURCE_REQUIRED');
+ need(r.environment===environment&&r.projectRef===refs[environment]&&r.sha256===SHA&&r.version===VERSION&&r.status==='PASS','AUTHORITY_TARGET_REQUIRED');
+ const time=Date.parse(r.verifiedAt);
+ need(Number.isFinite(time)&&new Date(time).toISOString()===r.verifiedAt&&now-time>=0&&now-time<=24*3600000,'FRESH_AUTHORITY_EVIDENCE_REQUIRED');
+ need(r.exclusiveBackendAuthority===true&&r.complete===true,'EXCLUSIVE_AUTHORITY_REQUIRED');
+ const categories=['management-tokens','database-logins','ci-service-accounts','integrations','external-manual-deployers'];
+ need(Array.isArray(r.inventories)&&r.inventories.length===categories.length,'COMPLETE_WRITER_INVENTORY_REQUIRED');
+ need(r.inventories.map(x=>x.category).sort().join(',')===categories.sort().join(','),'COMPLETE_WRITER_INVENTORY_REQUIRED');
+ const ids=new Set();
+ for(const inventory of r.inventories){
+  need(inventory.complete===true&&/^[a-f0-9]{64}$/.test(inventory.providerEvidenceSha256??'')&&Array.isArray(inventory.writers),'COMPLETE_WRITER_INVENTORY_REQUIRED');
+  for(const writer of inventory.writers){
+   need(typeof writer.id==='string'&&writer.id.length>0&&!ids.has(writer.id)&&writer.authority==='FairSwap-Backend','EXCLUSIVE_AUTHORITY_REQUIRED');ids.add(writer.id);
+  }
+ }
+ need(ids.size>0&&Array.isArray(r.expectedWriterIds)&&new Set(r.expectedWriterIds).size===r.expectedWriterIds.length&&canonicalJson([...ids].sort())===canonicalJson([...r.expectedWriterIds].sort()),'COMPLETE_WRITER_INVENTORY_REQUIRED');
+ need(ids.size>0&&Array.isArray(r.expectedRetiredCredentialIds)&&r.expectedRetiredCredentialIds.length>=4&&new Set(r.expectedRetiredCredentialIds).size===r.expectedRetiredCredentialIds.length,'RETIRED_CREDENTIAL_INVENTORY_REQUIRED');
+ need(Array.isArray(r.retiredCredentials)&&r.retiredCredentials.length===r.expectedRetiredCredentialIds.length,'RETIRED_CREDENTIAL_PROOF_REQUIRED');
+ need(canonicalJson(r.retiredCredentials.map(x=>x.id).sort())===canonicalJson([...r.expectedRetiredCredentialIds].sort()),'RETIRED_CREDENTIAL_PROOF_REQUIRED');
+ for(const credential of r.retiredCredentials)need(!ids.has(credential.id)&&credential.status==='revoked'&&/^[a-f0-9]{64}$/.test(credential.providerEvidenceSha256??''),'RETIRED_CREDENTIAL_PROOF_REQUIRED');
+ for(const field of ['privilegedWriterInventorySha256','retiredWriterProofSha256'])need(/^[a-f0-9]{64}$/.test(r[field]??''),'EXCLUSIVE_AUTHORITY_PROOF_REQUIRED');
  return sha(bytes);
 }
 const schemaSql=`BEGIN READ ONLY;
@@ -120,7 +145,7 @@ export async function release(environment,{context: c=process.env,fetcher=fetch,
   receipt.protectionSha256=p.snapshotSha256;
   phase='authority';
   if(recoveryBytes===undefined){try{recoveryBytes=readFileSync(join(root,'releases/candidates/fsw-sec-003/recovery',environment+'.json'));}catch{throw Error('FSW_REVIEWED_AUTHORITY_EVIDENCE_REQUIRED');}}
-  receipt.authoritySha256=recovery(environment,recoveryBytes);
+  receipt.authoritySha256=recovery(environment,recoveryBytes,Date.now(),c);
   phase='exposure';const exposed=await exposure(environment,c.SUPABASE_ACCESS_TOKEN,fetcher);receipt.exposureSha256=sha(JSON.stringify(exposed));
   need(c.CHAT_DATABASE_PASSWORD&&c.CHAT_DB_SSL_ROOT_CERT_PEM,'EXISTING_DATABASE_CREDENTIAL_REQUIRED');
   need(/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/.test(c.CHAT_DB_POOLER_HOST??''),'SESSION_POOLER_HOST_REQUIRED');
@@ -151,7 +176,7 @@ export async function release(environment,{context: c=process.env,fetcher=fetch,
   const push=extra=>run(cli,['db','push','--db-url',url,...extra,'--workdir',workspace],env);
   phase='dry_run';verifyDryRun(push(['--dry-run']));
   phase='preflight';
-  recovery(environment,recoveryBytes);
+  recovery(environment,recoveryBytes,Date.now(),c);
   assert.deepEqual(receipt.backupRecovery,backupWaiver(environment));
   assert.deepEqual(await exposure(environment,c.SUPABASE_ACCESS_TOKEN,fetcher),exposed);
   await requireCi(c,fetcher);
