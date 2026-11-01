@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import express from "express";
 import { z } from "zod";
 import * as tf from "@tensorflow/tfjs-node";
@@ -38,11 +39,19 @@ let nsfwModel: nsfwjs.NSFWJS | null = null;
 let mobileNetModel: mobilenet.MobileNet | null = null;
 
 async function loadModels() {
-  console.log("Loading NSFWJS and MobileNet models...");
+  console.log("Loading NSFWJS and MobileNet models from local filesystem...");
   try {
-    nsfwModel = await nsfwjs.load();
-    mobileNetModel = await mobilenet.load({ version: 2, alpha: 1.0 });
-    console.log("Vision models successfully initialized.");
+    const modelsDir = path.resolve(process.cwd(), "models");
+    const nsfwJsonPath = `file://${path.join(modelsDir, "nsfwjs", "model.json")}`;
+    const mobilenetJsonPath = `file://${path.join(modelsDir, "mobilenet_v2", "model.json")}`;
+
+    nsfwModel = await nsfwjs.load(nsfwJsonPath, { size: 224 });
+    mobileNetModel = await mobilenet.load({
+      version: 2,
+      alpha: 1.0,
+      modelUrl: mobilenetJsonPath,
+    });
+    console.log("Vision models successfully initialized from local filesystem.");
   } catch (err) {
     console.error("Failed to load vision models:", err);
   }

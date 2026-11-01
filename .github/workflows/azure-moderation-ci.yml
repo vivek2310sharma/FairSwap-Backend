@@ -105,6 +105,11 @@ jobs:
           done
           docker rm -f test-vision
 
+      # Test Node Vision offline execution (run smoke test in container isolated with no network)
+      - name: Smoke test Node Vision offline model inference
+        run: |
+          docker run --rm --network none node-vision:local-test node test_smoke.mjs
+
       # 4. Build & verify Python OCR container
       - name: Build Python OCR container
         uses: docker/build-push-action@v5
