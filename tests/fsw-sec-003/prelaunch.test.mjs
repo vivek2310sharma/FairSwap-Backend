@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {verifyCandidate,verifyDryRun,FILE,SHA,VERSION,refs,sha} from './release-gate.mjs';
+import {safeFailure,exposure,verifyTestReceipt,backupWaiver} from '../../scripts/release/fsw-sec-003-prelaunch.mjs';
+test('approved immutable candidate and exact single pending version',()=>{
+ verifyCandidate();assert.equal(VERSION,'20261031110408');assert.equal(SHA,'b9746cdf49299af84bbbfc5f79b51dd7d67a737202a2d54c55f8743fc15770bd');
+ assert.throws(()=>verifyCandidate(Buffer.from('changed')));verifyDryRun(FILE);
+ assert.throws(()=>verifyDryRun(FILE+' 20261031110409_extra.sql'));
+});
+test('errors provide phase guidance without raw assertion data',()=>{
+ const message=safeFailure(Error('password=SECRET actual user data'),'postflight');
+ assert.match(message,/history and ACL/);assert.doesNotMatch(message,/SECRET|user data|FSW_VALIDATION_FAILED/);
+});
+test('public-only effective exposure and intended project',async()=>{
+ let target;const response=db_schema=>async url=>{target=url;return {ok:true,headers:new Headers(),json:async()=>({db_schema})};};
+ await exposure('FairSwapTest','fake',response('public'));assert.ok(target.includes(refs.FairSwapTest));
+ await assert.rejects(exposure('FairSwapProd','fake',response('public,app_security')),/PUBLIC_ONLY/);
+});
+test('Production requires complete fresh same-run Test proof without writer evidence',()=>{
+ const c={GITHUB_SHA:'a'.repeat(40),GITHUB_RUN_ID:'1',GITHUB_RUN_ATTEMPT:'1'};
+ const r={schema:1,status:'PASS',environment:'FairSwapTest',projectRef:refs.FairSwapTest,sourceCommit:c.GITHUB_SHA,runId:'1',runAttempt:'1',sha256:SHA,version:VERSION,migrationAttempted:true,phase:'postflight',postflight:true,cliVersion:'2.117.0',tls:'verify-full',completedAt:new Date().toISOString(),backupRecovery:backupWaiver('FairSwapTest')};
+ for(const k of ['beforeSha256','afterSha256','schemaSecuritySha256','protectionSha256','exposureSha256'])r[k]='b'.repeat(64);
+ const check=x=>{const b=JSON.stringify(x);return verifyTestReceipt(b,sha(b),c);};
+ check(r);assert.throws(()=>check({...r,runAttempt:'2'}));assert.throws(()=>check({...r,status:'FAIL'}));assert.throws(()=>check({...r,cliVersion:'latest'}));
+});
+test('workflow retains ordered protected deployment and disables legacy',()=>{
+ const w=readFileSync('.github/workflows/fsw-sec-003-prelaunch.yml','utf8');
+ assert.match(w,/environment: FairSwapTest/);assert.match(w,/environment: FairSwapProd/);assert.match(w,/needs: \[verify, test, verify_test\]/);
+ assert.doesNotMatch(w,/AUTHORITY|install-fsw-sec-003-pg/);
+ assert.match(readFileSync('.github/workflows/fsw-sec-003-protected-release.yml','utf8'),/false && github.repository/);
+});
