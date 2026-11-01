@@ -34,13 +34,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 1. Run Backend verification and moderation tests
+      # 1. Run Backend verification, baseline unit tests, and Azure moderation tests
       - name: Backend verification & moderation unit tests
         run: |
           corepack pnpm install --frozen-lockfile
           corepack pnpm verify:migrations
           corepack pnpm typecheck
           corepack pnpm test:unit
+          corepack pnpm exec vitest run --config vitest.moderation-azure.config.ts
 
       # 2. Build & verify Controller container
       - name: Build Controller container
