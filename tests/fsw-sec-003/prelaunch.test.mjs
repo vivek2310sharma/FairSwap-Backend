@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {verifyCandidate,verifyDryRun,FILE,SHA,VERSION,refs,sha} from './release-gate.mjs';
-import {safeFailure,exposure,verifyTestReceipt,backupWaiver,subprocessOutput} from '../../scripts/release/fsw-sec-003-prelaunch.mjs';
+import {verifyCandidate,verifyDryRun,FILE,SHA,VERSION,refs,sha,clientMetadata} from './release-gate.mjs';
+import {safeFailure,exposure,verifyTestReceipt,backupWaiver,subprocessOutput,validateRootCertificate} from '../../scripts/release/fsw-sec-003-prelaunch.mjs';
 import {spawnSync} from 'node:child_process';
 test('CLI version uses exact stdout while preserving stderr diagnostics',()=>{
  const run=(stdout,stderr,status=0)=>spawnSync(process.execPath,['-e',`process.stdout.write(${JSON.stringify(stdout)});process.stderr.write(${JSON.stringify(stderr)});process.exitCode=${status};`],{encoding:'utf8'});
@@ -53,4 +53,27 @@ test('both ubuntu jobs use authenticated noble PGDG client installation',()=>{
  const production=workflow.slice(workflow.indexOf('  production:'));
  assert.match(production,/needs.test.result == 'success' && needs.verify_test.result == 'success'/);
  assert.doesNotMatch(production,/always\(\).*needs.test|continue-on-error/);
+});
+
+test('same-session client TLS evidence is required independently of backend telemetry',()=>{
+ const ssl='SSL connection (protocol: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384, compression: off)\n';
+ for(const tls of [false,null,true]) {
+  const captured=clientMetadata('You are connected.\n'+ssl+JSON.stringify({tls,clientTls:{sslmode:'disable'}}));
+  assert.equal(captured.tls,tls);
+  assert.deepEqual(captured.clientTls,{sslmode:'verify-full',encrypted:true});
+ }
+ for(const info of ['', 'SSL connection (protocol: TLSv1.0, cipher: OLD, compression: off)\n','SSL connection (protocol: TLSv1.3, cipher: GOOD, compression: on)\n']) {
+  assert.throws(()=>clientMetadata(info+JSON.stringify({tls:true,clientTls:{sslmode:'verify-full',encrypted:true}})),/verified TLS/);
+ }
+ assert.throws(()=>clientMetadata(ssl),/metadata JSON/);
+});
+test('invalid root certificates and unsuccessful libpq verification fail closed',async()=>{
+ const {rootCertificates}=await import('node:tls');
+ const {X509Certificate}=await import('node:crypto');
+ const valid=rootCertificates.find(p=>{const c=new X509Certificate(p);return c.ca&&Date.parse(c.validFrom)<=Date.now()&&Date.parse(c.validTo)>Date.now();});
+ assert.match(validateRootCertificate(valid),/BEGIN CERTIFICATE/);
+ for(const cert of [undefined,'','not a certificate','-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n'])assert.throws(()=>validateRootCertificate(cert));
+ for(const stderr of ['certificate verify failed','server certificate does not match host name','root certificate file does not exist','SSL connection is required']) {
+  assert.throws(()=>subprocessOutput({status:2,stdout:'SSL connection (protocol: TLSv1.3, cipher: GOOD, compression: off)\n{}',stderr},'capture'),/TLS_FAILED/);
+ }
 });

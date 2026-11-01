@@ -20,7 +20,7 @@ const proof=(environment='FairSwapTest')=>signed({schema:1,producer:'fsw-indepen
  inventories:['management-tokens','database-logins','ci-service-accounts','integrations','external-manual-deployers'].map((category,i)=>({category,complete:true,providerEvidenceSha256:sha(category),writers:i===0?[{id:'backend',authority:'FairSwap-Backend'}]:[]})),
  expectedWriterIds:['backend'],expectedRetiredCredentialIds:['legacy1','legacy2','legacy3','legacy4'],retiredCredentials:['legacy1','legacy2','legacy3','legacy4'].map(id=>({id,status:'revoked',providerEvidenceSha256:sha(id)})),privilegedWriterInventorySha256:sha('inventory'),retiredWriterProofSha256:sha('retirement')});
 const params=['query','category_id','category_slug','city_id','locality_id','condition','price_min','price_max','sort','page','per_page'];
-function snapshot(environment) {return {capturedAt:new Date().toISOString(),tls:true,serverVersion:'170006',exposedSchemas:null,connection:{host:ctx().CHAT_DB_POOLER_HOST,port:'5432',user:'postgres.'+refs[environment]},ledger:[{version:'20260914000001',name:'synthetic',statementsSha256:sha('select 1')}],functions:['app_security','public'].map(schema=>({schema,owner:'postgres',volatility:'s',config:['search_path=""'],returnType:'jsonb',definer:schema==='app_security',acl:'{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}',argNames:params.map(x=>schema==='app_security'?'p_'+x:x),bodySha256:sha(schema),bodyMd5:schema==='app_security'?'0ccc07eede6a6fa06b30acc06d9cdc10':environment==='FairSwapTest'?'821f536ad89962bc345586f175c86d23':'150b3b0298c05e2eb9733bd010e6f5a2'})),security:['categories','cities','listing_media','listings','localities','user_accounts'].map(table=>({table,rls:true}))};}
+function snapshot(environment) {return {capturedAt:new Date().toISOString(),tls:false,serverVersion:'170006',exposedSchemas:null,connection:{host:ctx().CHAT_DB_POOLER_HOST,port:'5432',user:'postgres.'+refs[environment]},ledger:[{version:'20260914000001',name:'synthetic',statementsSha256:sha('select 1')}],functions:['app_security','public'].map(schema=>({schema,owner:'postgres',volatility:'s',config:['search_path=""'],returnType:'jsonb',definer:schema==='app_security',acl:'{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}',argNames:params.map(x=>schema==='app_security'?'p_'+x:x),bodySha256:sha(schema),bodyMd5:schema==='app_security'?'0ccc07eede6a6fa06b30acc06d9cdc10':environment==='FairSwapTest'?'821f536ad89962bc345586f175c86d23':'150b3b0298c05e2eb9733bd010e6f5a2'})),security:['categories','cities','listing_media','listings','localities','user_accounts'].map(table=>({table,rls:true}))};}
 const schemas=()=>['app_security','public'].map(schema=>({schema,owner:'postgres',acl:null,rolePrivileges:['anon','authenticated','service_role'].map(role=>({role,usage:true,create:false}))}));
 function harness(environment='FairSwapTest',options={}) {
  const calls=[],before=snapshot(environment);let applied=false;
@@ -43,7 +43,11 @@ function harness(environment='FairSwapTest',options={}) {
    if(options.rlsDrift)value.security.find(x=>x.table==='listings').rls=false;
    if(options.duplicate)value.ledger.push({version:VERSION,name:NAME,statementsSha256:LEDGER_SHA});
    if(applied){value.ledger.push({version:VERSION,name:NAME,statementsSha256:LEDGER_SHA});value.functions[0].bodySha256=sha(sql.split('AS $$')[1].split('$$;')[0]);value.functions[0].bodyMd5='new';if(options.catalogDrift)value.security[0].rls=false;}
-   return JSON.stringify(value);
+   assert.equal(env.LC_ALL,'C');assert.ok(args.includes('\\conninfo'));
+   assert.ok(args.some(a=>a.includes('sslrootcert=')));
+   assert.ok(readFileSync(env.PGSSLROOTCERT,'utf8').includes('BEGIN CERTIFICATE'));
+   const info=options.connectionEvidence??'SSL connection (protocol: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384, compression: off)\n';
+   return info+JSON.stringify(value);
   }
   const workspace=args.at(-1);
   if(args[0]==='init'){mkdirSync(join(workspace,'supabase/migrations'),{recursive:true});return '';}
@@ -192,4 +196,14 @@ test('workflow binds credential-free verifier to trusted Test output and each pr
  assert.equal(w.split("FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED: ${{ vars.FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED || 'false' }}").length-1,2);
  assert.ok(w.includes('FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED: ${{ needs.test.outputs.authority_deferred }}'));
  assert.ok(w.includes('authority_deferred: ${{ steps.proof.outputs.authority_deferred }}'));
+});
+
+for(const connectionEvidence of ['', 'SSL connection (protocol: TLSv1.0, cipher: OLD, compression: off)\n', 'SSL connection (protocol: TLSv1.3, cipher: GOOD, compression: on)\n', 'SSL connection malformed\n'])test('legacy runner rejects malformed or absent client evidence: '+JSON.stringify(connectionEvidence),async()=>{
+ const r=await simulate('FairSwapTest',{connectionEvidence});
+ assert.ok(r.failure);assert.equal(r.receipt.phase,'capture');assert.equal(r.receipt.migrationAttempted,false);
+ assert.equal(r.calls.some(c=>c.includes('--yes')),false);
+});
+for(const certificate of ['', 'invalid PEM', '-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n'])test('legacy runner rejects invalid root CA: '+JSON.stringify(certificate),async()=>{
+ const r=await simulate('FairSwapTest',{context:{CHAT_DB_SSL_ROOT_CERT_PEM:certificate}});
+ assert.ok(r.failure);assert.equal(r.receipt.migrationAttempted,false);assert.equal(r.calls.some(c=>c.includes('--yes')),false);
 });

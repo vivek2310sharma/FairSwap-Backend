@@ -24,7 +24,7 @@ async function fixture(fn) {
   await fn(db,capture);
  }finally{await db.close();}
 }
-const identity=meta=>({...meta,tls:true,serverVersion:'170006'});
+const identity=meta=>({...meta,tls:false,clientTls:{sslmode:'verify-full',encrypted:true},serverVersion:'170006'});
 test('capture SQL preserves NULL distinctly and leaves real ledger untouched',async()=>fixture(async(db,capture)=>{
  const before=(await db.query('table supabase_migrations.schema_migrations')).rows;
  const meta=identity(await capture('FairSwapProd'));
@@ -54,8 +54,17 @@ test('capture SQL preserves NULL distinctly and leaves real ledger untouched',as
 test('Test capture identifies each invariant without dumping metadata',async()=>fixture(async(db,capture)=>{
  await db.exec("delete from supabase_migrations.schema_migrations where statements is null");
  const meta=identity(await capture('FairSwapTest'));parseMetadata('FairSwapTest',JSON.stringify(meta));
+ const pooler=structuredClone(meta);
+ pooler.connection={host:'aws-0-eu-central-1.pooler.supabase.com',port:'5432',user:`postgres.${refs.FairSwapTest}`};
+ for(const tls of [false,null,true]) {pooler.tls=tls;parseMetadata('FairSwapTest',JSON.stringify(pooler));}
+ for(const clientTls of [undefined,{sslmode:'require',encrypted:true},{sslmode:'verify-full',encrypted:false}]) {
+  assert.throws(()=>parseMetadata('FairSwapTest',JSON.stringify({...pooler,clientTls})),/TLS_MISMATCH/);
+ }
+ const missingBackend=structuredClone(pooler);delete missingBackend.tls;
+ assert.throws(()=>parseMetadata('FairSwapTest',JSON.stringify(missingBackend)),/BACKEND_TLS_MISMATCH/);
+
  for(const [change,code] of [
-  [x=>x.tls=false,'TLS'],[x=>x.connection.user='wrong','TARGET'],
+  [x=>delete x.clientTls,'TLS'],[x=>x.connection.user='wrong','TARGET'],
   [x=>x.functions[0].acl='SECRET','RPC_EXECUTE_ACL'],
   [x=>x.functions[0].owner='PRIVATE','RPC_OWNER'],
   [x=>x.security.find(t=>t.table==='listings').rls=false,'TABLE_RLS'],
@@ -95,7 +104,7 @@ test('Test metadata failure writes sanitized FAIL receipt and never pushes',asyn
  const runner=(binary,args)=>{commands.push(args);
   if(args.includes('--version'))return binary===c.FSW_PSQL?'psql (PostgreSQL) 17.6':'2.117.0';
   if(args.includes('--help'))return '--project-ref --linked --db-url --dry-run';
-  if(binary===c.FSW_PSQL&&args.includes('-f')){assert.ok(args.includes('VERBOSITY=sqlstate'));return JSON.stringify(meta);}
+  if(binary===c.FSW_PSQL&&args.includes('-f')){assert.ok(args.includes('VERBOSITY=sqlstate'));assert.ok(args.includes('\\conninfo'));return 'You are connected.\nSSL connection (protocol: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384, compression: off)\n'+JSON.stringify(meta);}
   throw Error('unexpected command');
  };
  try {
