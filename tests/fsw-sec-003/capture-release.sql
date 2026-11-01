@@ -8,7 +8,7 @@ SELECT jsonb_build_object(
  'serverVersion', current_setting('server_version_num'),
  'exposedSchemas', current_setting('pgrst.db_schemas',true),
  'ledger', (SELECT coalesce(jsonb_agg(jsonb_build_object(
-   'version',version,'name',name,
+   'version',version,'name',name,'statementsNull',statements IS NULL,
    'statementsSha256',encode(sha256(convert_to(btrim(array_to_string(statements,E';\n'), E' \t\r\n;'),'UTF8')),'hex')
  ) ORDER BY version),'[]') FROM supabase_migrations.schema_migrations),
  'functions', (SELECT jsonb_agg(jsonb_build_object(

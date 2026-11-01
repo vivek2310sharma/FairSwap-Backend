@@ -1,0 +1,179 @@
+name: Prelaunch FSW-SEC-003 migration
+on:
+  workflow_dispatch:
+    inputs:
+      approved_sha:
+        description: Exact reviewed main commit (including workflow and candidate)
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: protected-fsw-sec-003-release
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: >-
+      github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
+      github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
+      inputs.approved_sha == github.sha && vars.FSW_SEC_003_RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+      - run: node scripts/ci/verify-baseline.mjs
+      - run: npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
+      - run: node --test tests/fsw-sec-003/prelaunch.test.mjs tests/fsw-sec-003/prelaunch-capture.test.mjs
+      - name: Require successful independent CI for this exact main commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node --input-type=module -e 'import {requireCi} from "./scripts/release/fsw-sec-003-prelaunch.mjs"; await requireCi(process.env)'
+  test:
+    needs: verify
+    if: ${{ needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
+    environment: FairSwapTest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact_id: ${{ steps.receipt.outputs.artifact-id }}
+      receipt_sha: ${{ steps.proof.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+      - run: bash scripts/release/install-inbox-cli.sh
+      - name: Install PostgreSQL 17 client (no source compilation)
+        run: bash scripts/release/install-fsw-sec-003-client.sh
+      - name: Protected migration and automated postflight
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          FSW_RELEASE_ENABLED: ${{ vars.FSW_SEC_003_RELEASE_ENABLED }}
+          FSW_ENVIRONMENT: FairSwapTest
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN }}
+          CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
+          CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.CHAT_DB_SSL_ROOT_CERT_PEM }}
+          CHAT_DB_POOLER_HOST: ${{ vars.CHAT_DB_POOLER_HOST }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          export FSW_PSQL="$(command -v psql)"
+          export FSW_CLI="$(command -v supabase)"
+          node scripts/release/fsw-sec-003-prelaunch.mjs FairSwapTest
+      - id: proof
+        run: |
+          echo "sha256=$(sha256sum fsw-release-receipt/receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - id: receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fsw-sec-003-test-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            fsw-release-receipt/receipt.json
+            fsw-release-receipt/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+  verify_test:
+    needs: [verify, test]
+    if: ${{ needs.test.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.test.outputs.artifact_id }}
+          path: test-evidence
+          merge-multiple: true
+      - name: Verify receipt checksum from trusted Test job
+        env:
+          TEST_RECEIPT_SHA: ${{ needs.test.outputs.receipt_sha }}
+        run: |
+          cd test-evidence
+          sha256sum --check SHA256SUMS
+          printf '%s  receipt.json\n' "$TEST_RECEIPT_SHA" | sha256sum --check --status
+      - name: Require successful same-run Test receipt before starting protected Production
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          FSW_RELEASE_ENABLED: 'true'
+          FSW_ENVIRONMENT: FairSwapTest
+          TEST_RECEIPT_SHA: ${{ needs.test.outputs.receipt_sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          import {verifyTestReceipt} from './scripts/release/fsw-sec-003-prelaunch.mjs';
+          verifyTestReceipt(readFileSync('test-evidence/receipt.json'),process.env.TEST_RECEIPT_SHA,process.env);
+          NODE
+  production:
+    needs: [verify, test, verify_test]
+    if: ${{ needs.test.result == 'success' && needs.verify_test.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
+    environment: FairSwapProd
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.15.0'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.test.outputs.artifact_id }}
+          path: test-evidence
+          merge-multiple: true
+      - name: Verify receipt checksum from trusted Test job
+        env:
+          TEST_RECEIPT_SHA: ${{ needs.test.outputs.receipt_sha }}
+        run: |
+          cd test-evidence
+          sha256sum --check SHA256SUMS
+          printf '%s  receipt.json\n' "$TEST_RECEIPT_SHA" | sha256sum --check --status
+      - run: bash scripts/release/install-inbox-cli.sh
+      - name: Install PostgreSQL 17 client (no source compilation)
+        run: bash scripts/release/install-fsw-sec-003-client.sh
+      - name: Protected migration and automated postflight
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          FSW_RELEASE_ENABLED: ${{ vars.FSW_SEC_003_RELEASE_ENABLED }}
+          FSW_ENVIRONMENT: FairSwapProd
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN }}
+          CHAT_RELEASE_AUDIT_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
+          CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.CHAT_DB_SSL_ROOT_CERT_PEM }}
+          CHAT_DB_POOLER_HOST: ${{ vars.CHAT_DB_POOLER_HOST }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TEST_RECEIPT_SHA: ${{ needs.test.outputs.receipt_sha }}
+        run: |
+          export FSW_PSQL="$(command -v psql)"
+          export FSW_CLI="$(command -v supabase)"
+          node scripts/release/fsw-sec-003-prelaunch.mjs FairSwapProd
+      - id: receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fsw-sec-003-production-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            fsw-release-receipt/receipt.json
+            fsw-release-receipt/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false

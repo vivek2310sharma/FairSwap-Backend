@@ -17,6 +17,15 @@ const candidate=path.join(repo,'releases/candidates/fsw-sec-003/supabase/migrati
 export const sha=value=>createHash('sha256').update(value).digest('hex');
 export const canonical=sql=>sql.replace(/^[\s;]+|[\s;]+$/g,'');
 export function verifyCandidate(bytes=readFileSync(candidate)) {assert.equal(sha(bytes),SHA,'reviewed migration SHA-256 mismatch');}
+// Only the documented Production ledger row may lack SQL. This is not a hash
+// waiver for empty arrays, missing fields or any other migration/environment.
+export function knownNullHistory(capture,row) {
+ const c=capture.connection;
+ return row.version==='20261023160752'&&row.statementsNull===true&&row.statementsSha256===null&&
+  String(c?.port)==='5432'&&
+  (c.host===`db.${refs.FairSwapProd}.supabase.co`&&c.user==='postgres'||
+   /^[a-zA-Z0-9.-]+\.pooler\.supabase\.com$/.test(c?.host??'')&&c.user===`postgres.${refs.FairSwapProd}`);
+}
 export function verifyCapture(env,capture,now=Date.now()) {
  assert.ok(Object.hasOwn(refs,env),'explicit Test/Prod environment required');
  assert.ok(Number.isFinite(Date.parse(capture.capturedAt)) && now-Date.parse(capture.capturedAt)>=-30000 && now-Date.parse(capture.capturedAt)<=15*60*1000,'fresh metadata capture (<=15 minutes) required');
@@ -28,18 +37,18 @@ export function verifyCapture(env,capture,now=Date.now()) {
  assert.ok(Array.isArray(capture.ledger)&&capture.ledger.length>0,'nonempty full ledger required');
  const versions=capture.ledger.map(x=>x.version);
  assert.deepEqual(versions,[...new Set(versions)].sort(),'unique sorted ledger required');
- for(const row of capture.ledger) {assert.match(row.version,/^\d{14}$/);assert.match(row.name,/^[a-zA-Z0-9_-]+$/);assert.match(row.statementsSha256,/^[a-f0-9]{64}$/);}
+ for(const row of capture.ledger) {assert.match(row.version,/^\d{14}$/,'ledger version format');assert.match(row.name,/^[a-zA-Z0-9_-]+$/,'ledger migration name');if(!knownNullHistory(capture,row)) {assert.notEqual(row.statementsNull,true,'unexpected NULL migration statements');assert.match(row.statementsSha256,/^[a-f0-9]{64}$/,'migration statement hash required');}}
  assert.equal(capture.functions?.length,2,'both RPC functions required');
  for(const fn of capture.functions) {
-  assert.equal(fn.volatility,'s');assert.deepEqual(fn.config,['search_path=""']);assert.equal(fn.returnType,'jsonb');
-  assert.equal(fn.definer,fn.schema==='app_security'); assert.equal(fn.owner,'postgres','reviewed function owner required');
+  assert.equal(fn.volatility,'s','RPC volatility');assert.deepEqual(fn.config,['search_path=""'],'RPC search path');assert.equal(fn.returnType,'jsonb','RPC return type');
+  assert.equal(fn.definer,fn.schema==='app_security','RPC security mode'); assert.equal(fn.owner,'postgres','reviewed function owner required');
   assert.equal(fn.acl,'{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}','reviewed execute ACL required');
   const params=['query','category_id','category_slug','city_id','locality_id','condition','price_min','price_max','sort','page','per_page'];
   assert.deepEqual(fn.argNames,params.map(x=>fn.schema==='app_security'?'p_'+x:x),'RPC argument names changed');
   assert.ok(!/(^|[,{])=X\//.test(fn.acl),'PUBLIC execute forbidden');
  }
- assert.deepEqual(capture.functions.map(x=>x.schema).sort(),['app_security','public']);
- assert.deepEqual(capture.security?.map(x=>x.table).sort(),['categories','cities','listing_media','listings','localities','user_accounts']);
+ assert.deepEqual(capture.functions.map(x=>x.schema).sort(),['app_security','public'],'RPC schemas');
+ assert.deepEqual(capture.security?.map(x=>x.table).sort(),['categories','cities','listing_media','listings','localities','user_accounts'],'security table inventory');
  assert.ok(capture.security.filter(x=>['listings','user_accounts'].includes(x.table)).every(x=>x.rls),'visibility-table RLS required');
  // PostgREST's effective process config is not universally available in pg_settings.
  // Never turn missing evidence into an assertion that the private schema is hidden.
@@ -50,7 +59,18 @@ export function verifyHistory(capture,dir,pending=false) {
  const expected=[...capture.ledger.map(x=>`${x.version}_${x.name}.sql`),...(pending?[FILE]:[])].sort();
  if(pending) verifyCandidate(readFileSync(path.join(dir,FILE)));
  assert.deepEqual(actual,expected,'CLI-fetched filenames must exactly match this environment ledger');
- for(const row of capture.ledger) assert.equal(sha(canonical(readFileSync(path.join(dir,`${row.version}_${row.name}.sql`),'utf8'))),row.statementsSha256,'fetched SQL differs from genuine ledger statements');
+ for(const row of capture.ledger) {
+  const sql=canonical(readFileSync(path.join(dir,`${row.version}_${row.name}.sql`),'utf8'));
+  if(knownNullHistory(capture,row))assert.equal(sql,'','NULL ledger row must have an empty local SQL file');
+  else {assert.notEqual(row.statementsNull,true,'unexpected NULL migration statements');assert.equal(sha(sql),row.statementsSha256,'fetched SQL differs from genuine ledger statements');}
+ }
+}
+export function materializeNullHistory(capture,dir) {
+ for(const row of capture.ledger)if(knownNullHistory(capture,row)) {
+  assert.match(row.name,/^[a-zA-Z0-9_-]+$/);
+  const file=path.join(dir,`${row.version}_${row.name}.sql`);
+  if(!existsSync(file))writeFileSync(file,'',{flag:'wx',mode:0o600});
+ }
 }
 export function verifyPreflight(env,approved,fresh) {
  verifyCandidate();verifyCapture(env,approved);verifyCapture(env,fresh);
