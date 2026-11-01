@@ -30,3 +30,14 @@ test('workflow retains ordered protected deployment and disables legacy',()=>{
  assert.doesNotMatch(w,/AUTHORITY|install-fsw-sec-003-pg/);
  assert.match(readFileSync('.github/workflows/fsw-sec-003-protected-release.yml','utf8'),/false && github.repository/);
 });
+
+test('both ubuntu jobs use authenticated noble PGDG client installation',()=>{
+ const workflow=readFileSync('.github/workflows/fsw-sec-003-prelaunch.yml','utf8');
+ assert.equal(workflow.match(/run: bash scripts\/release\/install-fsw-sec-003-client.sh/g)?.length,2);
+ const installer=readFileSync('scripts/release/install-fsw-sec-003-client.sh','utf8');
+ for(const pin of ['noble-pgdg','signed-by=','B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8','--no-install-recommends postgresql-client-17','/usr/lib/postgresql/17/bin/psql --version'])assert.ok(installer.includes(pin));
+ assert.doesNotMatch(installer,/make|configure|apt-key|trusted=yes/);
+ const production=workflow.slice(workflow.indexOf('  production:'));
+ assert.match(production,/needs.test.result == 'success' && needs.verify_test.result == 'success'/);
+ assert.doesNotMatch(production,/always\(\).*needs.test|continue-on-error/);
+});

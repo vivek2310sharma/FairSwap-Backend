@@ -5,7 +5,7 @@ import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {VERSION,FILE,SHA,refs,sha,verifyCandidate,verifyCapture,verifyHistory,verifyPreflight,verifyPostflight,verifyDryRun} from '../../tests/fsw-sec-003/release-gate.mjs';
+import {VERSION,FILE,SHA,refs,sha,verifyCandidate,verifyCapture,verifyHistory,materializeNullHistory,verifyPreflight,verifyPostflight,verifyDryRun} from '../../tests/fsw-sec-003/release-gate.mjs';
 import {auditProtection,requireOwnerActors} from './inbox-protection.mjs';
 import {X509Certificate} from 'node:crypto';
 // Same PEM/CA/time validation as the Chat tool without importing Chat SQL/dependencies.
@@ -91,8 +91,47 @@ export function verifySchemas(value) {
   need(s.rolePrivileges.filter(x=>x.role!=='service_role').every(x=>x.create===false),'CLIENT_SCHEMA_CREATE_FORBIDDEN');
  }
 }
+// Match only fixed local assertion messages; never log actual/expected values.
+const metadataChecks={
+ 'fresh metadata capture (<=15 minutes) required':'FRESHNESS',
+ 'verified TLS required':'TLS', 'PostgreSQL 17 target required':'SERVER_VERSION',
+ 'session/direct connection required':'SESSION_PORT', 'environment endpoint/user mismatch':'TARGET',
+ 'nonempty full ledger required':'LEDGER_EMPTY', 'unique sorted ledger required':'LEDGER_ORDER',
+ 'ledger version format':'LEDGER_VERSION', 'ledger migration name':'LEDGER_NAME',
+ 'unexpected NULL migration statements':'LEDGER_UNEXPECTED_NULL', 'migration statement hash required':'LEDGER_HASH',
+ 'both RPC functions required':'RPC_COUNT', 'RPC volatility':'RPC_VOLATILITY',
+ 'RPC search path':'RPC_SEARCH_PATH', 'RPC return type':'RPC_RETURN_TYPE',
+ 'RPC security mode':'RPC_SECURITY_MODE', 'reviewed function owner required':'RPC_OWNER',
+ 'reviewed execute ACL required':'RPC_EXECUTE_ACL', 'RPC argument names changed':'RPC_ARGUMENTS',
+ 'public wrapper drift':'PUBLIC_WRAPPER_BODY', 'private implementation drift':'PRIVATE_IMPLEMENTATION_BODY',
+ 'independent fresh ledger changed':'LEDGER_DRIFT', 'RPC metadata drift':'RPC_DRIFT', 'ACL/RLS drift':'ACL_RLS_DRIFT',
+ 'PUBLIC execute forbidden':'RPC_PUBLIC_EXECUTE', 'RPC schemas':'RPC_SCHEMAS',
+ 'security table inventory':'TABLE_INVENTORY', 'visibility-table RLS required':'TABLE_RLS', 'private schema exposed':'PRIVATE_SCHEMA_EXPOSED'
+};
+export function parseMetadata(environment,text) {
+ let value;
+ try{value=JSON.parse(text);}catch{throw Error('FSW_METADATA_INVALID_JSON');}
+ try{verifyCapture(environment,value);}catch(error){
+  const check=metadataChecks[error.message?.split('\n')[0]];
+  throw Error('FSW_METADATA_'+(check??'STRUCTURE')+'_MISMATCH');
+ }
+ return value;
+}
+export function subprocessFailure(result,phase) {
+ const raw=String(result.stderr??'');
+ const state=raw.match(/(?:ERROR|FATAL):\s+([0-9A-Z]{5})\b/)?.[1];
+ const states={'42601':'SQL_SYNTAX','42703':'SQL_COLUMN','42883':'SQL_FUNCTION','42P01':'SQL_RELATION','42501':'SQL_PERMISSION','25006':'READ_ONLY','57014':'TIMEOUT','28P01':'AUTHENTICATION','28000':'AUTHENTICATION'};
+ const kind=states[state]??(/certificate|SSL|TLS/i.test(raw)?'TLS':/could not translate host|Name or service not known/i.test(raw)?'DNS':/connection.*(?:failed|refused|timed out)/i.test(raw)?'CONNECTION':result.error?.code==='ENOENT'?'TOOL_MISSING':result.error?.code==='ETIMEDOUT'?'TIMEOUT':'EXIT');
+ return Error('FSW_SUBPROCESS_'+phase.toUpperCase()+'_'+kind+'_FAILED');
+}
 export function safeFailure(error,phase) {
- if(/^FSW_[A-Z0-9_]+$/.test(error?.message??''))return error.message;
+ if(/^FSW_[A-Z0-9_]+$/.test(error?.message??'')) {
+  if(error.message.startsWith('FSW_METADATA_'))return `FSW_CHECK_${phase.toUpperCase()}: ${error.message}; compare the named metadata invariant with the approved target; raw values withheld`;
+  if(error.message.startsWith('FSW_SUBPROCESS_'))return `FSW_CHECK_${phase.toUpperCase()}: ${error.message}; check the named SQL, connection or tool failure before retry; raw output withheld`;
+  return error.message;
+ }
+ const invariant=metadataChecks[error?.message?.split('\n')[0]];
+ if(invariant)return `FSW_CHECK_${phase.toUpperCase()}: FSW_METADATA_${invariant}_MISMATCH; compare the named invariant with the approved target; raw values withheld`;
  const hints={authorization:'check owner, main commit and approved candidate',ci:'require successful backend CI for this commit',protection:'restore protected environment settings and audit access',exposure:'require public-only Data API exposure',tools:'install Supabase 2.117.0 and a PostgreSQL 17 client',capture:'check TLS, project identity and RPC metadata',fetch:'check fetched filenames and ledger SQL hashes',dry_run:'require exactly the approved pending migration',preflight:'resolve history, RPC or ACL drift before retry',apply:'inspect migration history before retry; do not repair ledger',postflight:'stop rollout and review installed body, history and ACL invariants'};
  return `FSW_CHECK_${phase.toUpperCase()}: ${hints[phase]??'check target credentials, TLS and release prerequisites'}; raw output withheld`;
 }
@@ -102,10 +141,10 @@ export async function release(environment,{context: c=process.env,fetcher=fetch,
  const run=(binary,args,env,input)=>{
   try{if(runner)return runner(binary,args,env,input);
    const result=spawnSync(binary,args,{env,input,encoding:'utf8',timeout:120000,maxBuffer:16*1024*1024});
-   if(result.error||result.status!==0)throw Error('subprocess failed');
+   if(result.error||result.status!==0)throw subprocessFailure(result,phase);
    return result.stdout+(binary===c.FSW_CLI?result.stderr:'');
   }
-  catch {throw Error('FSW_SUBPROCESS_'+phase.toUpperCase()+'_FAILED_RECOVERY_REVIEW_REQUIRED');}
+  catch(error) {if(/^FSW_SUBPROCESS_[A-Z_]+$/.test(error?.message??''))throw error;throw subprocessFailure({stderr:error?.stderr,error},phase);}
  };
  try {
   authorize(environment,c);
@@ -130,15 +169,15 @@ export async function release(environment,{context: c=process.env,fetcher=fetch,
   for(const [args,flags] of [[['link','--help'],['--project-ref']],[['migration','fetch','--help'],['--linked']],[['db','push','--help'],['--db-url','--dry-run']]]) {
    const help=run(cli,args,env);need(flags.every(flag=>help.includes(flag)),'CLI_CONTRACT_CHANGED');
   }
-  const capture=()=>{const x=JSON.parse(run(psql,['-XqAt','-v','ON_ERROR_STOP=1','-d',url,'-f',join(root,'tests/fsw-sec-003/capture-release.sql')],env));verifyCapture(environment,x);return x;};
-  const schemas=()=>{const x=JSON.parse(run(psql,['-XqAt','-v','ON_ERROR_STOP=1','-d',url],env,schemaSql));verifySchemas(x);return x;};
+  const capture=()=>{return parseMetadata(environment,run(psql,['-XqAt','-v','ON_ERROR_STOP=1','-v','VERBOSITY=sqlstate','-d',url,'-f',join(root,'tests/fsw-sec-003/capture-release.sql')],env));};
+  const schemas=()=>{const x=JSON.parse(run(psql,['-XqAt','-v','ON_ERROR_STOP=1','-v','VERBOSITY=sqlstate','-d',url],env,schemaSql));verifySchemas(x);return x;};
   phase='capture';const before=capture(),schemaBefore=schemas();verifyPreflight(environment,before,before);
   const workspace=join(privateDir,'workspace');mkdirSync(workspace,{mode:0o700});
   const linked=args=>run(cli,[...args,'--workdir',workspace],env);
   phase='link';linked(['init']);linked(['link','--project-ref',refs[environment]]);
   need(readFileSync(join(workspace,'supabase/.temp/project-ref'),'utf8').trim()===refs[environment],'LINKED_TARGET_MISMATCH');
   phase='fetch';linked(['migration','fetch','--linked']);
-  const migrations=join(workspace,'supabase/migrations');verifyHistory(before,migrations);
+  const migrations=join(workspace,'supabase/migrations');materializeNullHistory(before,migrations);verifyHistory(before,migrations);
   verifyPreflight(environment,before,capture());
   copyFileSync(candidate,join(migrations,FILE));verifyHistory(before,migrations,true);
   // Linked preparation is genuine. Apply/dry-run use the explicit verified session

@@ -29,7 +29,8 @@ jobs:
         with:
           node-version: '24.15.0'
       - run: node scripts/ci/verify-baseline.mjs
-      - run: node --test tests/fsw-sec-003/prelaunch.test.mjs
+      - run: npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
+      - run: node --test tests/fsw-sec-003/prelaunch.test.mjs tests/fsw-sec-003/prelaunch-capture.test.mjs
       - name: Require successful independent CI for this exact main commit
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -53,10 +54,7 @@ jobs:
           node-version: '24.15.0'
       - run: bash scripts/release/install-inbox-cli.sh
       - name: Install PostgreSQL 17 client (no source compilation)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client-17
-          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+        run: bash scripts/release/install-fsw-sec-003-client.sh
       - name: Protected migration and automated postflight
         env:
           APPROVED_SHA: ${{ inputs.approved_sha }}
@@ -151,10 +149,7 @@ jobs:
           printf '%s  receipt.json\n' "$TEST_RECEIPT_SHA" | sha256sum --check --status
       - run: bash scripts/release/install-inbox-cli.sh
       - name: Install PostgreSQL 17 client (no source compilation)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client-17
-          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+        run: bash scripts/release/install-fsw-sec-003-client.sh
       - name: Protected migration and automated postflight
         env:
           APPROVED_SHA: ${{ inputs.approved_sha }}
