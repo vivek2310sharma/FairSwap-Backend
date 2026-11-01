@@ -26,10 +26,23 @@ export function knownNullHistory(capture,row) {
   (c.host===`db.${refs.FairSwapProd}.supabase.co`&&c.user==='postgres'||
    /^[a-zA-Z0-9.-]+\.pooler\.supabase\.com$/.test(c?.host??'')&&c.user===`postgres.${refs.FairSwapProd}`);
 }
+// Call only after a successful libpq invocation pinned to sslmode=verify-full.
+// \conninfo and the catalog capture run on the SAME connection. Never accept
+// clientTls supplied by SQL/JSON as transport evidence.
+export function clientMetadata(text) {
+ const start=text.indexOf('{');
+ assert.ok(start>=0,'metadata JSON required');
+ const info=text.slice(0,start);
+ assert.match(info,/(?:^|\n)SSL connection \(protocol: TLSv1\.[23], cipher: [A-Za-z0-9_-]+, compression: off(?:, ALPN: [A-Za-z0-9_-]+)?\)\r?\n/,'verified TLS required');
+ const value=JSON.parse(text.slice(start));
+ return {...value,clientTls:{sslmode:'verify-full',encrypted:true}};
+}
 export function verifyCapture(env,capture,now=Date.now()) {
  assert.ok(Object.hasOwn(refs,env),'explicit Test/Prod environment required');
  assert.ok(Number.isFinite(Date.parse(capture.capturedAt)) && now-Date.parse(capture.capturedAt)>=-30000 && now-Date.parse(capture.capturedAt)<=15*60*1000,'fresh metadata capture (<=15 minutes) required');
- assert.equal(capture.tls,true,'verified TLS required');
+ // pg_stat_ssl describes the backend hop; false/null is valid behind a pooler.
+ assert.ok(capture.tls===true||capture.tls===false||capture.tls===null,'backend TLS telemetry required');
+ assert.deepEqual(capture.clientTls,{sslmode:'verify-full',encrypted:true},'verified TLS required');
  assert.match(capture.serverVersion,/^17\d{4}$/,'PostgreSQL 17 target required');
  const {host,user,port}=capture.connection;
  assert.equal(String(port),'5432','session/direct connection required');
@@ -117,8 +130,8 @@ export function verifyStagingReceipt(receipt) {
 function capture(env,service,psql) {
  assert.ok(Object.hasOwn(refs,env));assert.equal(service,env,'use distinct environment-named libpq services');
  // Existing PGSERVICEFILE carries credentials; neither argv nor outputs contain a password.
- const text=execFileSync(psql,['-XqAt','-v','ON_ERROR_STOP=1','-d',`service=${service} sslmode=verify-full connect_timeout=10`,'-f',path.join(repo,'tests/fsw-sec-003/capture-release.sql')],{encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024});
- const result=JSON.parse(text);verifyCapture(env,result);return result;
+ const text=execFileSync(psql,['-XqAt','-v','ON_ERROR_STOP=1','-d',`service=${service} sslmode=verify-full connect_timeout=10`,'-c','\\conninfo','-f',path.join(repo,'tests/fsw-sec-003/capture-release.sql')],{env:{...process.env,LC_ALL:'C'},encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024});
+ const result=clientMetadata(text);verifyCapture(env,result);return result;
 }
 function save(file,value) {writeFileSync(file,JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600});}
 async function main(args) {
