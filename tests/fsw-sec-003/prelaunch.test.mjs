@@ -2,7 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {verifyCandidate,verifyDryRun,FILE,SHA,VERSION,refs,sha} from './release-gate.mjs';
-import {safeFailure,exposure,verifyTestReceipt,backupWaiver} from '../../scripts/release/fsw-sec-003-prelaunch.mjs';
+import {safeFailure,exposure,verifyTestReceipt,backupWaiver,subprocessOutput} from '../../scripts/release/fsw-sec-003-prelaunch.mjs';
+import {spawnSync} from 'node:child_process';
+test('CLI version uses exact stdout while preserving stderr diagnostics',()=>{
+ const run=(stdout,stderr,status=0)=>spawnSync(process.execPath,['-e',`process.stdout.write(${JSON.stringify(stdout)});process.stderr.write(${JSON.stringify(stderr)});process.exitCode=${status};`],{encoding:'utf8'});
+ const notice='A new version of Supabase CLI is available\n';
+ const pinned=run('2.117.0\n',notice);
+ assert.equal(subprocessOutput(pinned,'tools').trim(),'2.117.0');
+ assert.equal(subprocessOutput(pinned,'tools',true),'2.117.0\n'+notice);
+ for(const stdout of ['2.118.0\n','','2.117.0\nextra\n']) {
+  assert.notEqual(subprocessOutput(run(stdout,'2.117.0\n'),'tools').trim(),'2.117.0');
+ }
+ assert.throws(()=>subprocessOutput(run('2.117.0\n','certificate verify failed SECRET',1),'tools'),/FSW_SUBPROCESS_TOOLS_TLS_FAILED/);
+ assert.throws(()=>subprocessOutput({status:null,stdout:'2.117.0',stderr:'',error:{code:'ENOENT'}},'tools'),/FSW_SUBPROCESS_TOOLS_TOOL_MISSING_FAILED/);
+});
 test('approved immutable candidate and exact single pending version',()=>{
  verifyCandidate();assert.equal(VERSION,'20261031110408');assert.equal(SHA,'b9746cdf49299af84bbbfc5f79b51dd7d67a737202a2d54c55f8743fc15770bd');
  assert.throws(()=>verifyCandidate(Buffer.from('changed')));verifyDryRun(FILE);
