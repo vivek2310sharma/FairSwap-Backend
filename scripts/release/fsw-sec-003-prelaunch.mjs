@@ -135,14 +135,18 @@ export function safeFailure(error,phase) {
  const hints={authorization:'check owner, main commit and approved candidate',ci:'require successful backend CI for this commit',protection:'restore protected environment settings and audit access',exposure:'require public-only Data API exposure',tools:'install Supabase 2.117.0 and a PostgreSQL 17 client',capture:'check TLS, project identity and RPC metadata',fetch:'check fetched filenames and ledger SQL hashes',dry_run:'require exactly the approved pending migration',preflight:'resolve history, RPC or ACL drift before retry',apply:'inspect migration history before retry; do not repair ledger',postflight:'stop rollout and review installed body, history and ACL invariants'};
  return `FSW_CHECK_${phase.toUpperCase()}: ${hints[phase]??'check target credentials, TLS and release prerequisites'}; raw output withheld`;
 }
+export function subprocessOutput(result,phase,includeStderr=false) {
+ if(result.error||result.status!==0)throw subprocessFailure(result,phase);
+ return (result.stdout??'')+(includeStderr?(result.stderr??''):'');
+}
 export async function release(environment,{context: c=process.env,fetcher=fetch,runner,protection=auditProtection,testReceiptBytes,receiptDir=resolve('fsw-release-receipt')}={}) {
  let phase='authorization',attempted=false,privateDir;
  const receipt={schema:1,status:'FAIL',...binding(environment,c)};
  const run=(binary,args,env,input)=>{
   try{if(runner)return runner(binary,args,env,input);
    const result=spawnSync(binary,args,{env,input,encoding:'utf8',timeout:120000,maxBuffer:16*1024*1024});
-   if(result.error||result.status!==0)throw subprocessFailure(result,phase);
-   return result.stdout+(binary===c.FSW_CLI?result.stderr:'');
+   // Version identity is stdout only; other CLI output retains stderr diagnostics.
+   return subprocessOutput(result,phase,binary===c.FSW_CLI&&!(args.length===1&&args[0]==='--version'));
   }
   catch(error) {if(/^FSW_SUBPROCESS_[A-Z_]+$/.test(error?.message??''))throw error;throw subprocessFailure({stderr:error?.stderr,error},phase);}
  };
