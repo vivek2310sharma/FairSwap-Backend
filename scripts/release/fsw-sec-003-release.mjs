@@ -5,19 +5,12 @@ import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {VERSION,FILE,SHA,refs,sha,verifyCandidate,verifyCapture,verifyHistory,verifyPreflight,verifyPostflight,verifyDryRun} from '../../tests/fsw-sec-003/release-gate.mjs';
+import {VERSION,FILE,SHA,refs,sha,clientMetadata,verifyCandidate,verifyCapture,verifyHistory,verifyPreflight,verifyPostflight,verifyDryRun} from '../../tests/fsw-sec-003/release-gate.mjs';
 import {auditProtection,requireOwnerActors} from './inbox-protection.mjs';
-import {X509Certificate,createPublicKey,verify} from 'node:crypto';
+import {createPublicKey,verify} from 'node:crypto';
 import {canonicalJson} from './inbox-protection.mjs';
-// Same PEM/CA/time validation as the Chat tool without importing Chat SQL/dependencies.
-function validateRootCertificate(value) {
- need(typeof value==='string'&&value.length>0&&value.length<=65536,'TLS_ROOT_CERT_REQUIRED');
- const pem=value.trim().replaceAll('\r\n','\n')+'\n';
- need(/^-----BEGIN CERTIFICATE-----\n[A-Za-z0-9+/=\n]+\n-----END CERTIFICATE-----\n$/.test(pem),'TLS_ROOT_CERT_INVALID');
- const cert=new X509Certificate(pem);
- need(cert.ca&&Date.parse(cert.validFrom)<=Date.now()&&Date.parse(cert.validTo)>Date.now(),'TLS_ROOT_CERT_INVALID');
- return pem;
-}
+// Reuse the active runner's root CA validation; importing never executes it.
+import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const candidate=join(root,'releases/candidates/fsw-sec-003/supabase/migrations',FILE);
@@ -175,7 +168,7 @@ export async function release(environment,{context: c=process.env,fetcher=fetch,
   need(/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/.test(c.CHAT_DB_POOLER_HOST??''),'SESSION_POOLER_HOST_REQUIRED');
   privateDir=mkdtempSync(join(tmpdir(),'fsw-sec-003-'));chmodSync(privateDir,0o700);
   const cert=join(privateDir,'root.crt');writeFileSync(cert,validateRootCertificate(c.CHAT_DB_SSL_ROOT_CERT_PEM),{flag:'wx',mode:0o600});
-  const env={PATH:c.PATH,HOME:privateDir,NO_COLOR:'1',PGSSLMODE:'verify-full',PGSSLROOTCERT:cert,PGCONNECT_TIMEOUT:'10',PGPASSWORD:c.CHAT_DATABASE_PASSWORD,SUPABASE_DB_PASSWORD:c.CHAT_DATABASE_PASSWORD,SUPABASE_ACCESS_TOKEN:c.SUPABASE_ACCESS_TOKEN};
+  const env={PATH:c.PATH,HOME:privateDir,NO_COLOR:'1',LC_ALL:'C',PGSSLMODE:'verify-full',PGSSLROOTCERT:cert,PGCONNECT_TIMEOUT:'10',PGPASSWORD:c.CHAT_DATABASE_PASSWORD,SUPABASE_DB_PASSWORD:c.CHAT_DATABASE_PASSWORD,SUPABASE_ACCESS_TOKEN:c.SUPABASE_ACCESS_TOKEN};
   const url=`postgresql://postgres.${refs[environment]}@${c.CHAT_DB_POOLER_HOST}:5432/postgres?sslmode=verify-full&sslrootcert=${encodeURIComponent(cert)}&connect_timeout=10`;
   const psql=c.FSW_PSQL,cli=c.FSW_CLI;
   need(psql?.startsWith('/')&&cli?.startsWith('/'),'ABSOLUTE_PINNED_TOOLS_REQUIRED');
@@ -184,7 +177,7 @@ export async function release(environment,{context: c=process.env,fetcher=fetch,
   for(const [args,flags] of [[['link','--help'],['--project-ref']],[['migration','fetch','--help'],['--linked']],[['db','push','--help'],['--db-url','--dry-run']]]) {
    const help=run(cli,args,env);need(flags.every(flag=>help.includes(flag)),'CLI_CONTRACT_CHANGED');
   }
-  const capture=()=>{const x=JSON.parse(run(psql,['-XqAt','-v','ON_ERROR_STOP=1','-d',url,'-f',join(root,'tests/fsw-sec-003/capture-release.sql')],env));verifyCapture(environment,x);return x;};
+  const capture=()=>{const x=clientMetadata(run(psql,['-XqAt','-v','ON_ERROR_STOP=1','-d',url,'-c','\\conninfo','-f',join(root,'tests/fsw-sec-003/capture-release.sql')],env));verifyCapture(environment,x);return x;};
   const schemas=()=>{const x=JSON.parse(run(psql,['-XqAt','-v','ON_ERROR_STOP=1','-d',url],env,schemaSql));verifySchemas(x);return x;};
   phase='capture';const before=capture(),schemaBefore=schemas();verifyPreflight(environment,before,before);
   const workspace=join(privateDir,'workspace');mkdirSync(workspace,{mode:0o700});

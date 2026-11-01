@@ -1,0 +1,160 @@
+name: Azure Moderation CI & Container Verification
+
+on:
+  pull_request:
+    paths:
+      - 'services/moderation-azure/**'
+      - 'infra/azure/moderation/**'
+      - '.github/workflows/deploy-azure-moderation.yml'
+      - '.github/workflows/azure-moderation-ci.yml'
+      - 'src/lib/moderation/india/**'
+      - 'src/__tests__/moderation-india-rules.test.ts'
+      - 'src/__tests__/azure-moderation-orchestrator.test.ts'
+      - 'src/__tests__/azure-worker-security.test.ts'
+      - 'supabase/forward-migrations/moderation-azure-v1/**'
+      - 'supabase/functions/process-listing-moderation/**'
+      - 'supabase/functions/_shared/azure-moderation-worker.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 1. Run Backend verification and moderation tests
+      - name: Backend verification & moderation unit tests
+        run: |
+          corepack pnpm install --frozen-lockfile
+          corepack pnpm verify:migrations
+          corepack pnpm typecheck
+          corepack pnpm test:unit
+
+      # 2. Build & verify Controller container
+      - name: Build Controller container
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/moderation-azure/controller
+          file: ./services/moderation-azure/controller/Dockerfile
+          load: true
+          tags: moderation-controller:local-test
+
+      - name: Test Controller startup & health check
+        run: |
+          docker run -d --name test-controller -p 8080:8080 \
+            -e MODERATION_SECRET="test-secret-min-16-chars" \
+            -e OPENAI_API_KEY="sk-dummy-test-key" \
+            -e ALLOWED_STORAGE_HOST="test.supabase.co" \
+            -e ENVIRONMENT="test" \
+            moderation-controller:local-test
+
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/healthz > /dev/null; then
+              echo "Controller became ready in attempt $i"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Controller failed to start within timeout"
+              docker logs test-controller
+              exit 1
+            fi
+            sleep 1
+          done
+          docker rm -f test-controller
+
+      # 3. Build & verify Node Vision container
+      - name: Build Node Vision container
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/moderation-azure/node-vision
+          file: ./services/moderation-azure/node-vision/Dockerfile
+          load: true
+          tags: node-vision:local-test
+
+      - name: Test Node Vision startup & health check
+        run: |
+          docker run -d --name test-vision -p 8081:8081 \
+            -e MODERATION_SECRET="test-secret-min-16-chars" \
+            -e ALLOWED_STORAGE_HOST="test.supabase.co" \
+            node-vision:local-test
+
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8081/healthz > /dev/null; then
+              echo "Node Vision became ready in attempt $i"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Node Vision failed to start within timeout"
+              docker logs test-vision
+              exit 1
+            fi
+            sleep 1
+          done
+          docker rm -f test-vision
+
+      # 4. Build & verify Python OCR container
+      - name: Build Python OCR container
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/moderation-azure/python-ocr
+          file: ./services/moderation-azure/python-ocr/Dockerfile
+          load: true
+          tags: python-ocr:local-test
+
+      - name: Test Python OCR startup & health check
+        run: |
+          docker run -d --name test-ocr -p 8082:8082 \
+            -e MODERATION_SECRET="test-secret-min-16-chars" \
+            -e ALLOWED_STORAGE_HOST="test.supabase.co" \
+            python-ocr:local-test
+
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8082/healthz > /dev/null; then
+              echo "Python OCR became ready in attempt $i"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Python OCR failed to start within timeout"
+              docker logs test-ocr
+              exit 1
+            fi
+            sleep 1
+          done
+          docker rm -f test-ocr
+
+      # 5. Execute pgTAP behavioural SQL security tests via disposable PostgreSQL container with mounted repo
+      - name: Run pgTAP behavioural SQL security tests
+        run: |
+          docker run -d --name test-postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            -p 5432:5432 \
+            postgres:17-alpine
+          sleep 5
+
+          # Install pgtap in disposable container
+          docker exec test-postgres apk add --no-cache pgtap
+
+          # Setup base extensions, schemas, roles, and schema fixture
+          docker exec -i test-postgres psql -U postgres -v ON_ERROR_STOP=1 < supabase/forward-migrations/moderation-azure-v1/tests/test_schema_fixture.sql
+
+          # Apply Forward Migration: Azure Moderation V1 Authoritative Publication Gate
+          docker exec -i test-postgres psql -U postgres -v ON_ERROR_STOP=1 < supabase/forward-migrations/moderation-azure-v1/20261101120000_azure_moderation_finalizer.sql
+
+          # Run pgTAP behavioral tests from mounted repository - any failure exits non-zero and fails CI
+          docker exec test-postgres pg_prove -U postgres /workspace/supabase/forward-migrations/moderation-azure-v1/tests/azure_moderation_security.test.sql
+
+          docker rm -f test-postgres
+

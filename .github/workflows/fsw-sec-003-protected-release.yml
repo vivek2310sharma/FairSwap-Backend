@@ -14,8 +14,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   verify:
+    # Retained for reference; superseded for this release by prelaunch migration.
     if: >-
-      github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
+      false && github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
       github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
       inputs.approved_sha == github.sha && vars.FSW_SEC_003_RELEASE_ENABLED == 'true'
     runs-on: ubuntu-24.04

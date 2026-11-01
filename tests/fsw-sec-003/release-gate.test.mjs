@@ -6,7 +6,7 @@ import path from 'node:path';
 import {VERSION,NAME,FILE,SHA,LEDGER_SHA,refs,sha,canonical,verifyCapture,verifyCandidate,verifyPreflight,verifyPostflight,verifyHistory,verifyDryRun,verifyStagingReceipt} from './release-gate.mjs';
 const params=['query','category_id','category_slug','city_id','locality_id','condition','price_min','price_max','sort','page','per_page'];
 const snapshot=(env='FairSwapTest')=>({
- capturedAt:new Date().toISOString(),tls:true,serverVersion:'170006',exposedSchemas:null,
+ capturedAt:new Date().toISOString(),tls:false,clientTls:{sslmode:'verify-full',encrypted:true},serverVersion:'170006',exposedSchemas:null,
  connection:{host:`db.${refs[env]}.supabase.co`,user:'postgres',port:'5432'},
  ledger:[{version:'20260914000001',name:'synthetic_fixture',statementsSha256:sha('select 1')}],
  functions:['app_security','public'].map(schema=>({schema,name:schema==='public'?'search_public_listings':'impl_search_public_listings',owner:'postgres',acl:'{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}',argNames:params.map(x=>schema==='public'?x:'p_'+x),args:'synthetic signature',identityArgs:'synthetic types',returnType:'jsonb',definer:schema==='app_security',volatility:'s',config:['search_path=""'],bodyMd5:schema==='app_security'?'0ccc07eede6a6fa06b30acc06d9cdc10':env==='FairSwapTest'?'821f536ad89962bc345586f175c86d23':'150b3b0298c05e2eb9733bd010e6f5a2',bodySha256:sha(schema)})),
@@ -21,7 +21,10 @@ for(const [label,mutate] of [
  ['wrong environment',x=>{x.connection.host=`db.${refs.FairSwapProd}.supabase.co`;}],
  ['stale capture',x=>{x.capturedAt='2000-01-01Z';}],
  ['future capture',x=>{x.capturedAt='2099-01-01Z';}],
- ['no TLS',x=>{x.tls=false;}],
+ ['no client TLS',x=>{delete x.clientTls;}],
+ ['unverified client TLS',x=>{x.clientTls.sslmode='require';}],
+ ['unencrypted client',x=>{x.clientTls.encrypted=false;}],
+ ['missing backend telemetry',x=>{delete x.tls;}],
  ['wrong PG major',x=>{x.serverVersion='180003';}],
  ['transaction pooler',x=>{x.connection.port='6543';}],
  ['public EXECUTE',x=>{x.functions[0].acl='{=X/postgres}';}],
