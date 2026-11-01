@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     python3 \
     && rm -rf /var/lib/apt/lists/*
-COPY package.json tsconfig.json pnpm-lock.yaml ./
+COPY package.json tsconfig.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN corepack enable && corepack pnpm install --frozen-lockfile
 COPY src ./src
 RUN corepack pnpm build
