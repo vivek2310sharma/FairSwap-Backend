@@ -227,7 +227,7 @@ jobs:
           npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
       - name: Build checksum-pinned native PostgreSQL 17.6
         run: bash tests/ratings/build-native-pg17.sh
-      - name: Require Posting V2.1.2 and Accessories V1 native PG17 multi-connection regressions
+      - name: Require Posting V2.1.2 native PG17 multi-connection regressions
         timeout-minutes: 7
         run: |
           env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
