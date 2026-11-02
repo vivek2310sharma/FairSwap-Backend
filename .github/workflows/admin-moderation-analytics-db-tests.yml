@@ -8,9 +8,14 @@ on:
       - 'scripts/ci/run-moderation-analytics-tests.mjs'
       - 'scripts/ci/toolchain.json'
       - '.github/workflows/admin-moderation-analytics-db-tests.yml'
+      - '.github/workflows/reusable-supabase-release.yml'
+      - 'scripts/release/reusable-candidates.mjs'
+      - 'scripts/release/reusable-supabase-release.mjs'
+      - 'tests/release/reusable-supabase-release.test.mjs'
   push:
     branches:
       - feature/backend-admin-moderation-analytics-v1
+      - feature/backend-reusable-supabase-release
       - main
   workflow_dispatch:
 
@@ -55,10 +60,15 @@ jobs:
       - name: Verify immutable 58-migration baseline manifest
         run: node scripts/verify-migration-manifest.mjs
 
+      - name: Reusable release safety unit and guard tests
+        run: node --test tests/release/reusable-supabase-release.test.mjs
+
       - name: Shell syntax, allowlist self-test and static scan
         run: |
           bash -n scripts/ci/run-moderation-analytics-db.sh
           node --check scripts/ci/run-moderation-analytics-tests.mjs
+          node --check scripts/release/reusable-candidates.mjs
+          node --check scripts/release/reusable-supabase-release.mjs
           node scripts/ci/run-moderation-analytics-tests.mjs --self-test
           node scripts/ci/run-moderation-analytics-tests.mjs --static
 
