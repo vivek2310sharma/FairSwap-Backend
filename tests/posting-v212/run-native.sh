@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fresh private PG17 cluster only. No URL, external host, real env files or Docker.
 set -euo pipefail
-[[ $# == 1 && $1 == /* ]] || exit 2
+[[ ( $# == 1 || ( $# == 2 && $2 == --accessories-v1 ) ) && $1 == /* ]] || exit 2
 pg_bin="$1"
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 expected="$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).version)' "$repo/tests/ratings/pg17-source.json")"
@@ -23,4 +23,8 @@ trap cleanup EXIT
 "$pg_bin/pg_ctl" -D "$run_dir/data" -l "$run_dir/server.log" -o "-k $run_dir -p 5432 -c listen_addresses=''" -w start > "$run_dir/start.log" 2>&1
 started=true
 cd "$repo"
-node tests/posting-v212/native.mjs "$pg_bin" "$run_dir" | tee "$run_dir/results.log"
+if [[ $# == 2 ]]; then
+  node tests/posting-v212/native.mjs "$pg_bin" "$run_dir" --accessories-v1 | tee "$run_dir/results.log"
+else
+  node tests/posting-v212/native.mjs "$pg_bin" "$run_dir" | tee "$run_dir/results.log"
+fi
