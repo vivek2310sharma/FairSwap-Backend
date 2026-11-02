@@ -1,15 +1,16 @@
 # Trusted default-branch, Test-only migration runner. Reusable release lane;
 # the approved candidate pin must be reviewed on main for each release.
-name: Backend Supabase Test migration release
+name: Backend Supabase versioned migration release
 
 on:
   workflow_run:
     workflows: ["Backend independent CI"]
     types: [completed]
-    branches: [fix/posting-v212-session-recovery]
+    branches: [fix/posting-v212-session-recovery, release/posting-v212-prod-trigger]
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: backend-supabase-test-migration
@@ -122,5 +123,137 @@ jobs:
         with:
           name: posting-v212-test-${{ github.run_id }}-${{ github.run_attempt }}
           path: release-receipts/posting-v212-test.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  production-migration:
+    if: >-
+      github.repository == 'vivek2310sharma/FairSwap-Backend' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == 'vivek2310sharma/FairSwap-Backend' &&
+      github.event.workflow_run.head_branch == 'release/posting-v212-prod-trigger' &&
+      github.event.workflow_run.head_sha == 'f7bc0d0e493debef77e596938c3d1f4acf27aec8' &&
+      github.event.workflow_run.actor.login == 'vivek2310sharma'
+    environment: FairSwapProd
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout trusted release scripts from default branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Checkout exact vetted candidate as data only (never execute it)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: 50a1dcc5329afdbb6a74b65310b8b25636b57315
+          path: reviewed-candidate
+          persist-credentials: false
+      - name: Verify the exact approved Production migration source
+        run: |
+          file='reviewed-candidate/supabase/forward-migrations/posting-v2/session-recovery/supabase/migrations/20261101234604_posting_v212_session_recovery.sql'
+          test -f "$file"
+          echo '375fc67f277939916129412099dab3e9c8062307dfbf0fa8ee5942b94bba1b89  '"$file" | sha256sum --check --status
+          test "$(git -C reviewed-candidate rev-parse HEAD)" = '50a1dcc5329afdbb6a74b65310b8b25636b57315'
+      - name: Set up trusted Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+      - name: Download pinned successful Test migration receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.1.8
+        with:
+          artifact-ids: 13133303616
+          run-id: 41431019442
+          github-token: ${{ github.token }}
+          path: test-release-receipt
+      - name: Validate FairSwapTest migration receipt before Production
+        run: |
+          test "$(find test-release-receipt -type f -name 'posting-v212-test.json' | wc -l)" = 1
+          receipt="$(find test-release-receipt -type f -name 'posting-v212-test.json' -print -quit)"
+          node --input-type=module - "$receipt" <<'NODE'
+          import {readFileSync} from 'node:fs';
+          const a=JSON.parse(readFileSync(process.argv[2],'utf8'));
+          const v={environment:'FairSwapTest',projectRef:'wpppxlnbzqynvhpeuavd',migrationVersion:'20261101234604',migrationFile:'20261101234604_posting_v212_session_recovery.sql',migrationSha256:'375fc67f277939916129412099dab3e9c8062307dfbf0fa8ee5942b94bba1b89',reviewedCommit:'c8157895904dfc53375911884eef9318d1a3a436',releaseWorkflowRun:'41431019442',status:'APPLIED_CLI_LEDGER_VERIFIED'};
+          for(const [k,expected] of Object.entries(v))if(String(a[k])!==expected)throw Error('POSTING_PRODUCTION_TEST_RECEIPT_UNVERIFIED');
+          if(!Number.isFinite(Date.parse(a.timestamp)))throw Error('POSTING_PRODUCTION_TEST_RECEIPT_INVALID');
+          NODE
+      - name: Install already-pinned prebuilt Supabase CLI
+        run: bash scripts/release/install-inbox-cli.sh
+      - name: Exact-history dry run, Production apply, and RLS postflight
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN }}
+          CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
+          CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.CHAT_DB_SSL_ROOT_CERT_PEM }}
+          CHAT_DB_POOLER_HOST: ${{ vars.CHAT_DB_POOLER_HOST }}
+        run: |
+          umask 077
+          test -n "$SUPABASE_ACCESS_TOKEN"
+          test -n "$CHAT_DATABASE_PASSWORD"
+          test -n "$CHAT_DB_SSL_ROOT_CERT_PEM"
+          [[ "$CHAT_DB_POOLER_HOST" =~ ^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$ ]]
+          test "$(supabase --version | head -n1)" = '2.117.0'
+          command -v psql >/dev/null
+          private="$(mktemp -d "${RUNNER_TEMP:-/tmp}/posting-v212-prod.XXXXXXXX")"
+          trap 'rm -rf "$private"' EXIT
+          export HOME="$private"
+          export PGSSLMODE=verify-full
+          export PGCONNECT_TIMEOUT=10
+          export PGPASSWORD="$CHAT_DATABASE_PASSWORD"
+          export SUPABASE_DB_PASSWORD="$CHAT_DATABASE_PASSWORD"
+          export PGSSLROOTCERT="$private/ca.pem"
+          node --input-type=module - "$PGSSLROOTCERT" <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          import {validateRootCertificate} from './scripts/release/fsw-sec-003-prelaunch.mjs';
+          writeFileSync(process.argv[2], validateRootCertificate(process.env.CHAT_DB_SSL_ROOT_CERT_PEM), {flag:'wx',mode:0o600});
+          NODE
+          url="postgresql://postgres.kriuhwppxgxsyyrbjsau@${CHAT_DB_POOLER_HOST}:5432/postgres?sslmode=verify-full&sslrootcert=${PGSSLROOTCERT}&connect_timeout=10"
+          before="$(psql "$url" -XAt -v ON_ERROR_STOP=1 -c "select (select count(*) from supabase_migrations.schema_migrations where version='20261101234604')=0 and (select count(*) from supabase_migrations.schema_migrations where name like '%posting_v2_mobiles%')=2 and (select count(*) from information_schema.columns where table_schema='public' and table_name='posting_upload_sessions' and column_name in ('draft_protected','empty_request_id'))=0;")"
+          test "$before" = 't' || { echo 'POSTING_PRODUCTION_PREFLIGHT_MISMATCH'; exit 1; }
+          workspace="$private/workspace"
+          mkdir -m 0700 "$workspace"
+          supabase init --workdir "$workspace" > "$private/init.log" 2>&1 || { echo 'POSTING_PRODUCTION_INIT_FAILED'; exit 1; }
+          supabase link --project-ref kriuhwppxgxsyyrbjsau --workdir "$workspace" > "$private/link.log" 2>&1 || { echo 'POSTING_PRODUCTION_LINK_FAILED'; exit 1; }
+          test "$(cat "$workspace/supabase/.temp/project-ref")" = 'kriuhwppxgxsyyrbjsau'
+          supabase migration fetch --linked --workdir "$workspace" > "$private/fetch.log" 2>&1 || { echo 'POSTING_PRODUCTION_FETCH_FAILED'; exit 1; }
+          test "$(find "$workspace/supabase/migrations" -maxdepth 1 -name '*.sql' | wc -l)" -ge 80
+          candidate='reviewed-candidate/supabase/forward-migrations/posting-v2/session-recovery/supabase/migrations/20261101234604_posting_v212_session_recovery.sql'
+          cp "$candidate" "$workspace/supabase/migrations/20261101234604_posting_v212_session_recovery.sql"
+          echo '375fc67f277939916129412099dab3e9c8062307dfbf0fa8ee5942b94bba1b89  '"$workspace/supabase/migrations/20261101234604_posting_v212_session_recovery.sql" | sha256sum --check --status
+          supabase db push --db-url "$url" --dry-run --workdir "$workspace" > "$private/dry-run.log" 2>&1 || { echo 'POSTING_PRODUCTION_DRY_RUN_FAILED'; exit 1; }
+          node --input-type=module - "$private/dry-run.log" <<'NODE'
+          import {readFileSync} from 'node:fs';
+          const lines=readFileSync(process.argv[2],'utf8');
+          const pending=[...new Set(lines.match(/\b\d{14}_[A-Za-z0-9_-]+\.sql\b/g)??[])];
+          if(pending.length!==1||pending[0]!=='20261101234604_posting_v212_session_recovery.sql')throw Error('POSTING_PRODUCTION_PENDING_MIGRATION_MISMATCH');
+          NODE
+          supabase db push --db-url "$url" --yes --workdir "$workspace" > "$private/apply.log" 2>&1 || { echo 'POSTING_PRODUCTION_APPLY_FAILED'; exit 1; }
+          after="$(psql "$url" -XAt -v ON_ERROR_STOP=1 -c "select (select count(*) from supabase_migrations.schema_migrations where version='20261101234604' and name='posting_v212_session_recovery')=1 and (select count(*) from information_schema.columns where table_schema='public' and table_name='posting_upload_sessions' and column_name in ('draft_protected','empty_request_id'))=2 and (select count(*) from pg_indexes where schemaname='public' and indexname='posting_v212_empty_request')=1 and (select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='app_security' and p.proname='impl_posting_v2_session' and p.prosecdef and position('create_empty' in p.prosrc)>0 and position('claim_draft' in p.prosrc)>0)=1 and not has_function_privilege('anon','public.posting_v2_session(uuid,text,uuid)','EXECUTE') and has_function_privilege('authenticated','public.posting_v2_session(uuid,text,uuid)','EXECUTE') and (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname in ('posting_upload_sessions','posting_staged_media') and c.relrowsecurity and c.relforcerowsecurity)=2;")"
+          test "$after" = 't' || { echo 'POSTING_PRODUCTION_POSTFLIGHT_FAILED'; exit 1; }
+          supabase migration list --linked --workdir "$workspace" > "$private/ledger.log" 2>&1 || { echo 'POSTING_PRODUCTION_LEDGER_FAILED'; exit 1; }
+          grep -q '20261101234604' "$private/ledger.log" || { echo 'POSTING_PRODUCTION_VERSION_MISSING'; exit 1; }
+          mkdir -p release-receipts
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          writeFileSync('release-receipts/posting-v212-prod.json',JSON.stringify({
+            environment:'FairSwapProd',projectRef:'kriuhwppxgxsyyrbjsau',
+            migrationVersion:'20261101234604',
+            migrationFile:'20261101234604_posting_v212_session_recovery.sql',
+            migrationSha256:'375fc67f277939916129412099dab3e9c8062307dfbf0fa8ee5942b94bba1b89',
+            reviewedCommit:'50a1dcc5329afdbb6a74b65310b8b25636b57315',
+            releaseWorkflowRun:process.env.GITHUB_RUN_ID,status:'APPLIED_CLI_LEDGER_AND_RLS_VERIFIED',
+            timestamp:new Date().toISOString()
+          },null,2)+'\n',{mode:0o600});
+          NODE
+      - name: Upload sanitized, immutable Production migration receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: posting-v212-prod-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-receipts/posting-v212-prod.json
           if-no-files-found: warn
           retention-days: 90
