@@ -54,33 +54,58 @@ export function parsePendingDryRun(dryRunCombinedOutput, expectedFilename) {
   return pending;
 }
 
-export function verifyLedgerVersion(ledgerOutput, expectedVersion, expectedFilename) {
-  // Verify exact applied remote migration ledger entry using real Supabase CLI migration list format.
-  // Standard Supabase CLI outputs ASCII table:
-  // LOCAL          | REMOTE         | TIME (UTC)
-  // ---------------+----------------+---------------------
-  // 20261102000000 | 20261102000000 | 2026-11-02 00:00:00
-  // or with status columns.
+export function verifyLedgerVersion(ledgerOutput, expectedVersion) {
+  // Require a recognized Supabase CLI table header: LOCAL | REMOTE | TIME (UTC)
   const lines = ledgerOutput.split('\n');
-  const matched = lines.some(line => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('LOCAL') || trimmed.startsWith('---') || trimmed.startsWith('Connecting')) {
-      return false;
-    }
-    const columns = trimmed.split('|').map(c => c.trim());
-    if (columns.length >= 2) {
-      const localVer = columns[0];
-      const remoteVer = columns[1];
-      // Exact match for applied remote migration: remote column must equal expectedVersion
-      return remoteVer === expectedVersion && (localVer === expectedVersion || localVer === '');
-    }
-    // Fallback space-delimited check if not pipe-delimited
-    const tokens = trimmed.split(/\s+/);
-    return tokens.includes(expectedVersion);
+  const headerIdx = lines.findIndex(line => {
+    const parts = line.split('|').map(s => s.trim().toUpperCase());
+    return parts.length >= 3 && parts[0] === 'LOCAL' && parts[1] === 'REMOTE' && parts[2].startsWith('TIME');
   });
 
-  if (!matched) {
+  if (headerIdx === -1) {
+    throw new Error('REUSABLE_RELEASE_LEDGER_HEADER_MISSING: expected LOCAL | REMOTE | TIME (UTC) table');
+  }
+
+  // Scan rows following the header and divider
+  let candidateMatches = 0;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const rawLine = lines[i].trim();
+    if (!rawLine || rawLine.startsWith('---') || rawLine.startsWith('===') || rawLine.startsWith('Connecting')) {
+      continue;
+    }
+    const cols = rawLine.split('|').map(s => s.trim());
+    if (cols.length < 3) {
+      continue;
+    }
+    const localCol = cols[0];
+    const remoteCol = cols[1];
+
+    const localIsCandidate = (localCol === expectedVersion);
+    const remoteIsCandidate = (remoteCol === expectedVersion);
+
+    // Fail closed on partial matches (e.g. version prefix/suffix)
+    if (!localIsCandidate && localCol.includes(expectedVersion)) {
+      throw new Error(`REUSABLE_RELEASE_LEDGER_PARTIAL_MATCH: ${localCol}`);
+    }
+    if (!remoteIsCandidate && remoteCol.includes(expectedVersion)) {
+      throw new Error(`REUSABLE_RELEASE_LEDGER_PARTIAL_MATCH: ${remoteCol}`);
+    }
+
+    if (localIsCandidate || remoteIsCandidate) {
+      // Must be present in both LOCAL and REMOTE
+      if (!localIsCandidate || !remoteIsCandidate) {
+        throw new Error(`REUSABLE_RELEASE_LEDGER_UNSYNCHRONIZED: LOCAL=${localCol}, REMOTE=${remoteCol}`);
+      }
+      candidateMatches++;
+    }
+  }
+
+  // Exactly one candidate row where both LOCAL and REMOTE equal expectedVersion
+  if (candidateMatches === 0) {
     throw new Error(`REUSABLE_RELEASE_EXACT_LEDGER_ENTRY_MISSING: version ${expectedVersion}`);
+  }
+  if (candidateMatches > 1) {
+    throw new Error(`REUSABLE_RELEASE_LEDGER_DUPLICATE_ROW: found ${candidateMatches} rows for ${expectedVersion}`);
   }
 }
 
@@ -270,7 +295,7 @@ export async function releaseReusable({
     // 7. Re-check migration ledger with exact match
     phase = 'ledger';
     const ledgerOutput = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
-    verifyLedgerVersion(ledgerOutput, candidate.version, candidate.filename);
+    verifyLedgerVersion(ledgerOutput, candidate.version);
 
     // 8. Automated Read-only Postflight Verification (awaited and validated before receipt)
     phase = 'postflight';

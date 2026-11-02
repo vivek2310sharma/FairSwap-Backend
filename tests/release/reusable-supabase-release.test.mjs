@@ -54,7 +54,7 @@ test('parsePendingDryRun fails if no migrations are pending', () => {
   }, /REUSABLE_RELEASE_DRY_RUN_MISMATCH/);
 });
 
-test('verifyLedgerVersion checks exact presence with realistic Supabase CLI table output', () => {
+test('verifyLedgerVersion requires valid LOCAL | REMOTE | TIME (UTC) table with synchronized candidate row', () => {
   const realisticCliOutput = `
 Connecting to remote database...
 LOCAL           | REMOTE          | TIME (UTC)
@@ -63,30 +63,72 @@ LOCAL           | REMOTE          | TIME (UTC)
 20261102000000  | 20261102000000  | 2026-11-02 00:00:00
 `;
   assert.doesNotThrow(() => {
-    verifyLedgerVersion(realisticCliOutput, '20261102000000', '20261102000000_admin_moderation_analytics_v1.sql');
+    verifyLedgerVersion(realisticCliOutput, '20261102000000');
   });
 
-  // Missing in remote column
-  const unappliedCliOutput = `
-Connecting to remote database...
+  // Missing headers fails closed
+  const missingHeaderOutput = `
+20261017205807  | 20261017205807  | 2026-10-17 20:58:07
+20261102000000  | 20261102000000  | 2026-11-02 00:00:00
+`;
+  assert.throws(() => {
+    verifyLedgerVersion(missingHeaderOutput, '20261102000000');
+  }, /REUSABLE_RELEASE_LEDGER_HEADER_MISSING/);
+
+  // Bare version string without table fails closed
+  assert.throws(() => {
+    verifyLedgerVersion('20261102000000 applied successfully', '20261102000000');
+  }, /REUSABLE_RELEASE_LEDGER_HEADER_MISSING/);
+
+  // Local-only migration fails closed
+  const localOnlyOutput = `
 LOCAL           | REMOTE          | TIME (UTC)
 ----------------+-----------------+---------------------
-20261017205807  | 20261017205807  | 2026-10-17 20:58:07
 20261102000000  |                 |
 `;
   assert.throws(() => {
-    verifyLedgerVersion(unappliedCliOutput, '20261102000000', '20261102000000_admin_moderation_analytics_v1.sql');
-  }, /REUSABLE_RELEASE_EXACT_LEDGER_ENTRY_MISSING/);
-});
+    verifyLedgerVersion(localOnlyOutput, '20261102000000');
+  }, /REUSABLE_RELEASE_LEDGER_UNSYNCHRONIZED/);
 
-test('verifyLedgerVersion rejects substring match on unrelated migration', () => {
-  const ledger = `
+  // Remote-only migration fails closed
+  const remoteOnlyOutput = `
 LOCAL           | REMOTE          | TIME (UTC)
 ----------------+-----------------+---------------------
-2026110200000011| 2026110200000011| 2026-11-02 00:00:00
+                | 20261102000000  | 2026-11-02 00:00:00
 `;
   assert.throws(() => {
-    verifyLedgerVersion(ledger, '20261102000000');
+    verifyLedgerVersion(remoteOnlyOutput, '20261102000000');
+  }, /REUSABLE_RELEASE_LEDGER_UNSYNCHRONIZED/);
+
+  // Partial match fails closed
+  const partialMatchOutput = `
+LOCAL           | REMOTE          | TIME (UTC)
+----------------+-----------------+---------------------
+2026110200000099| 2026110200000099| 2026-11-02 00:00:00
+`;
+  assert.throws(() => {
+    verifyLedgerVersion(partialMatchOutput, '20261102000000');
+  }, /REUSABLE_RELEASE_LEDGER_PARTIAL_MATCH/);
+
+  // Duplicate candidate rows fail closed
+  const duplicateOutput = `
+LOCAL           | REMOTE          | TIME (UTC)
+----------------+-----------------+---------------------
+20261102000000  | 20261102000000  | 2026-11-02 00:00:00
+20261102000000  | 20261102000000  | 2026-11-02 00:00:01
+`;
+  assert.throws(() => {
+    verifyLedgerVersion(duplicateOutput, '20261102000000');
+  }, /REUSABLE_RELEASE_LEDGER_DUPLICATE_ROW/);
+
+  // Missing version fails closed
+  const missingVersionOutput = `
+LOCAL           | REMOTE          | TIME (UTC)
+----------------+-----------------+---------------------
+20261017205807  | 20261017205807  | 2026-10-17 20:58:07
+`;
+  assert.throws(() => {
+    verifyLedgerVersion(missingVersionOutput, '20261102000000');
   }, /REUSABLE_RELEASE_EXACT_LEDGER_ENTRY_MISSING/);
 });
 
