@@ -21,6 +21,30 @@ function sha(data) {
   return createHash('sha256').update(data).digest('hex');
 }
 
+export function subprocessFailure(result, phase) {
+  const raw = String(result.stderr ?? '');
+  const state = raw.match(/(?:ERROR|FATAL):\s+([0-9A-Z]{5})\b/)?.[1];
+  const states = {
+    '42601': 'SQL_SYNTAX',
+    '42703': 'SQL_COLUMN',
+    '42883': 'SQL_FUNCTION',
+    '42P01': 'SQL_RELATION',
+    '42501': 'SQL_PERMISSION',
+    '25006': 'READ_ONLY',
+    '57014': 'TIMEOUT',
+    '28P01': 'AUTHENTICATION',
+    '28000': 'AUTHENTICATION'
+  };
+  const kind = states[state] ?? (
+    /certificate|SSL|TLS/i.test(raw) ? 'TLS' :
+    /could not translate host|Name or service not known/i.test(raw) ? 'DNS' :
+    /connection.*(?:failed|refused|timed out)/i.test(raw) ? 'CONNECTION' :
+    result.error?.code === 'ENOENT' ? 'TOOL_MISSING' :
+    result.error?.code === 'ETIMEDOUT' ? 'TIMEOUT' : 'EXIT'
+  );
+  return new Error(`REUSABLE_SUBPROCESS_${phase.toUpperCase()}_${kind}_FAILED`);
+}
+
 export function parsePendingDryRun(dryRunCombinedOutput, expectedFilename) {
   // Capture all potential migration filename tokens from stdout and stderr combined
   const pending = [...new Set(dryRunCombinedOutput.match(/\b\d{14}_[A-Za-z0-9_-]+\.sql\b/g) ?? [])];
@@ -31,20 +55,31 @@ export function parsePendingDryRun(dryRunCombinedOutput, expectedFilename) {
 }
 
 export function verifyLedgerVersion(ledgerOutput, expectedVersion, expectedFilename) {
-  // Verify exact ledger entry match on its own row/line, avoiding partial substring confusion
+  // Verify exact applied remote migration ledger entry using real Supabase CLI migration list format.
+  // Standard Supabase CLI outputs ASCII table:
+  // LOCAL          | REMOTE         | TIME (UTC)
+  // ---------------+----------------+---------------------
+  // 20261102000000 | 20261102000000 | 2026-11-02 00:00:00
+  // or with status columns.
   const lines = ledgerOutput.split('\n');
-  const match = lines.some(line => {
-    const tokens = line.trim().split(/[\s|]+/);
-    const hasVersion = tokens.includes(expectedVersion);
-    if (!hasVersion) return false;
-    if (expectedFilename) {
-      // If filename given, ensure the migration filename or root name is also associated on the line
-      const baseName = expectedFilename.replace(/\.sql$/, '');
-      return tokens.some(t => t.includes(expectedVersion) || t.includes(baseName));
+  const matched = lines.some(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('LOCAL') || trimmed.startsWith('---') || trimmed.startsWith('Connecting')) {
+      return false;
     }
-    return true;
+    const columns = trimmed.split('|').map(c => c.trim());
+    if (columns.length >= 2) {
+      const localVer = columns[0];
+      const remoteVer = columns[1];
+      // Exact match for applied remote migration: remote column must equal expectedVersion
+      return remoteVer === expectedVersion && (localVer === expectedVersion || localVer === '');
+    }
+    // Fallback space-delimited check if not pipe-delimited
+    const tokens = trimmed.split(/\s+/);
+    return tokens.includes(expectedVersion);
   });
-  if (!match) {
+
+  if (!matched) {
     throw new Error(`REUSABLE_RELEASE_EXACT_LEDGER_ENTRY_MISSING: version ${expectedVersion}`);
   }
 }
@@ -52,7 +87,8 @@ export function verifyLedgerVersion(ledgerOutput, expectedVersion, expectedFilen
 export async function verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner) {
   const candidate = getCandidate(candidateId);
   if (candidate.id === 'moderation-analytics-v1') {
-    // Read-only SQL query to verify exact function attributes, search_path, volatility, security definer/invoker, and permissions
+    // Read-only SQL query to verify exact function attributes, empty search_path, volatility, definer/invoker, and permissions.
+    // Uses standard PostgreSQL array containment: p.proconfig @> ARRAY['search_path=""']::text[]
     const query = `
       BEGIN READ ONLY;
       SET LOCAL statement_timeout = '15s';
@@ -68,7 +104,7 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
             AND t.typname = 'jsonb'
             AND p.pronargs = 1
             AND pg_get_function_identity_arguments(p.oid) = 'filter_range text'
-            AND array_to_string(p.proconfig, ',') = 'search_path='
+            AND p.proconfig @> ARRAY['search_path=""']::text[]
         ),
         'app_security_signature_exact', (
           SELECT count(*) = 1 FROM pg_proc p
@@ -81,7 +117,7 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
             AND t.typname = 'jsonb'
             AND p.pronargs = 1
             AND pg_get_function_identity_arguments(p.oid) = 'p_filter_range text'
-            AND array_to_string(p.proconfig, ',') = 'search_path='
+            AND p.proconfig @> ARRAY['search_path=""']::text[]
         ),
         'no_public_execute', (
           SELECT has_function_privilege('public', 'public.get_admin_moderation_analytics(text)', 'EXECUTE') = false
@@ -104,7 +140,7 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
     } else {
       const res = spawnSync('psql', ['-XqAt', '-v', 'ON_ERROR_STOP=1', '-d', psqlUrl, '-c', query], {env, encoding: 'utf8'});
       if (res.status !== 0) {
-        throw new Error('REUSABLE_RELEASE_POSTFLIGHT_SQL_FAILED');
+        throw subprocessFailure(res, 'postflight_sql');
       }
       rawOutput = res.stdout;
     }
@@ -152,16 +188,18 @@ export async function releaseReusable({
     throw new Error('REUSABLE_RELEASE_INVALID_POOLER_HOST');
   }
 
+  let phase = 'init';
   const run = (cmd, args, env, input, returnCombined = false) => {
     if (runner) return runner(cmd, args, env, input, returnCombined);
     const res = spawnSync(cmd, args, {env, input, encoding: 'utf8', timeout: 120000});
-    if (res.status !== 0) {
-      throw new Error(`CMD_FAILED: ${cmd} ${args.join(' ')}: ${res.stderr || res.stdout}`);
+    if (res.error || res.status !== 0) {
+      throw subprocessFailure(res, phase);
     }
     return returnCombined ? (res.stdout + '\n' + res.stderr) : res.stdout;
   };
 
   // Check Supabase CLI version (stdout only)
+  phase = 'cli_version';
   const cliVer = run('supabase', ['--version'], process.env).trim().split('\n')[0].replace(/^supabase\s*/, '');
   if (!cliVer.includes('2.117.0')) {
     throw new Error(`REUSABLE_RELEASE_CLI_VERSION_MISMATCH: expected 2.117.0, got ${cliVer}`);
@@ -193,9 +231,11 @@ export async function releaseReusable({
     mkdirSync(workspace, {mode: 0o700});
 
     // 1. Initialize isolated Supabase project
+    phase = 'init';
     run('supabase', ['init', '--workdir', workspace], env);
 
     // 2. Link target project
+    phase = 'link';
     run('supabase', ['link', '--project-ref', projectRef, '--workdir', workspace], env);
     const linkedRef = readFileSync(join(workspace, 'supabase/.temp/project-ref'), 'utf8').trim();
     if (linkedRef !== projectRef) {
@@ -203,6 +243,7 @@ export async function releaseReusable({
     }
 
     // 3. Fetch migration history independently
+    phase = 'fetch';
     run('supabase', ['migration', 'fetch', '--linked', '--workdir', workspace], env);
     const fetchedFiles = readdirSync(join(workspace, 'supabase/migrations'));
     if (fetchedFiles.length < 50) {
@@ -218,17 +259,21 @@ export async function releaseReusable({
     }
 
     // 5. Dry run push to verify EXACTLY only this candidate is pending (capturing stdout + stderr)
+    phase = 'dry_run';
     const dryRunOutput = run('supabase', ['db', 'push', '--db-url', psqlUrl, '--dry-run', '--workdir', workspace], env, undefined, true);
     dryRunPending = parsePendingDryRun(dryRunOutput, candidate.filename);
 
     // 6. Apply candidate migration
+    phase = 'apply';
     run('supabase', ['db', 'push', '--db-url', psqlUrl, '--yes', '--workdir', workspace], env);
 
     // 7. Re-check migration ledger with exact match
+    phase = 'ledger';
     const ledgerOutput = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
     verifyLedgerVersion(ledgerOutput, candidate.version, candidate.filename);
 
     // 8. Automated Read-only Postflight Verification (awaited and validated before receipt)
+    phase = 'postflight';
     const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner);
     if (!postflightResult || typeof postflightResult !== 'object') {
       throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');

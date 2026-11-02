@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {rootCertificates} from 'node:tls';
 import {X509Certificate} from 'node:crypto';
 import {getCandidate, verifyCandidateSha, CANDIDATES} from '../../scripts/release/reusable-candidates.mjs';
-import {parsePendingDryRun, verifyLedgerVersion, releaseReusable, REFS} from '../../scripts/release/reusable-supabase-release.mjs';
+import {parsePendingDryRun, verifyLedgerVersion, releaseReusable, subprocessFailure, REFS} from '../../scripts/release/reusable-supabase-release.mjs';
 
 test('candidate registry correctly registers moderation-analytics-v1', () => {
   const c = getCandidate('moderation-analytics-v1');
@@ -54,26 +54,52 @@ test('parsePendingDryRun fails if no migrations are pending', () => {
   }, /REUSABLE_RELEASE_DRY_RUN_MISMATCH/);
 });
 
-test('verifyLedgerVersion checks exact presence of version line', () => {
-  const ledger = `
-    | 20261017205807 | applied | 20261017205807_cat.sql |
-    | 20261102000000 | applied | 20261102000000_admin_moderation_analytics_v1.sql |
-  `;
+test('verifyLedgerVersion checks exact presence with realistic Supabase CLI table output', () => {
+  const realisticCliOutput = `
+Connecting to remote database...
+LOCAL           | REMOTE          | TIME (UTC)
+----------------+-----------------+---------------------
+20261017205807  | 20261017205807  | 2026-10-17 20:58:07
+20261102000000  | 20261102000000  | 2026-11-02 00:00:00
+`;
   assert.doesNotThrow(() => {
-    verifyLedgerVersion(ledger, '20261102000000', '20261102000000_admin_moderation_analytics_v1.sql');
+    verifyLedgerVersion(realisticCliOutput, '20261102000000', '20261102000000_admin_moderation_analytics_v1.sql');
   });
+
+  // Missing in remote column
+  const unappliedCliOutput = `
+Connecting to remote database...
+LOCAL           | REMOTE          | TIME (UTC)
+----------------+-----------------+---------------------
+20261017205807  | 20261017205807  | 2026-10-17 20:58:07
+20261102000000  |                 |
+`;
   assert.throws(() => {
-    verifyLedgerVersion(ledger, '20261199999999', '20261199999999_missing.sql');
+    verifyLedgerVersion(unappliedCliOutput, '20261102000000', '20261102000000_admin_moderation_analytics_v1.sql');
   }, /REUSABLE_RELEASE_EXACT_LEDGER_ENTRY_MISSING/);
 });
 
 test('verifyLedgerVersion rejects substring match on unrelated migration', () => {
   const ledger = `
-    | 2026110200000011 | applied | other.sql |
-  `;
+LOCAL           | REMOTE          | TIME (UTC)
+----------------+-----------------+---------------------
+2026110200000011| 2026110200000011| 2026-11-02 00:00:00
+`;
   assert.throws(() => {
     verifyLedgerVersion(ledger, '20261102000000');
   }, /REUSABLE_RELEASE_EXACT_LEDGER_ENTRY_MISSING/);
+});
+
+test('subprocessFailure sanitizes errors and maps diagnostic categories', () => {
+  const sqlError = subprocessFailure({status: 1, stderr: 'psql: error: ERROR: 42501 permission denied for function foo'}, 'postflight');
+  assert.equal(sqlError.message, 'REUSABLE_SUBPROCESS_POSTFLIGHT_SQL_PERMISSION_FAILED');
+
+  const authError = subprocessFailure({status: 1, stderr: 'FATAL: 28P01 password authentication failed for user "postgres"'}, 'apply');
+  assert.equal(sqlError.message.includes('password'), false);
+  assert.equal(authError.message, 'REUSABLE_SUBPROCESS_APPLY_AUTHENTICATION_FAILED');
+
+  const tlsError = subprocessFailure({status: 1, stderr: 'SSL connection failed: certificate verify failed'}, 'connect');
+  assert.equal(tlsError.message, 'REUSABLE_SUBPROCESS_CONNECT_TLS_FAILED');
 });
 
 test('target environment references are correctly mapped', () => {
@@ -107,7 +133,11 @@ test('failed postflight blocks receipt generation and throws fail-closed error',
     }
     if (cmd === 'supabase' && args.includes('db') && args.includes('push')) return '';
     if (cmd === 'supabase' && args.includes('migration') && args.includes('list')) {
-      return '| 20261102000000 | applied | 20261102000000_admin_moderation_analytics_v1.sql |';
+      return `
+LOCAL           | REMOTE          | TIME (UTC)
+----------------+-----------------+---------------------
+20261102000000  | 20261102000000  | 2026-11-02 00:00:00
+`;
     }
     if (cmd === 'psql') {
       // Simulate missing security definer or missing permissions
