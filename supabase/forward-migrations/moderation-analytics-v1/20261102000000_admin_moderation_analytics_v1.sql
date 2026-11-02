@@ -4,12 +4,13 @@
 -- Description: Authoritative Administrator-only RPC for Moderation Analytics V1.
 -- Authorizes callers strictly via app_security.is_active_staff_aal2('administrator').
 -- Evaluates windows strictly in Indian Standard Time (Asia/Kolkata, UTC+05:30).
+-- Consistent timestamp semantics: uses statement_timestamp() for deterministic transaction consistency.
 -- Normalizes range parameter: 'today', 'yesterday', '7d', '30d' (defaults/normalizes to 'today').
 -- Boundaries (calendar dates including today in IST):
---   'today': midnight IST of today (1 calendar day) to clock_timestamp()
+--   'today': midnight IST of today (1 calendar day) to statement_timestamp()
 --   'yesterday': midnight IST of yesterday to midnight IST of today (1 calendar day)
---   '7d': midnight IST of (today - 6 days) to clock_timestamp() (exactly 7 calendar dates: today + previous 6 days)
---   '30d': midnight IST of (today - 29 days) to clock_timestamp() (exactly 30 calendar dates: today + previous 29 days)
+--   '7d': midnight IST of (today - 6 days) to statement_timestamp() (exactly 7 calendar dates: today + previous 6 days)
+--   '30d': midnight IST of (today - 29 days) to statement_timestamp() (exactly 30 calendar dates: today + previous 29 days)
 -- Image scan attempts: truthfully marked unavailable until genuine per-image attempt instrumentation exists.
 
 BEGIN;
@@ -49,8 +50,8 @@ BEGIN
     v_range := 'today';
   END IF;
 
-  -- 3. Compute IST Boundaries (Asia/Kolkata: UTC+05:30)
-  v_now_ist := pg_catalog.clock_timestamp();
+  -- 3. Compute IST Boundaries (Asia/Kolkata: UTC+05:30) using statement_timestamp() for STABLE semantics
+  v_now_ist := pg_catalog.statement_timestamp();
   v_today_start_ist := (pg_catalog.date_trunc('day', v_now_ist AT TIME ZONE 'Asia/Kolkata')) AT TIME ZONE 'Asia/Kolkata';
 
   IF v_range = 'yesterday' THEN
@@ -213,12 +214,13 @@ $$;
 REVOKE ALL ON FUNCTION app_security.get_admin_moderation_analytics(text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION app_security.get_admin_moderation_analytics(text) TO authenticated;
 
--- Public schema wrapper
+-- Public schema wrapper: STABLE and SECURITY INVOKER with empty search_path
 CREATE OR REPLACE FUNCTION public.get_admin_moderation_analytics(
   filter_range text DEFAULT 'today'
 )
 RETURNS jsonb
 LANGUAGE plpgsql
+STABLE
 SECURITY INVOKER
 SET search_path = ''
 AS $$

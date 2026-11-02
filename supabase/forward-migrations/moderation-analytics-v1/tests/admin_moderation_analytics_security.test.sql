@@ -1,14 +1,15 @@
 -- Tests: admin_moderation_analytics_security.test.sql
 -- File: supabase/forward-migrations/moderation-analytics-v1/tests/admin_moderation_analytics_security.test.sql
 -- Description: Focused pgTAP regression & authorization tests for get_admin_moderation_analytics RPC.
--- AUTHORED / NOT RUN. Only on an explicitly approved disposable database after applying the migration.
+-- Executes against an isolated disposable database after applying the 58 baseline migrations
+-- plus the moderation-analytics-v1 forward migration.
 -- Note: Synthetic users rely on handle_new_user() trigger for active user_accounts; no duplicate inserts.
 
 BEGIN;
 SET LOCAL statement_timeout = '30s';
 SELECT no_plan();
 
--- 1. Interface & search_path assertions
+-- 1. Interface & search_path assertions (both wrapper and implementation declared STABLE with search_path="")
 SELECT has_function('public', 'get_admin_moderation_analytics', ARRAY['text'], 'public.get_admin_moderation_analytics exists');
 SELECT has_function('app_security', 'get_admin_moderation_analytics', ARRAY['text'], 'app_security.get_admin_moderation_analytics exists');
 SELECT ok(NOT p.prosecdef AND p.provolatile = 's' AND
@@ -101,10 +102,10 @@ SELECT set_config('request.jwt.claim.sub', admin_id::text, true) FROM an_ids;
 SELECT set_config('request.jwt.claims', jsonb_build_object('sub', admin_id, 'role', 'authenticated', 'aal', 'aal2')::text, true) FROM an_ids;
 SELECT ok(app_security.is_active_staff_aal2('administrator'), 'fixture is verified administrator at AAL2');
 
--- 7. Boundary and Normalization Verification
+-- 7. Boundary and Normalization Verification (using statement_timestamp() for exact alignment with STABLE function)
 CREATE TEMP TABLE an_bounds AS
 SELECT
-  (pg_catalog.date_trunc('day', clock_timestamp() AT TIME ZONE 'Asia/Kolkata')) AT TIME ZONE 'Asia/Kolkata' AS today_start;
+  (pg_catalog.date_trunc('day', statement_timestamp() AT TIME ZONE 'Asia/Kolkata')) AT TIME ZONE 'Asia/Kolkata' AS today_start;
 
 -- Range 'today': window_start must equal midnight IST today
 SELECT is(
@@ -151,7 +152,7 @@ SELECT is(
   'invalid range window_start matches today_start'
 );
 
--- Truthful unavailable telemetry state
+-- Truthful unavailable telemetry state & zero data accuracy
 SELECT is(
   (public.get_admin_moderation_analytics('today')->'image_scans'->>'status'),
   'unavailable',
@@ -166,6 +167,11 @@ SELECT is(
   (public.get_admin_moderation_analytics('today')->'costs'->>'openai'),
   'Not connected',
   'openai cost is Not connected'
+);
+SELECT is(
+  ((public.get_admin_moderation_analytics('today')->'metrics'->>'images_uploaded')::integer >= 0),
+  true,
+  'metrics.images_uploaded is a valid non-negative integer'
 );
 
 RESET ROLE;
