@@ -1,3 +1,5 @@
+> V2.1.2 amended candidate — 2 November 2026: the foundation/activation files below remain immutable. A separate [session recovery forward migration](session-recovery/README.md) preserves the five-session limit, adds conservative draft protection and atomically rotates only the oldest certified blank. Unknown/legacy local drafts remain protected; explicit recovery is available. No hosted operation occurred. Authenticated hosted Test acceptance still blocks Production.
+
 # Posting V2 / Mobile Phones local release candidate
 
 25 October 2026. Source changes only; no hosted operation, GitHub operation or deployment was performed. Mobile Phones defaults **off** in the database and Web. Apply only reviewed patches to current remote release bases; the local release checks below pass. Hosted rehearsals and deployments remain ChatGPT-owned.
