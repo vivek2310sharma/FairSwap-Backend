@@ -1,6 +1,6 @@
 // Real PG17 connections/transaction barriers. Never accepts a URL or live target.
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync,readdirSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {resolve} from 'node:path';
 import {installPostingFixture} from '../../scripts/ci/posting-v2-fixture.mjs';
@@ -18,6 +18,7 @@ try {
  const version=await db.verify();await installPostingFixture(db);
  await db.exec(readFileSync(resolve('supabase/forward-migrations/posting-v2/session-recovery/supabase/migrations/20261101234604_posting_v212_session_recovery.sql'),'utf8'));
  await db.exec(readFileSync(resolve('supabase/forward-migrations/posting-v2/activation/supabase/migrations/20261025135152_activate_posting_v2_mobiles.sql'),'utf8'));
+ if(process.argv[4]==='--accessories-v1'){const folder=resolve('supabase/forward-migrations/accessories-v1/foundation/supabase/migrations');await db.exec(readFileSync(resolve(folder,readdirSync(folder).find(f=>f.endsWith('.sql'))),'utf8'));}
  await db.exec(`insert into auth.users values(${literal(u)}),(${literal(other)})`);
  await test('two connections create different sessions at capacity and retire the oldest distinct blanks',async()=>{
   const ids=await blanks();const a=randomUUID(),b=randomUUID();const held=await hold(sql(a,'create'),'posting_create_a');

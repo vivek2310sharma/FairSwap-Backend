@@ -1,0 +1,914 @@
+{
+  "types": [
+    {
+      "id": "phone-case",
+      "name": "Phone case, cover or skin",
+      "group": 0,
+      "exact": true,
+      "electronic": false,
+      "safety": false,
+      "guide": "Front, rear, edges and model marking.",
+      "specs": [
+        {
+          "key": "variant",
+          "label": "Exact size / variant",
+          "kind": "text"
+        },
+        {
+          "key": "material",
+          "label": "Material",
+          "kind": "text"
+        },
+        {
+          "key": "colour",
+          "label": "Colour",
+          "kind": "text"
+        },
+        {
+          "key": "magnetic",
+          "label": "Magnetic charging support",
+          "kind": "select",
+          "options": [
+            "Yes",
+            "No",
+            "Not sure"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tablet-case",
+      "name": "Tablet cover or case",
+      "group": 0,
+      "exact": true,
+      "electronic": false,
+      "safety": false,
+      "guide": "Front, rear, corners and tablet size marking.",
+      "specs": [
+        {
+          "key": "variant",
+          "label": "Exact size / variant",
+          "kind": "text"
+        },
+        {
+          "key": "material",
+          "label": "Material",
+          "kind": "text"
+        },
+        {
+          "key": "colour",
+          "label": "Colour",
+          "kind": "text"
+        },
+        {
+          "key": "magnetic",
+          "label": "Magnetic charging support",
+          "kind": "select",
+          "options": [
+            "Yes",
+            "No",
+            "Not sure"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "watch-strap",
+      "name": "Watch strap or band",
+      "group": 0,
+      "exact": true,
+      "electronic": false,
+      "safety": false,
+      "guide": "Both connectors, clasp and any wear.",
+      "specs": [
+        {
+          "key": "connector",
+          "label": "Connector system",
+          "kind": "text"
+        },
+        {
+          "key": "size",
+          "label": "Connector / strap size",
+          "kind": "text"
+        },
+        {
+          "key": "material",
+          "label": "Strap material",
+          "kind": "text"
+        },
+        {
+          "key": "wrist",
+          "label": "Wrist size / length",
+          "kind": "text"
+        },
+        {
+          "key": "clasp",
+          "label": "Clasp condition",
+          "kind": "select",
+          "options": [
+            "Unused",
+            "Good",
+            "Worn",
+            "Damaged"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "watch-case",
+      "name": "Watch case or screen protector",
+      "group": 1,
+      "exact": true,
+      "electronic": false,
+      "safety": false,
+      "guide": "Front, edges and exact size marking.",
+      "specs": [
+        {
+          "key": "variant",
+          "label": "Exact size / variant",
+          "kind": "text"
+        },
+        {
+          "key": "material",
+          "label": "Material",
+          "kind": "text"
+        },
+        {
+          "key": "colour",
+          "label": "Colour",
+          "kind": "text"
+        },
+        {
+          "key": "magnetic",
+          "label": "Magnetic charging support",
+          "kind": "select",
+          "options": [
+            "Yes",
+            "No",
+            "Not sure"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "phone-protector",
+      "name": "Phone screen protector",
+      "group": 1,
+      "exact": true,
+      "electronic": false,
+      "safety": false,
+      "guide": "Packaging, edges and model marking.",
+      "specs": [
+        {
+          "key": "material",
+          "label": "Material",
+          "kind": "text"
+        },
+        {
+          "key": "variant",
+          "label": "Exact size / variant",
+          "kind": "text"
+        }
+      ]
+    },
+    {
+      "id": "tablet-protector",
+      "name": "Tablet screen protector",
+      "group": 1,
+      "exact": true,
+      "electronic": false,
+      "safety": false,
+      "guide": "Packaging, edges and generation marking.",
+      "specs": [
+        {
+          "key": "material",
+          "label": "Material",
+          "kind": "text"
+        },
+        {
+          "key": "variant",
+          "label": "Exact size / variant",
+          "kind": "text"
+        }
+      ]
+    },
+    {
+      "id": "charger",
+      "name": "Charger or charging adapter",
+      "group": 2,
+      "exact": false,
+      "electronic": true,
+      "safety": true,
+      "guide": "Front, back, output specifications and connector.",
+      "specs": [
+        {
+          "key": "port",
+          "label": "Port type",
+          "kind": "select",
+          "options": [
+            "USB-C",
+            "USB-A",
+            "Lightning",
+            "Micro-USB",
+            "Proprietary",
+            "Other"
+          ]
+        },
+        {
+          "key": "watts",
+          "label": "Output power (W)",
+          "kind": "number",
+          "min": 1,
+          "max": 500
+        },
+        {
+          "key": "protocol",
+          "label": "Charging protocol",
+          "kind": "select",
+          "options": [
+            "USB PD",
+            "USB PD + PPS",
+            "Qi",
+            "Qi2",
+            "Proprietary",
+            "Other",
+            "Not sure"
+          ]
+        },
+        {
+          "key": "ports",
+          "label": "Number of ports",
+          "kind": "number",
+          "min": 1,
+          "max": 16,
+          "integer": true
+        },
+        {
+          "key": "plug",
+          "label": "Plug type",
+          "kind": "select",
+          "options": [
+            "India two-pin",
+            "India three-pin",
+            "USB powered",
+            "Other"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wireless-charger",
+      "name": "Wireless charger",
+      "group": 2,
+      "exact": false,
+      "electronic": true,
+      "safety": true,
+      "guide": "Charging surface, underside specifications and power input.",
+      "specs": [
+        {
+          "key": "port",
+          "label": "Port type",
+          "kind": "select",
+          "options": [
+            "USB-C",
+            "USB-A",
+            "Lightning",
+            "Micro-USB",
+            "Proprietary",
+            "Other"
+          ]
+        },
+        {
+          "key": "watts",
+          "label": "Output power (W)",
+          "kind": "number",
+          "min": 1,
+          "max": 500
+        },
+        {
+          "key": "protocol",
+          "label": "Charging protocol",
+          "kind": "select",
+          "options": [
+            "USB PD",
+            "USB PD + PPS",
+            "Qi",
+            "Qi2",
+            "Proprietary",
+            "Other",
+            "Not sure"
+          ]
+        },
+        {
+          "key": "ports",
+          "label": "Number of ports",
+          "kind": "number",
+          "min": 1,
+          "max": 16,
+          "integer": true
+        },
+        {
+          "key": "plug",
+          "label": "Plug type",
+          "kind": "select",
+          "options": [
+            "India two-pin",
+            "India three-pin",
+            "USB powered",
+            "Other"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "watch-charger",
+      "name": "Watch charger or charging dock",
+      "group": 2,
+      "exact": true,
+      "electronic": true,
+      "safety": true,
+      "guide": "Charging connector, dock and model marking.",
+      "specs": [
+        {
+          "key": "port",
+          "label": "Port type",
+          "kind": "select",
+          "options": [
+            "USB-C",
+            "USB-A",
+            "Lightning",
+            "Micro-USB",
+            "Proprietary",
+            "Other"
+          ]
+        },
+        {
+          "key": "watts",
+          "label": "Output power (W)",
+          "kind": "number",
+          "min": 1,
+          "max": 500
+        },
+        {
+          "key": "protocol",
+          "label": "Charging protocol",
+          "kind": "select",
+          "options": [
+            "USB PD",
+            "USB PD + PPS",
+            "Qi",
+            "Qi2",
+            "Proprietary",
+            "Other",
+            "Not sure"
+          ]
+        },
+        {
+          "key": "ports",
+          "label": "Number of ports",
+          "kind": "number",
+          "min": 1,
+          "max": 16,
+          "integer": true
+        },
+        {
+          "key": "plug",
+          "label": "Plug type",
+          "kind": "select",
+          "options": [
+            "India two-pin",
+            "India three-pin",
+            "USB powered",
+            "Other"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tablet-charging",
+      "name": "Tablet charging accessory",
+      "group": 2,
+      "exact": false,
+      "electronic": true,
+      "safety": true,
+      "guide": "Connectors and output specifications.",
+      "specs": [
+        {
+          "key": "port",
+          "label": "Port type",
+          "kind": "select",
+          "options": [
+            "USB-C",
+            "USB-A",
+            "Lightning",
+            "Micro-USB",
+            "Proprietary",
+            "Other"
+          ]
+        },
+        {
+          "key": "watts",
+          "label": "Output power (W)",
+          "kind": "number",
+          "min": 1,
+          "max": 500
+        },
+        {
+          "key": "protocol",
+          "label": "Charging protocol",
+          "kind": "select",
+          "options": [
+            "USB PD",
+            "USB PD + PPS",
+            "Qi",
+            "Qi2",
+            "Proprietary",
+            "Other",
+            "Not sure"
+          ]
+        },
+        {
+          "key": "ports",
+          "label": "Number of ports",
+          "kind": "number",
+          "min": 1,
+          "max": 16,
+          "integer": true
+        },
+        {
+          "key": "plug",
+          "label": "Plug type",
+          "kind": "select",
+          "options": [
+            "India two-pin",
+            "India three-pin",
+            "USB powered",
+            "Other"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cable",
+      "name": "Charging or data cable",
+      "group": 3,
+      "exact": false,
+      "electronic": true,
+      "safety": true,
+      "guide": "Both connectors, length and any fraying.",
+      "specs": [
+        {
+          "key": "end_a",
+          "label": "Connector at first end",
+          "kind": "select",
+          "options": [
+            "USB-C",
+            "USB-A",
+            "Lightning",
+            "Micro-USB",
+            "Proprietary",
+            "Other"
+          ]
+        },
+        {
+          "key": "end_b",
+          "label": "Connector at second end",
+          "kind": "select",
+          "options": [
+            "USB-C",
+            "USB-A",
+            "Lightning",
+            "Micro-USB",
+            "Proprietary",
+            "Other"
+          ]
+        },
+        {
+          "key": "length_m",
+          "label": "Length (metres)",
+          "kind": "number",
+          "min": 0.1,
+          "max": 20
+        },
+        {
+          "key": "watts",
+          "label": "Charging capability (W)",
+          "kind": "number",
+          "min": 1,
+          "max": 500
+        },
+        {
+          "key": "data",
+          "label": "Data-transfer support",
+          "kind": "select",
+          "options": [
+            "Charging only",
+            "USB 2",
+            "USB 3",
+            "USB 4",
+            "Thunderbolt",
+            "Not sure"
+          ]
+        },
+        {
+          "key": "cable_condition",
+          "label": "Cable condition",
+          "kind": "select",
+          "options": [
+            "No fraying or exposed wires",
+            "Damaged / exposed wires"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hub",
+      "name": "USB-C hub or dock",
+      "group": 3,
+      "exact": false,
+      "electronic": true,
+      "safety": false,
+      "guide": "All ports, input connector and specification label.",
+      "specs": [
+        {
+          "key": "input",
+          "label": "Input connector",
+          "kind": "select",
+          "options": [
+            "USB-C",
+            "USB-A",
+            "Lightning",
+            "Micro-USB",
+            "Proprietary",
+            "Other"
+          ]
+        },
+        {
+          "key": "outputs",
+          "label": "Output ports and standards",
+          "kind": "text"
+        },
+        {
+          "key": "watts",
+          "label": "Pass-through power (W)",
+          "kind": "number",
+          "min": 0,
+          "max": 500
+        }
+      ]
+    },
+    {
+      "id": "power-bank",
+      "name": "Power bank",
+      "group": 4,
+      "exact": false,
+      "electronic": true,
+      "safety": true,
+      "guide": "All sides, capacity label, ports and any damage.",
+      "specs": [
+        {
+          "key": "capacity",
+          "label": "Capacity (mAh)",
+          "kind": "number",
+          "min": 100,
+          "max": 100000,
+          "integer": true
+        },
+        {
+          "key": "watts",
+          "label": "Output power (W)",
+          "kind": "number",
+          "min": 1,
+          "max": 500
+        },
+        {
+          "key": "ports",
+          "label": "Ports",
+          "kind": "text"
+        },
+        {
+          "key": "wireless",
+          "label": "Wireless charging",
+          "kind": "select",
+          "options": [
+            "Yes",
+            "No",
+            "Not sure"
+          ]
+        },
+        {
+          "key": "age_months",
+          "label": "Approximate age (months)",
+          "kind": "number",
+          "min": 0,
+          "max": 240,
+          "integer": true
+        },
+        {
+          "key": "battery",
+          "label": "Charging / battery performance",
+          "kind": "select",
+          "options": [
+            "Normal",
+            "Reduced capacity",
+            "Not tested"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "audio",
+      "name": "Earphones, earbuds or headphones",
+      "group": 5,
+      "exact": false,
+      "electronic": true,
+      "safety": true,
+      "guide": "Both earpieces, charging case and included accessories.",
+      "specs": [
+        {
+          "key": "connection",
+          "label": "Connection",
+          "kind": "select",
+          "options": [
+            "Wired",
+            "Wireless"
+          ]
+        },
+        {
+          "key": "bluetooth",
+          "label": "Bluetooth support",
+          "kind": "select",
+          "options": [
+            "4.x",
+            "5.x",
+            "6.x",
+            "Not sure"
+          ],
+          "when": {
+            "key": "connection",
+            "value": "Wireless"
+          }
+        },
+        {
+          "key": "earpieces",
+          "label": "Both earpieces included",
+          "kind": "select",
+          "options": [
+            "Yes",
+            "No",
+            "Single-ear product"
+          ]
+        },
+        {
+          "key": "case",
+          "label": "Charging case included",
+          "kind": "select",
+          "options": [
+            "Yes",
+            "No",
+            "Not applicable"
+          ]
+        },
+        {
+          "key": "audio",
+          "label": "Microphone / audio condition",
+          "kind": "select",
+          "options": [
+            "Working",
+            "Faulty",
+            "Not tested"
+          ]
+        },
+        {
+          "key": "battery",
+          "label": "Battery performance",
+          "kind": "select",
+          "options": [
+            "Normal",
+            "Reduced capacity",
+            "Not tested",
+            "Not applicable"
+          ]
+        },
+        {
+          "key": "anc",
+          "label": "Active noise cancellation",
+          "kind": "select",
+          "options": [
+            "Yes",
+            "No",
+            "Not sure"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "keyboard-case",
+      "name": "Tablet keyboard case or folio",
+      "group": 6,
+      "exact": true,
+      "electronic": true,
+      "safety": false,
+      "guide": "Keyboard, connector, keys and generation marking.",
+      "specs": [
+        {
+          "key": "layout",
+          "label": "Keyboard layout",
+          "kind": "text"
+        },
+        {
+          "key": "pairing",
+          "label": "Pairing / connector",
+          "kind": "select",
+          "options": [
+            "Bluetooth",
+            "USB-C",
+            "Smart connector",
+            "Other"
+          ]
+        },
+        {
+          "key": "trackpad",
+          "label": "Trackpad",
+          "kind": "select",
+          "options": [
+            "Yes",
+            "No",
+            "Not sure"
+          ]
+        },
+        {
+          "key": "backlight",
+          "label": "Backlight",
+          "kind": "select",
+          "options": [
+            "Yes",
+            "No",
+            "Not sure"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stylus",
+      "name": "Stylus or digital pen",
+      "group": 6,
+      "exact": true,
+      "electronic": true,
+      "safety": false,
+      "guide": "Pen body, nib and model / generation marking.",
+      "specs": [
+        {
+          "key": "generation",
+          "label": "Pen generation",
+          "kind": "text"
+        },
+        {
+          "key": "pairing",
+          "label": "Pairing / connector",
+          "kind": "select",
+          "options": [
+            "Bluetooth",
+            "USB-C",
+            "Lightning",
+            "Magnetic",
+            "Passive / capacitive",
+            "Other"
+          ]
+        },
+        {
+          "key": "nib",
+          "label": "Nib condition",
+          "kind": "select",
+          "options": [
+            "Unused",
+            "Good",
+            "Worn",
+            "Needs replacement"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "phone-stand",
+      "name": "Phone mount, holder or stand",
+      "group": 6,
+      "exact": false,
+      "electronic": false,
+      "safety": false,
+      "guide": "Mount, joints and attachment points.",
+      "specs": [
+        {
+          "key": "mount",
+          "label": "Mount / attachment",
+          "kind": "text"
+        },
+        {
+          "key": "size",
+          "label": "Supported size",
+          "kind": "text"
+        },
+        {
+          "key": "material",
+          "label": "Material",
+          "kind": "text"
+        }
+      ]
+    },
+    {
+      "id": "tablet-stand",
+      "name": "Tablet stand or mount",
+      "group": 6,
+      "exact": false,
+      "electronic": false,
+      "safety": false,
+      "guide": "Mount, joints and supported size marking.",
+      "specs": [
+        {
+          "key": "mount",
+          "label": "Mount / attachment",
+          "kind": "text"
+        },
+        {
+          "key": "size",
+          "label": "Supported size",
+          "kind": "text"
+        },
+        {
+          "key": "material",
+          "label": "Material",
+          "kind": "text"
+        }
+      ]
+    },
+    {
+      "id": "strap-adapter",
+      "name": "Watch strap connector or adapter",
+      "group": 0,
+      "exact": true,
+      "electronic": false,
+      "safety": false,
+      "guide": "Both connectors and size marking.",
+      "specs": [
+        {
+          "key": "connector",
+          "label": "Connector system",
+          "kind": "text"
+        },
+        {
+          "key": "size",
+          "label": "Size",
+          "kind": "text"
+        }
+      ]
+    },
+    {
+      "id": "other-phone",
+      "name": "Other phone accessory",
+      "group": 6,
+      "exact": false,
+      "electronic": true,
+      "safety": true,
+      "guide": "Whole item, model markings and any faults.",
+      "specs": [
+        {
+          "key": "purpose",
+          "label": "Accessory purpose",
+          "kind": "text"
+        }
+      ]
+    },
+    {
+      "id": "other-wearable",
+      "name": "Other wearable accessory",
+      "group": 6,
+      "exact": true,
+      "electronic": true,
+      "safety": true,
+      "guide": "Whole item, connector and model markings. Watches themselves use Smartwatches & Wearables.",
+      "specs": [
+        {
+          "key": "purpose",
+          "label": "Accessory purpose",
+          "kind": "text"
+        }
+      ]
+    }
+  ],
+  "brands": [
+    "Apple",
+    "Samsung",
+    "Spigen",
+    "Anker",
+    "Belkin",
+    "boAt",
+    "Noise",
+    "Portronics",
+    "Ambrane",
+    "Zebronics",
+    "Xiaomi",
+    "OnePlus",
+    "Other",
+    "Unbranded"
+  ]
+}

@@ -95,6 +95,10 @@ jobs:
           node --test tests/posting-v212/ci-contract.test.mjs
           node scripts/ci/test-posting-v2.mjs --pglite-module=tests/ratings/node_modules/@electric-sql/pglite/dist/index.js
 
+      - name: Require Accessories V1 SQL and security regressions
+        timeout-minutes: 5
+        run: node scripts/ci/test-accessories-v1.mjs --pglite-module=tests/ratings/node_modules/@electric-sql/pglite/dist/index.js
+
       - name: Require all 115 public search regression checks (pinned PGlite)
         timeout-minutes: 2
         run: |
@@ -223,11 +227,13 @@ jobs:
           npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
       - name: Build checksum-pinned native PostgreSQL 17.6
         run: bash tests/ratings/build-native-pg17.sh
-      - name: Require Posting V2.1.2 native PG17 multi-connection regressions
-        timeout-minutes: 4
+      - name: Require Posting V2.1.2 and Accessories V1 native PG17 multi-connection regressions
+        timeout-minutes: 7
         run: |
           env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
             bash tests/posting-v212/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
+            bash tests/posting-v212/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin" --accessories-v1
 
       - name: Ratings DTO and independent-session PostgreSQL regression
         run: |
