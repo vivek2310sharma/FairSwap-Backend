@@ -21,39 +21,67 @@ function sha(data) {
   return createHash('sha256').update(data).digest('hex');
 }
 
-export function parsePendingDryRun(dryRunOutput, expectedFilename) {
-  const pending = [...new Set(dryRunOutput.match(/\b\d{14}_[A-Za-z0-9_-]+\.sql\b/g) ?? [])];
+export function parsePendingDryRun(dryRunCombinedOutput, expectedFilename) {
+  // Capture all potential migration filename tokens from stdout and stderr combined
+  const pending = [...new Set(dryRunCombinedOutput.match(/\b\d{14}_[A-Za-z0-9_-]+\.sql\b/g) ?? [])];
   if (pending.length !== 1 || pending[0] !== expectedFilename) {
     throw new Error(`REUSABLE_RELEASE_DRY_RUN_MISMATCH: expected exactly [${expectedFilename}], found [${pending.join(', ')}]`);
   }
   return pending;
 }
 
-export function verifyLedgerVersion(ledgerOutput, expectedVersion) {
-  if (!ledgerOutput.includes(expectedVersion)) {
-    throw new Error(`REUSABLE_RELEASE_LEDGER_VERSION_MISSING: ${expectedVersion}`);
+export function verifyLedgerVersion(ledgerOutput, expectedVersion, expectedFilename) {
+  // Verify exact ledger entry match on its own row/line, avoiding partial substring confusion
+  const lines = ledgerOutput.split('\n');
+  const match = lines.some(line => {
+    const tokens = line.trim().split(/[\s|]+/);
+    const hasVersion = tokens.includes(expectedVersion);
+    if (!hasVersion) return false;
+    if (expectedFilename) {
+      // If filename given, ensure the migration filename or root name is also associated on the line
+      const baseName = expectedFilename.replace(/\.sql$/, '');
+      return tokens.some(t => t.includes(expectedVersion) || t.includes(baseName));
+    }
+    return true;
+  });
+  if (!match) {
+    throw new Error(`REUSABLE_RELEASE_EXACT_LEDGER_ENTRY_MISSING: version ${expectedVersion}`);
   }
 }
 
-export async function verifyRemotePostflight(environment, candidateId, psqlUrl, env) {
+export async function verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner) {
   const candidate = getCandidate(candidateId);
   if (candidate.id === 'moderation-analytics-v1') {
-    // Read-only SQL query to verify function attributes and security posture
+    // Read-only SQL query to verify exact function attributes, search_path, volatility, security definer/invoker, and permissions
     const query = `
       BEGIN READ ONLY;
       SET LOCAL statement_timeout = '15s';
       SELECT jsonb_build_object(
-        'has_public_rpc', (
+        'public_signature_exact', (
           SELECT count(*) = 1 FROM pg_proc p
           JOIN pg_namespace n ON n.oid = p.pronamespace
-          WHERE n.nspname = 'public' AND p.proname = 'get_admin_moderation_analytics'
-            AND NOT p.prosecdef AND p.provolatile = 's'
+          JOIN pg_type t ON t.oid = p.prorettype
+          WHERE n.nspname = 'public'
+            AND p.proname = 'get_admin_moderation_analytics'
+            AND NOT p.prosecdef
+            AND p.provolatile = 's'
+            AND t.typname = 'jsonb'
+            AND p.pronargs = 1
+            AND pg_get_function_identity_arguments(p.oid) = 'filter_range text'
+            AND array_to_string(p.proconfig, ',') = 'search_path='
         ),
-        'has_app_security_rpc', (
+        'app_security_signature_exact', (
           SELECT count(*) = 1 FROM pg_proc p
           JOIN pg_namespace n ON n.oid = p.pronamespace
-          WHERE n.nspname = 'app_security' AND p.proname = 'get_admin_moderation_analytics'
-            AND p.prosecdef AND p.provolatile = 's'
+          JOIN pg_type t ON t.oid = p.prorettype
+          WHERE n.nspname = 'app_security'
+            AND p.proname = 'get_admin_moderation_analytics'
+            AND p.prosecdef
+            AND p.provolatile = 's'
+            AND t.typname = 'jsonb'
+            AND p.pronargs = 1
+            AND pg_get_function_identity_arguments(p.oid) = 'p_filter_range text'
+            AND array_to_string(p.proconfig, ',') = 'search_path='
         ),
         'no_public_execute', (
           SELECT has_function_privilege('public', 'public.get_admin_moderation_analytics(text)', 'EXECUTE') = false
@@ -70,20 +98,32 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
       )::text;
       COMMIT;
     `;
-    const res = spawnSync('psql', ['-XqAt', '-v', 'ON_ERROR_STOP=1', '-d', psqlUrl, '-c', query], {env, encoding: 'utf8'});
-    if (res.status !== 0) {
-      throw new Error(`REUSABLE_RELEASE_POSTFLIGHT_SQL_FAILED: ${res.stderr || res.stdout}`);
+    let rawOutput;
+    if (runner) {
+      rawOutput = runner('psql', ['-XqAt', '-v', 'ON_ERROR_STOP=1', '-d', psqlUrl, '-c', query], env);
+    } else {
+      const res = spawnSync('psql', ['-XqAt', '-v', 'ON_ERROR_STOP=1', '-d', psqlUrl, '-c', query], {env, encoding: 'utf8'});
+      if (res.status !== 0) {
+        throw new Error('REUSABLE_RELEASE_POSTFLIGHT_SQL_FAILED');
+      }
+      rawOutput = res.stdout;
     }
-    const check = JSON.parse(res.stdout.trim());
-    if (!check.has_public_rpc || !check.has_app_security_rpc || !check.no_public_execute || !check.no_anon_execute || !check.auth_can_execute) {
-      throw new Error(`REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED: ${JSON.stringify(check)}`);
+
+    let check;
+    try {
+      check = JSON.parse(rawOutput.trim());
+    } catch {
+      throw new Error('REUSABLE_RELEASE_POSTFLIGHT_INVALID_RESPONSE');
+    }
+    if (!check.public_signature_exact || !check.app_security_signature_exact || !check.no_public_execute || !check.no_anon_execute || !check.auth_can_execute) {
+      throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
     }
     return check;
   }
   return {status: 'NO_SPECIFIC_POSTFLIGHT'};
 }
 
-export function releaseReusable({
+export async function releaseReusable({
   environment,
   candidateId,
   context = process.env,
@@ -112,16 +152,16 @@ export function releaseReusable({
     throw new Error('REUSABLE_RELEASE_INVALID_POOLER_HOST');
   }
 
-  const run = (cmd, args, env, input) => {
-    if (runner) return runner(cmd, args, env, input);
+  const run = (cmd, args, env, input, returnCombined = false) => {
+    if (runner) return runner(cmd, args, env, input, returnCombined);
     const res = spawnSync(cmd, args, {env, input, encoding: 'utf8', timeout: 120000});
     if (res.status !== 0) {
       throw new Error(`CMD_FAILED: ${cmd} ${args.join(' ')}: ${res.stderr || res.stdout}`);
     }
-    return res.stdout;
+    return returnCombined ? (res.stdout + '\n' + res.stderr) : res.stdout;
   };
 
-  // Check Supabase CLI version
+  // Check Supabase CLI version (stdout only)
   const cliVer = run('supabase', ['--version'], process.env).trim().split('\n')[0].replace(/^supabase\s*/, '');
   if (!cliVer.includes('2.117.0')) {
     throw new Error(`REUSABLE_RELEASE_CLI_VERSION_MISMATCH: expected 2.117.0, got ${cliVer}`);
@@ -132,7 +172,6 @@ export function releaseReusable({
 
   let status = 'FAIL';
   let dryRunPending = [];
-  let postflightResult = null;
 
   try {
     const certPath = join(tempDir, 'ca.pem');
@@ -178,19 +217,22 @@ export function releaseReusable({
       throw new Error('REUSABLE_RELEASE_DEST_SHA_MISMATCH');
     }
 
-    // 5. Dry run push to verify EXACTLY only this candidate is pending
-    const dryRunOutput = run('supabase', ['db', 'push', '--db-url', psqlUrl, '--dry-run', '--workdir', workspace], env);
+    // 5. Dry run push to verify EXACTLY only this candidate is pending (capturing stdout + stderr)
+    const dryRunOutput = run('supabase', ['db', 'push', '--db-url', psqlUrl, '--dry-run', '--workdir', workspace], env, undefined, true);
     dryRunPending = parsePendingDryRun(dryRunOutput, candidate.filename);
 
     // 6. Apply candidate migration
     run('supabase', ['db', 'push', '--db-url', psqlUrl, '--yes', '--workdir', workspace], env);
 
-    // 7. Re-check migration ledger
+    // 7. Re-check migration ledger with exact match
     const ledgerOutput = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
-    verifyLedgerVersion(ledgerOutput, candidate.version);
+    verifyLedgerVersion(ledgerOutput, candidate.version, candidate.filename);
 
-    // 8. Automated Read-only Postflight Verification
-    postflightResult = verifyRemotePostflight(environment, candidateId, psqlUrl, env);
+    // 8. Automated Read-only Postflight Verification (awaited and validated before receipt)
+    const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner);
+    if (!postflightResult || typeof postflightResult !== 'object') {
+      throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
+    }
 
     status = 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED';
 

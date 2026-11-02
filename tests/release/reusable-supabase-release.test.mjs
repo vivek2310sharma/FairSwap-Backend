@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync, mkdirSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {rootCertificates} from 'node:tls';
+import {X509Certificate} from 'node:crypto';
 import {getCandidate, verifyCandidateSha, CANDIDATES} from '../../scripts/release/reusable-candidates.mjs';
-import {parsePendingDryRun, verifyLedgerVersion, REFS} from '../../scripts/release/reusable-supabase-release.mjs';
+import {parsePendingDryRun, verifyLedgerVersion, releaseReusable, REFS} from '../../scripts/release/reusable-supabase-release.mjs';
 
 test('candidate registry correctly registers moderation-analytics-v1', () => {
   const c = getCandidate('moderation-analytics-v1');
@@ -23,8 +25,9 @@ test('candidate validation rejects unknown candidate', () => {
   }, /REUSABLE_RELEASE_UNKNOWN_CANDIDATE/);
 });
 
-test('parsePendingDryRun passes on exact single matching migration', () => {
+test('parsePendingDryRun passes on exact single matching migration from stdout and stderr combined', () => {
   const sample = `
+    [info] Inspecting remote database...
     Applying migration 20261102000000_admin_moderation_analytics_v1.sql...
     Finished supabase db push.
   `;
@@ -51,22 +54,95 @@ test('parsePendingDryRun fails if no migrations are pending', () => {
   }, /REUSABLE_RELEASE_DRY_RUN_MISMATCH/);
 });
 
-test('verifyLedgerVersion checks presence of version', () => {
+test('verifyLedgerVersion checks exact presence of version line', () => {
   const ledger = `
-    | 20261017205807 | applied |
-    | 20261102000000 | applied |
+    | 20261017205807 | applied | 20261017205807_cat.sql |
+    | 20261102000000 | applied | 20261102000000_admin_moderation_analytics_v1.sql |
   `;
   assert.doesNotThrow(() => {
-    verifyLedgerVersion(ledger, '20261102000000');
+    verifyLedgerVersion(ledger, '20261102000000', '20261102000000_admin_moderation_analytics_v1.sql');
   });
   assert.throws(() => {
-    verifyLedgerVersion(ledger, '20261199999999');
-  }, /REUSABLE_RELEASE_LEDGER_VERSION_MISSING/);
+    verifyLedgerVersion(ledger, '20261199999999', '20261199999999_missing.sql');
+  }, /REUSABLE_RELEASE_EXACT_LEDGER_ENTRY_MISSING/);
+});
+
+test('verifyLedgerVersion rejects substring match on unrelated migration', () => {
+  const ledger = `
+    | 2026110200000011 | applied | other.sql |
+  `;
+  assert.throws(() => {
+    verifyLedgerVersion(ledger, '20261102000000');
+  }, /REUSABLE_RELEASE_EXACT_LEDGER_ENTRY_MISSING/);
 });
 
 test('target environment references are correctly mapped', () => {
   assert.equal(REFS.FairSwapTest, 'wpppxlnbzqynvhpeuavd');
   assert.equal(REFS.FairSwapProd, 'kriuhwppxgxsyyrbjsau');
+});
+
+test('failed postflight blocks receipt generation and throws fail-closed error', async () => {
+  // Synthetic runner simulating push success but postflight failure
+  const mockRunner = (cmd, args) => {
+    if (cmd === 'supabase' && args.includes('--version')) return '2.117.0\n';
+    if (cmd === 'supabase' && args.includes('init')) return '';
+    if (cmd === 'supabase' && args.includes('link')) {
+      const workdirIdx = args.indexOf('--workdir');
+      const ws = args[workdirIdx + 1];
+      mkdirSync(join(ws, 'supabase/.temp'), {recursive: true});
+      writeFileSync(join(ws, 'supabase/.temp/project-ref'), 'wpppxlnbzqynvhpeuavd\n');
+      return '';
+    }
+    if (cmd === 'supabase' && args.includes('migration') && args.includes('fetch')) {
+      const workdirIdx = args.indexOf('--workdir');
+      const ws = args[workdirIdx + 1];
+      mkdirSync(join(ws, 'supabase/migrations'), {recursive: true});
+      for (let i = 1; i <= 55; i++) {
+        writeFileSync(join(ws, 'supabase/migrations', `202601010000${String(i).padStart(2, '0')}_test.sql`), '-- test');
+      }
+      return '';
+    }
+    if (cmd === 'supabase' && args.includes('db') && args.includes('push') && args.includes('--dry-run')) {
+      return 'Applying migration 20261102000000_admin_moderation_analytics_v1.sql...';
+    }
+    if (cmd === 'supabase' && args.includes('db') && args.includes('push')) return '';
+    if (cmd === 'supabase' && args.includes('migration') && args.includes('list')) {
+      return '| 20261102000000 | applied | 20261102000000_admin_moderation_analytics_v1.sql |';
+    }
+    if (cmd === 'psql') {
+      // Simulate missing security definer or missing permissions
+      return JSON.stringify({
+        public_signature_exact: true,
+        app_security_signature_exact: false, // FAILURE
+        no_public_execute: true,
+        no_anon_execute: true,
+        auth_can_execute: true
+      });
+    }
+    return '';
+  };
+
+  const validPem = rootCertificates.find(p => {
+    const c = new X509Certificate(p);
+    return c.ca && Date.parse(c.validFrom) <= Date.now() && Date.parse(c.validTo) > Date.now();
+  });
+
+  const sampleEnv = {
+    SUPABASE_ACCESS_TOKEN: 'sbp_mock_token',
+    CHAT_DATABASE_PASSWORD: 'mock_password',
+    CHAT_DB_POOLER_HOST: 'aws-0-ap-south-1.pooler.supabase.com',
+    CHAT_DB_SSL_ROOT_CERT_PEM: validPem
+  };
+
+  await assert.rejects(async () => {
+    await releaseReusable({
+      environment: 'FairSwapTest',
+      candidateId: 'moderation-analytics-v1',
+      context: sampleEnv,
+      runner: mockRunner,
+      receiptDir: '/tmp/test-receipts-never-written'
+    });
+  }, /REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED/);
 });
 
 test('workflow syntax contains required security checks', () => {
