@@ -54,11 +54,20 @@ export function parsePendingDryRun(dryRunCombinedOutput, expectedFilename) {
   return pending;
 }
 
+function unwrapBackticks(str) {
+  if (str.startsWith('`') && str.endsWith('`') && str.length >= 2) {
+    // Balanced backticks only
+    return str.slice(1, -1);
+  }
+  return str;
+}
+
 export function verifyLedgerVersion(ledgerOutput, expectedVersion) {
   // Require a recognized Supabase CLI table header: LOCAL | REMOTE | TIME (UTC)
+  // Accepts optional balanced backticks on header tokens or cell tokens
   const lines = ledgerOutput.split('\n');
   const headerIdx = lines.findIndex(line => {
-    const parts = line.split('|').map(s => s.trim().toUpperCase());
+    const parts = line.split('|').map(s => unwrapBackticks(s.trim()).toUpperCase());
     return parts.length >= 3 && parts[0] === 'LOCAL' && parts[1] === 'REMOTE' && parts[2].startsWith('TIME');
   });
 
@@ -77,8 +86,18 @@ export function verifyLedgerVersion(ledgerOutput, expectedVersion) {
     if (cols.length < 3) {
       continue;
     }
-    const localCol = cols[0];
-    const remoteCol = cols[1];
+    const rawLocal = cols[0];
+    const rawRemote = cols[1];
+
+    // Check for unbalanced backticks (e.g. `20261102000000 or 20261102000000`)
+    const localHasUnbalanced = (rawLocal.startsWith('`') !== rawLocal.endsWith('`')) || (rawLocal.match(/`/g)?.length !== 2 && rawLocal.includes('`'));
+    const remoteHasUnbalanced = (rawRemote.startsWith('`') !== rawRemote.endsWith('`')) || (rawRemote.match(/`/g)?.length !== 2 && rawRemote.includes('`'));
+    if (localHasUnbalanced || remoteHasUnbalanced) {
+      throw new Error(`REUSABLE_RELEASE_LEDGER_MALFORMED_ROW: unbalanced backticks in row "${rawLine}"`);
+    }
+
+    const localCol = unwrapBackticks(rawLocal);
+    const remoteCol = unwrapBackticks(rawRemote);
 
     const localIsCandidate = (localCol === expectedVersion);
     const remoteIsCandidate = (remoteCol === expectedVersion);
@@ -275,36 +294,60 @@ export async function releaseReusable({
       throw new Error(`REUSABLE_RELEASE_UNEXPECTED_HISTORY_COUNT: ${fetchedFiles.length}`);
     }
 
-    // 4. Copy candidate migration into workspace
-    const destMigration = join(workspace, 'supabase/migrations', candidate.filename);
-    copyFileSync(fullPath, destMigration);
-    const destSha = sha(readFileSync(destMigration));
-    if (destSha !== candidateSha) {
-      throw new Error('REUSABLE_RELEASE_DEST_SHA_MISMATCH');
+    // Check if candidate migration is already recorded in remote ledger
+    phase = 'initial_ledger_check';
+    const initialLedger = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
+    let isAlreadyApplied = false;
+    try {
+      verifyLedgerVersion(initialLedger, candidate.version);
+      isAlreadyApplied = true;
+    } catch {
+      isAlreadyApplied = false;
     }
 
-    // 5. Dry run push to verify EXACTLY only this candidate is pending (capturing stdout + stderr)
-    phase = 'dry_run';
-    const dryRunOutput = run('supabase', ['db', 'push', '--db-url', psqlUrl, '--dry-run', '--workdir', workspace], env, undefined, true);
-    dryRunPending = parsePendingDryRun(dryRunOutput, candidate.filename);
+    if (environment === 'FairSwapTest' && isAlreadyApplied) {
+      // Support resumption for FairSwapTest if already applied: verify ledger, exact SQL hash, and postflight
+      phase = 'postflight';
+      const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner);
+      if (!postflightResult || typeof postflightResult !== 'object') {
+        throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
+      }
 
-    // 6. Apply candidate migration
-    phase = 'apply';
-    run('supabase', ['db', 'push', '--db-url', psqlUrl, '--yes', '--workdir', workspace], env);
+      status = 'ALREADY_APPLIED_VERIFIED';
+      dryRunPending = [];
+    } else {
+      // Standard path: candidate-only dry run, migration apply, ledger verification and postflight
+        // 4. Copy candidate migration into workspace
+      const destMigration = join(workspace, 'supabase/migrations', candidate.filename);
+      copyFileSync(fullPath, destMigration);
+      const destSha = sha(readFileSync(destMigration));
+      if (destSha !== candidateSha) {
+        throw new Error('REUSABLE_RELEASE_DEST_SHA_MISMATCH');
+      }
 
-    // 7. Re-check migration ledger with exact match
-    phase = 'ledger';
-    const ledgerOutput = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
-    verifyLedgerVersion(ledgerOutput, candidate.version);
+      // 5. Dry run push to verify EXACTLY only this candidate is pending (capturing stdout + stderr)
+      phase = 'dry_run';
+      const dryRunOutput = run('supabase', ['db', 'push', '--db-url', psqlUrl, '--dry-run', '--workdir', workspace], env, undefined, true);
+      dryRunPending = parsePendingDryRun(dryRunOutput, candidate.filename);
 
-    // 8. Automated Read-only Postflight Verification (awaited and validated before receipt)
-    phase = 'postflight';
-    const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner);
-    if (!postflightResult || typeof postflightResult !== 'object') {
-      throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
+      // 6. Apply candidate migration
+      phase = 'apply';
+      run('supabase', ['db', 'push', '--db-url', psqlUrl, '--yes', '--workdir', workspace], env);
+
+      // 7. Re-check migration ledger with exact match
+      phase = 'ledger';
+      const ledgerOutput = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
+      verifyLedgerVersion(ledgerOutput, candidate.version);
+
+      // 8. Automated Read-only Postflight Verification (awaited and validated before receipt)
+      phase = 'postflight';
+      const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner);
+      if (!postflightResult || typeof postflightResult !== 'object') {
+        throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
+      }
+
+      status = 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED';
     }
-
-    status = 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED';
 
     const receipt = {
       environment,
