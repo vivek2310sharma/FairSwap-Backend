@@ -66,6 +66,10 @@ LOCAL           | REMOTE          | TIME (UTC)
     verifyLedgerVersion(realisticCliOutput, '20261102000000');
   });
 
+  const backtickCliOutput = 'LOCAL | REMOTE | TIME (UTC)\n`20261102000000` | `20261102000000` | 2026-11-02 00:00:00\n';
+  assert.doesNotThrow(() => verifyLedgerVersion(backtickCliOutput, '20261102000000'));
+  const malformedBacktickCliOutput = 'LOCAL | REMOTE | TIME (UTC)\n`20261102000000 | 20261102000000 | 2026-11-02 00:00:00\n';
+  assert.throws(() => verifyLedgerVersion(malformedBacktickCliOutput, '20261102000000'), /REUSABLE_RELEASE_LEDGER_MALFORMED_ROW/);
   // Missing headers fails closed
   const missingHeaderOutput = `
 20261017205807  | 20261017205807  | 2026-10-17 20:58:07
