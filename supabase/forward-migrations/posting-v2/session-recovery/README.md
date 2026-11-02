@@ -1,3 +1,48 @@
+# V2.1.2 final pass: native concurrency and product reachability
+
+2 November 2026. The existing V2.1.2 migration, RLS/grants, actor checks and RPC implementation are byte-unchanged. This delta adds mandatory native tests to the existing CI workflow and completes the Web caller for the already-supported empty/claim protocol.
+
+## Native PostgreSQL 17.6
+
+```sh
+bash tests/posting-v212/run-native.sh /absolute/path/to/postgresql-17.6/bin
+node scripts/ci/test-posting-v2.mjs '../FairSwap-Web'
+node --test tests/posting-v212/ci-contract.test.mjs
+```
+
+The runner accepts one absolute binary directory, verifies the existing checksum-pinned PG17 version, creates a fresh private Unix-socket cluster under /tmp, disables TCP, and always stops that cluster. The Node adapter checks a mode-0700 fixture marker, PG major, data_directory, empty listeners and fixture user before setup. It never accepts an external URL/host/password, reads application env files, or uses the laptop-prohibited Docker/Supabase database runner. PostgreSQL binaries are temporary/test-only; no dependency pin or system installation changes.
+
+Thirteen actual multi-connection cases use independent psql server backends and a separate observer. Tests hold transactions open, observe `pg_stat_activity` lock waits and distinct backend PIDs, then explicitly commit/rollback. Coverage: two concurrent creations and oldest selection; same-ID retry; one eligible slot/one winner; claim-before-rotation; rotation-before-claim; rollback before waiting claim; empty-nonce idempotency; independent sellers; RPC/RLS ownership; upload-row-lock candidate recheck; media completion/object inventory; failed replacement atomicity; meaningful/unknown/removed-media/finalizing preservation. No timing-only Promise.all/PGlite concurrency claim.
+
+Fixture bootstrapping is factored into `scripts/ci/posting-v2-fixture.mjs`; its supporting auth/status/storage schemas are the same explicit substitutes used by the original SQL harness. Both suites install the real original foundation and unchanged V2.1.2 candidate. The existing 57 checks remain. The harness now optionally imports the already-pinned Ratings PGlite module for Backend-only CI, without a Web checkout or new dependency.
+
+## Existing workflow integration
+
+`.github/workflows/backend-ci.yml` only:
+
+- Existing `unit-integrity`: mandatory Posting fixture/CI-contract tests after the frozen Ratings dependency install.
+- Existing `ratings-native-pg17`: mandatory native Posting step after the existing checksum-pinned PG17 build. `backend-ci-success` already requires that job; its gate is unchanged. No conditional skip, continue-on-error or failure masking is added.
+
+Local CI contract tests prove these source links and preserve the existing aggregate/other jobs. Existing verification/release CI contracts are rerun. GitHub Actions itself is NOT RUN/installed by this local task; ChatGPT handles integration. No new workflow, job, secret, application env variable, package or migration.
+
+## Real Web use without unsafe reclassification
+
+The old Web `create` choice was correct for selected retry blobs but left `create_empty` unreachable. The completion uses the existing Add photos action only when every local draft field is pristine. It starts guarded preparation without awaiting before the native file chooser. Cancelled preparation can therefore yield a safely rotatable blank in real use; page visits still allocate nothing. Meaningful/recovered/no-photo-but-edited drafts bypass empty preparation and remain protected.
+
+HTTP `create_empty` first reuses/protects an existing owned real UUID, otherwise invokes the existing fresh-ID RPC. The unclaimed server UUID is kept in memory and never assigned to local work or persisted. Upload confirms `claim_draft` and a true protection marker, then saves the same version-2 recovery structure under that UUID before media use. A new transport-only `acquire_draft` mode uses owner-RLS metadata to prioritize a real draft ID, resolve the seller's prior preparation nonce after lost response/reload, or fall back to protected `create`. No SQL operation/signature changes. Legacy default POST remains compatible, Zod strict, policy/origin/account/auth checks unchanged.
+
+Native tests and real browser flows verify the protocol. Unknown/legacy sessions remain protected: no bulk certification or zero-photo heuristic. All protected/no-safe-victim cases retain the understandable owner-confirmed recovery path. A rotated prepared ID fails claim before it can receive local work/media, and retry blobs/details are retained for explicit recovery.
+
+## Release/limits
+
+This small delta targets the current V2.1.2 filesystem candidate, not a verified remote SHA. No Git commands or deployments. All applied and candidate migration bytes remain; require the underlying V2.1.2 migration first in a ledger-matched FairSwapTest release, compatible Web/CI, then automated authenticated hosted Test acceptance. Production remains blocked on hosted acceptance. Native local SQL uses fixture auth/storage helpers and is not real Supabase JWT/Storage/provider acceptance. No manual/exploratory or owner predeployment testing is requested.
+
+Rollback the scoped Web/CI delta with a revert/previous deployment while retaining metadata, photos, drafts, RLS and migration history. No schema rollback, stale-ID resurrection or protection downgrade. Owner Production checks after authorized selective release use automated authenticated session/upload/recovery/submission, health/error evidence.
+
+---
+
+## Prior candidate record (superseded above for native coverage and Web reachability)
+
 # Posting V2.1.2 lifecycle and automatic rotation
 
 2 November 2026. Owner-approved automatic-rotation amendment included. Canonical forward candidate, NOT deployed. Supabase CLI 2.117.0 generated `20261101234604_posting_v212_session_recovery.sql` locally at UTC 1 November. This still-unapplied candidate was extended; no previously applied migration or original foundation/activation was edited. The root 58-file immutable manifest remains unchanged.

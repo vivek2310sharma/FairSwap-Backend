@@ -89,6 +89,12 @@ jobs:
             node tests/ratings/run.mjs
           ./node_modules/.bin/tsc --noEmit --strict --skipLibCheck --target ES2022 --moduleResolution Bundler --module ESNext src/lib/ratings/contract.ts src/lib/ratings/score.ts
 
+      - name: Require Posting V2.1.2 fixture and CI contract regressions
+        timeout-minutes: 2
+        run: |
+          node --test tests/posting-v212/ci-contract.test.mjs
+          node scripts/ci/test-posting-v2.mjs --pglite-module=tests/ratings/node_modules/@electric-sql/pglite/dist/index.js
+
       - name: Require all 115 public search regression checks (pinned PGlite)
         timeout-minutes: 2
         run: |
@@ -217,6 +223,12 @@ jobs:
           npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
       - name: Build checksum-pinned native PostgreSQL 17.6
         run: bash tests/ratings/build-native-pg17.sh
+      - name: Require Posting V2.1.2 native PG17 multi-connection regressions
+        timeout-minutes: 4
+        run: |
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
+            bash tests/posting-v212/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+
       - name: Ratings DTO and independent-session PostgreSQL regression
         run: |
           node --experimental-strip-types --test tests/ratings/contract.test.mjs
