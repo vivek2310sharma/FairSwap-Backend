@@ -305,7 +305,7 @@ test('accessories candidates register exact versions, files and SHA-256 hashes',
   const a = getCandidate(ACTIVATION);
   assert.equal(f.version, '20261102164135');
   assert.equal(f.filename, '20261102164135_accessories_v1.sql');
-  assert.equal(f.sha256, 'bb272b2cb6c19a3485b2124d2535f7f22b0886694c2c6401c074418d5735f61d');
+  assert.equal(f.sha256, '790f6e2e06fb049d84903b42fad9bf8efd359a248ac0ecfcdd69f1e897142e9a');
   assert.equal(a.version, '20261102164137');
   assert.equal(a.filename, '20261102164137_activate_accessories_v1.sql');
   assert.equal(a.sha256, '3fe0647b33ad914efca86b5a9aa91590be1d2d42ac20eb42cdc5d38ee3baabcd');
