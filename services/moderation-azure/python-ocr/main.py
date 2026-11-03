@@ -1,4 +1,5 @@
 import os
+import sys
 import hashlib
 import requests
 import cv2
@@ -19,12 +20,34 @@ if not ALLOWED_STORAGE_HOST:
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
-app = FastAPI(title="FairSwap Moderation Python OCR Worker")
+# Model directory configuration: Fail closed if local model files are absent
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.getenv("MODELS_DIR", os.path.join(BASE_DIR, "models"))
+DET_MODEL_DIR = os.path.join(MODELS_DIR, "en_PP-OCRv3_det_infer")
+REC_MODEL_DIR = os.path.join(MODELS_DIR, "en_PP-OCRv3_rec_infer")
+CLS_MODEL_DIR = os.path.join(MODELS_DIR, "ch_ppocr_mobile_v2.0_cls_infer")
 
-# V1 English-only PaddleOCR engine
-ocr_engine = PaddleOCR(use_angle_cls=True, lang="en")
+for model_path in [DET_MODEL_DIR, REC_MODEL_DIR, CLS_MODEL_DIR]:
+    pdmodel = os.path.join(model_path, "inference.pdmodel")
+    pdiparams = os.path.join(model_path, "inference.pdiparams")
+    if not os.path.isfile(pdmodel) or not os.path.isfile(pdiparams):
+        raise RuntimeError(f"FATAL: Required PaddleOCR model files missing in {model_path}. Offline startup failed.")
+
+# Initialize PaddleOCR with explicit local directories to prevent runtime downloads
+ocr_engine = PaddleOCR(
+    use_angle_cls=True,
+    lang="en",
+    det_model_dir=DET_MODEL_DIR,
+    rec_model_dir=REC_MODEL_DIR,
+    cls_model_dir=CLS_MODEL_DIR,
+    use_gpu=False,
+    show_log=False
+)
+
 # Dedicated OpenCV QR code detector
 qr_detector = cv2.QRCodeDetector()
+
+app = FastAPI(title="FairSwap Moderation Python OCR Worker")
 
 class MediaItem(BaseModel):
     id: str

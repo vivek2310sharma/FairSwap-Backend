@@ -140,6 +140,14 @@ jobs:
           done
           docker rm -f test-ocr
 
+      # Test Python OCR offline execution (run smoke test in container isolated with no network)
+      - name: Smoke test Python OCR offline model inference
+        run: |
+          docker run --rm --network none \
+            -e MODERATION_SECRET="test-secret-min-16-chars" \
+            -e ALLOWED_STORAGE_HOST="test.supabase.co" \
+            python-ocr:local-test python test_smoke.py
+
       # 5. Execute pgTAP behavioural SQL security tests via disposable PostgreSQL container with mounted repo
       - name: Run pgTAP behavioural SQL security tests
         run: |

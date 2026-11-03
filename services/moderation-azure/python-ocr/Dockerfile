@@ -5,11 +5,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     libgomp1 \
+    curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY main.py ./
+
+COPY scripts/download-models.sh ./scripts/download-models.sh
+RUN chmod +x ./scripts/download-models.sh && ./scripts/download-models.sh models
+
+COPY main.py test_smoke.py ./
 
 RUN useradd -m appuser && chown -R appuser /app
 USER appuser
