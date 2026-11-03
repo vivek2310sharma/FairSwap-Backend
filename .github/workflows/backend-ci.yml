@@ -99,6 +99,12 @@ jobs:
         timeout-minutes: 5
         run: node scripts/ci/test-accessories-v1.mjs --pglite-module=tests/ratings/node_modules/@electric-sql/pglite/dist/index.js
 
+      - name: Require Tablets V1 SQL and protected phone wrapper regressions
+        timeout-minutes: 6
+        run: |
+          node scripts/ci/test-tablets-v1.mjs tests/ratings --with-accessories
+          node scripts/ci/test-tablet-phone-wrapper.mjs tests/ratings
+
       - name: Require all 115 public search regression checks (pinned PGlite)
         timeout-minutes: 2
         run: |
@@ -234,6 +240,8 @@ jobs:
             bash tests/posting-v212/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
           env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
             bash tests/posting-v212/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin" --accessories-v1
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
+            bash tests/tablets-v1/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
 
       - name: Ratings DTO and independent-session PostgreSQL regression
         run: |
