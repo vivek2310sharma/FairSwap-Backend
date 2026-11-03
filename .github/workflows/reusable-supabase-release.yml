@@ -10,6 +10,8 @@ on:
         type: choice
         options:
           - moderation-analytics-v1
+          - accessories-v1-foundation
+          - accessories-v1-activation
       approved_sha:
         description: 'Exact reviewed commit SHA on main'
         required: true
@@ -17,6 +19,34 @@ on:
       expected_candidate_sha256:
         description: 'Exact reviewed SHA-256 of candidate migration SQL'
         required: true
+        type: string
+      target:
+        description: 'Stage: test (moderation also auto-promotes), or production (Accessories only, after Test evidence)'
+        required: true
+        default: 'test'
+        type: choice
+        options:
+          - test
+          - production
+      web_staging_sha:
+        description: 'Accessories: verified matching Web staging commit SHA'
+        required: false
+        type: string
+      web_production_sha:
+        description: 'Accessories activation in Production: deployed Web production commit SHA'
+        required: false
+        type: string
+      test_foundation_run_id:
+        description: 'Accessories: successful Test foundation run ID'
+        required: false
+        type: string
+      test_activation_run_id:
+        description: 'Accessories: successful Test activation run ID'
+        required: false
+        type: string
+      prod_foundation_run_id:
+        description: 'Accessories activation in Production: successful Production foundation run ID'
+        required: false
         type: string
 
 permissions:
@@ -29,6 +59,8 @@ concurrency:
 
 jobs:
   verify:
+    outputs:
+      auto_promote: ${{ steps.plan.outputs.auto_promote }}
     if: >-
       github.repository == 'vivek2310sharma/FairSwap-Backend' &&
       github.ref == 'refs/heads/main' &&
@@ -59,7 +91,9 @@ jobs:
       - name: Verify 58 historical baseline migrations
         run: node scripts/verify-migration-manifest.mjs
 
-      - name: Run pipeline unit & release guard tests
+      - name: Run pipeline unit & release guard tests (real PostgreSQL preflight required)
+        env:
+          REQUIRE_REAL_PG: '1'
         run: node --test tests/release/reusable-supabase-release.test.mjs
 
       - name: Verify candidate registry and candidate SQL SHA-256
@@ -86,9 +120,35 @@ jobs:
           await requireCi(process.env);
           NODE
 
+      - name: Plan stage and require Web and earlier-stage evidence
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ inputs.candidate }}
+          TARGET: ${{ inputs.target }}
+          WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
+          WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
+          TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
+          TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
+          PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {appendFileSync} from 'node:fs';
+          import {planDispatch} from './scripts/release/reusable-candidates.mjs';
+          import {requireStageEvidence} from './scripts/release/accessories-v1-release.mjs';
+          const e = process.env;
+          const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
+            web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
+            test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
+            prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID
+          }});
+          await requireStageEvidence(plan.priorRuns, e);
+          appendFileSync(e.GITHUB_OUTPUT, `auto_promote=${plan.candidate.autoPromote === true}\n`);
+          NODE
+
   test:
     needs: verify
-    if: ${{ needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
+    if: ${{ needs.verify.result == 'success' && inputs.target == 'test' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
     environment: FairSwapTest
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -111,6 +171,29 @@ jobs:
           node-version: '24.15.0'
           check-latest: false
 
+      - name: Verify deployed Web release before any database change (fail closed)
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+          TARGET: ${{ inputs.target }}
+          WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
+          WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
+          TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
+          TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
+          PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
+          WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {planDispatch} from './scripts/release/reusable-candidates.mjs';
+          import {verifyWebDeployments} from './scripts/release/accessories-v1-release.mjs';
+          const e = process.env;
+          const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
+            web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
+            test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
+            prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID
+          }});
+          await verifyWebDeployments(plan, e);
+          NODE
+
       - name: Install psql client
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
 
@@ -125,6 +208,11 @@ jobs:
           CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
           CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.CHAT_DB_SSL_ROOT_CERT_PEM }}
           CHAT_DB_POOLER_HOST: ${{ vars.CHAT_DB_POOLER_HOST }}
+          WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
+          WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
+          TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
+          TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
+          PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
         run: |
           node --input-type=module - <<'NODE'
           import {releaseReusable} from './scripts/release/reusable-supabase-release.mjs';
@@ -181,8 +269,13 @@ jobs:
           printf '%s  %s-fairswaptest.json\n' "$EXPECTED_SHA" "$CANDIDATE" | sha256sum --check --status
 
   production:
-    needs: [verify_test, test]
-    if: ${{ needs.verify_test.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
+    # Moderation: automatic after verified Test (unchanged). Accessories: only a dedicated target=production
+    # dispatch, whose Web and earlier-stage Test/Production evidence was already enforced by the verify job.
+    needs: [verify, test, verify_test]
+    if: >-
+      ${{ always() && needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
+      ((inputs.target == 'test' && needs.verify.outputs.auto_promote == 'true' && needs.test.result == 'success' && needs.verify_test.result == 'success') ||
+      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped')) }}
     environment: FairSwapProd
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -202,6 +295,29 @@ jobs:
           node-version: '24.15.0'
           check-latest: false
 
+      - name: Verify deployed Web release before any database change (fail closed)
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+          TARGET: ${{ inputs.target }}
+          WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
+          WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
+          TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
+          TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
+          PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
+          WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {planDispatch} from './scripts/release/reusable-candidates.mjs';
+          import {verifyWebDeployments} from './scripts/release/accessories-v1-release.mjs';
+          const e = process.env;
+          const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
+            web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
+            test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
+            prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID
+          }});
+          await verifyWebDeployments(plan, e);
+          NODE
+
       - name: Install psql client
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
 
@@ -216,6 +332,11 @@ jobs:
           CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
           CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.CHAT_DB_SSL_ROOT_CERT_PEM }}
           CHAT_DB_POOLER_HOST: ${{ vars.CHAT_DB_POOLER_HOST }}
+          WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
+          WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
+          TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
+          TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
+          PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
         run: |
           node --input-type=module - <<'NODE'
           import {releaseReusable} from './scripts/release/reusable-supabase-release.mjs';
