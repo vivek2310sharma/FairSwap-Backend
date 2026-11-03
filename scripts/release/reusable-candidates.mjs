@@ -18,7 +18,7 @@ export const CANDIDATES = Object.freeze({
     version: '20261102164135',
     filename: '20261102164135_accessories_v1.sql',
     path: 'supabase/forward-migrations/accessories-v1/foundation/supabase/migrations/20261102164135_accessories_v1.sql',
-    sha256: 'bb272b2cb6c19a3485b2124d2535f7f22b0886694c2c6401c074418d5735f61d',
+    sha256: '790f6e2e06fb049d84903b42fad9bf8efd359a248ac0ecfcdd69f1e897142e9a',
     description: 'Accessories V1 foundation (category installed disabled)',
     strict: true,
     stage: 'foundation',
