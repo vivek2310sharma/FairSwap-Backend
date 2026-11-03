@@ -243,6 +243,13 @@ jobs:
           env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
             bash tests/tablets-v1/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
 
+      - name: Require Accessories V1 release guards on native PostgreSQL 17
+        timeout-minutes: 4
+        env:
+          REQUIRE_REAL_PG: '1'
+          FSW_TEST_PG_BIN: ${{ github.workspace }}/artifacts/ratings/pg17-source/install/bin
+        run: node --test tests/release/reusable-supabase-release.test.mjs
+
       - name: Ratings DTO and independent-session PostgreSQL regression
         run: |
           node --experimental-strip-types --test tests/ratings/contract.test.mjs
