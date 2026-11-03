@@ -1,0 +1,78 @@
+name: Admin moderation analytics disposable DB security gate
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/forward-migrations/moderation-analytics-v1/**'
+      - 'scripts/ci/run-moderation-analytics-db.sh'
+      - 'scripts/ci/run-moderation-analytics-tests.mjs'
+      - 'scripts/ci/toolchain.json'
+      - '.github/workflows/admin-moderation-analytics-db-tests.yml'
+      - '.github/workflows/reusable-supabase-release.yml'
+      - 'scripts/release/reusable-candidates.mjs'
+      - 'scripts/release/reusable-supabase-release.mjs'
+      - 'tests/release/reusable-supabase-release.test.mjs'
+  push:
+    branches:
+      - feature/backend-admin-moderation-analytics-v1
+      - feature/backend-reusable-supabase-release
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: admin-moderation-analytics-db-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  admin-moderation-analytics-db:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.15.0'
+          check-latest: false
+
+      - name: Install psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Fail closed if hosted Supabase/database settings are present
+        run: |
+          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD SUPABASE_SERVICE_ROLE_KEY SUPABASE_SERVICE_KEY \
+                   SUPABASE_PROJECT_REF SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_JWT_SECRET NEXT_PUBLIC_SUPABASE_URL \
+                   DATABASE_URL POSTGRES_URL PGHOST PGHOSTADDR PGPASSWORD PGSERVICE PGSERVICEFILE \
+                   MODERATION_ANALYTICS_DB_URL; do
+            if [[ -n "${!v:-}" ]]; then echo "FAIL: $v must not be set in this job" >&2; exit 1; fi
+          done
+
+      - name: Verify immutable 58-migration baseline manifest
+        run: node scripts/verify-migration-manifest.mjs
+
+      - name: Reusable release safety unit and guard tests
+        run: node --test tests/release/reusable-supabase-release.test.mjs
+
+      - name: Shell syntax, allowlist self-test and static scan
+        run: |
+          bash -n scripts/ci/run-moderation-analytics-db.sh
+          node --check scripts/ci/run-moderation-analytics-tests.mjs
+          node --check scripts/release/reusable-candidates.mjs
+          node --check scripts/release/reusable-supabase-release.mjs
+          node scripts/ci/run-moderation-analytics-tests.mjs --self-test
+          node scripts/ci/run-moderation-analytics-tests.mjs --static
+
+      - name: Run pgTAP on a throwaway loopback-only Supabase database
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" RUNNER_TEMP="$RUNNER_TEMP" \
+            timeout --signal=TERM --kill-after=30s 25m bash scripts/ci/run-moderation-analytics-db.sh

@@ -71,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_listing_scan_receipts_lookup
 ALTER TABLE app_security.listing_moderation_scan_receipts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_security.listing_moderation_scan_receipts FORCE ROW LEVEL SECURITY;
 REVOKE ALL ON app_security.listing_moderation_scan_receipts FROM PUBLIC, anon, authenticated;
-GRANT SELECT, INSERT, UPDATE ON app_security.listing_moderation_scan_receipts TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app_security.listing_moderation_scan_receipts TO service_role;
 
 -- 3. Register Scan Receipt
 CREATE OR REPLACE FUNCTION app_security.register_moderation_scan_receipt(
@@ -328,6 +328,9 @@ DECLARE
   v_m_sha text;
   v_db_m_path text;
   v_recorded_sha text;
+  v_category_record public.categories%ROWTYPE;
+  v_category_eligible boolean := false;
+  v_is_experimental_family boolean := false;
 BEGIN
   -- Kill switch check (authoritative database switch + Vault veto)
   SELECT COALESCE(
@@ -481,55 +484,53 @@ BEGIN
     END IF;
   END IF;
 
-  -- 8. Environment-specific experimental-category guards (Staging / Step 1Q)
-  -- If app_security.test_submission_policies exists, check if category belongs to experimental family (cars, two-wheelers, property)
-  IF to_regclass('app_security.test_submission_policies') IS NOT NULL THEN
-    IF EXISTS (
-      SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'car_category_contracts'
-    ) AND (
-      EXISTS (SELECT 1 FROM public.car_category_contracts WHERE category_id = v_listing.category_id)
-      OR EXISTS (SELECT 1 FROM public.vehicle_category_contracts WHERE category_id = v_listing.category_id)
-      OR EXISTS (SELECT 1 FROM public.property_category_contracts WHERE category_id = v_listing.category_id)
-      OR EXISTS (SELECT 1 FROM public.listing_car_contexts WHERE listing_id = v_listing.id)
-      OR EXISTS (SELECT 1 FROM public.listing_vehicle_contexts WHERE listing_id = v_listing.id)
-      OR EXISTS (SELECT 1 FROM public.listing_property_contexts WHERE listing_id = v_listing.id)
-    ) THEN
-      -- Experimental category detected: publication is strictly blocked and routed to admin
-      IF p_outcome = 'no_review_flags' THEN
-        v_decision := 'routed_to_admin'::public.moderation_decision_state;
-        UPDATE public.listing_moderation_requests
-        SET status = 'completed'::public.moderation_request_status, updated_at = v_now
-        WHERE id = p_request_id;
+  -- 8. Environment-specific experimental-category and unapproved-family guards
+  -- Route vehicles, property, and any unapproved family to admin review across all environments.
+  -- Only explicitly approved active goods categories can proceed to automatic approval.
+  IF (
+    -- Category contracts or contexts for cars, two-wheelers, property
+    (to_regclass('public.car_category_contracts') IS NOT NULL AND EXISTS (SELECT 1 FROM public.car_category_contracts WHERE category_id = v_listing.category_id))
+    OR (to_regclass('public.vehicle_category_contracts') IS NOT NULL AND EXISTS (SELECT 1 FROM public.vehicle_category_contracts WHERE category_id = v_listing.category_id))
+    OR (to_regclass('public.property_category_contracts') IS NOT NULL AND EXISTS (SELECT 1 FROM public.property_category_contracts WHERE category_id = v_listing.category_id))
+    OR (to_regclass('public.listing_car_contexts') IS NOT NULL AND EXISTS (SELECT 1 FROM public.listing_car_contexts WHERE listing_id = v_listing.id))
+    OR (to_regclass('public.listing_vehicle_contexts') IS NOT NULL AND EXISTS (SELECT 1 FROM public.listing_vehicle_contexts WHERE listing_id = v_listing.id))
+    OR (to_regclass('public.listing_property_contexts') IS NOT NULL AND EXISTS (SELECT 1 FROM public.listing_property_contexts WHERE listing_id = v_listing.id))
+  ) THEN
+    -- Experimental category detected: publication is strictly blocked and routed to admin
+    IF p_outcome = 'no_review_flags' THEN
+      v_decision := 'routed_to_admin'::public.moderation_decision_state;
+      UPDATE public.listing_moderation_requests
+      SET status = 'completed'::public.moderation_request_status, updated_at = v_now
+      WHERE id = p_request_id;
 
-        INSERT INTO public.listing_moderation_results (
-          request_id, listing_id, listing_revision, generation_id, outcome,
-          ruleset_version, scope, completed_rules, failed_rules, flags, errors, decision
-        ) VALUES (
-          p_request_id, v_listing.id, v_listing.revision, v_req.generation_id,
-          'no_review_flags'::public.moderation_outcome_enum,
-          p_ruleset_version, p_scope, p_completed_rules, p_failed_rules, p_flags, p_errors, v_decision
-        );
+      INSERT INTO public.listing_moderation_results (
+        request_id, listing_id, listing_revision, generation_id, outcome,
+        ruleset_version, scope, completed_rules, failed_rules, flags, errors, decision
+      ) VALUES (
+        p_request_id, v_listing.id, v_listing.revision, v_req.generation_id,
+        'no_review_flags'::public.moderation_outcome_enum,
+        p_ruleset_version, p_scope, p_completed_rules, p_failed_rules, p_flags, p_errors, v_decision
+      );
 
-        IF to_regprocedure('app_security.log_audit_event(text,text,uuid,jsonb)') IS NOT NULL THEN
-          PERFORM app_security.log_audit_event(
-            'moderation.experimental_publication_disabled', 'listings', v_listing.id,
-            jsonb_build_object(
-              'request_id', p_request_id,
-              'generation_id', v_req.generation_id,
-              'revision', v_listing.revision,
-              'reason', 'EXPERIMENTAL_PUBLICATION_DISABLED',
-              'ruleset_version', p_ruleset_version
-            )
-          );
-        END IF;
-
-        RETURN jsonb_build_object(
-          'success', true,
-          'decision', v_decision,
-          'status', 'pending_review',
-          'reason', 'EXPERIMENTAL_PUBLICATION_DISABLED'
+      IF to_regprocedure('app_security.log_audit_event(text,text,uuid,jsonb)') IS NOT NULL THEN
+        PERFORM app_security.log_audit_event(
+          'moderation.experimental_publication_disabled', 'listings', v_listing.id,
+          jsonb_build_object(
+            'request_id', p_request_id,
+            'generation_id', v_req.generation_id,
+            'revision', v_listing.revision,
+            'reason', 'EXPERIMENTAL_PUBLICATION_DISABLED',
+            'ruleset_version', p_ruleset_version
+          )
         );
       END IF;
+
+      RETURN jsonb_build_object(
+        'success', true,
+        'decision', v_decision,
+        'status', 'pending_review',
+        'reason', 'EXPERIMENTAL_PUBLICATION_DISABLED'
+      );
     END IF;
   END IF;
 
@@ -551,14 +552,23 @@ BEGIN
     ELSIF v_failed_media_count > 0 OR v_listing.category_id IS NULL OR v_listing.city_id IS NULL THEN
       v_decision := 'routed_to_admin'::public.moderation_decision_state;
     ELSE
-      -- Account eligibility check
-      v_account_status := app_security.get_account_status(v_listing.seller_id);
-      v_has_policy := app_security.has_current_policy_acceptance(v_listing.seller_id);
-
-      IF v_account_status != 'active' OR NOT v_has_policy THEN
+      -- Category eligibility and publication security check
+      -- Only active categories in approved 'goods' macro_category may be auto-approved
+      SELECT * INTO v_category_record FROM public.categories WHERE id = v_listing.category_id;
+      IF NOT FOUND OR NOT v_category_record.is_active THEN
+        v_decision := 'routed_to_admin'::public.moderation_decision_state;
+      ELSIF v_category_record.macro_category IS NULL OR v_category_record.macro_category != 'goods' THEN
         v_decision := 'routed_to_admin'::public.moderation_decision_state;
       ELSE
-        v_decision := 'auto_approved'::public.moderation_decision_state;
+        -- Account eligibility check
+        v_account_status := app_security.get_account_status(v_listing.seller_id);
+        v_has_policy := app_security.has_current_policy_acceptance(v_listing.seller_id);
+
+        IF v_account_status != 'active' OR NOT v_has_policy THEN
+          v_decision := 'routed_to_admin'::public.moderation_decision_state;
+        ELSE
+          v_decision := 'auto_approved'::public.moderation_decision_state;
+        END IF;
       END IF;
     END IF;
   ELSIF p_outcome = 'needs_review' THEN
@@ -656,5 +666,8 @@ BEGIN
   );
 END;
 $$;
+
+REVOKE ALL ON FUNCTION app_security.impl_finalize_moderation_result FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION app_security.impl_finalize_moderation_result TO service_role;
 
 COMMIT;

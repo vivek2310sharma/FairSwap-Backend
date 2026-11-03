@@ -16,7 +16,7 @@
 -- =============================================================================
 
 BEGIN;
-SELECT plan(24);
+SELECT plan(29);
 
 -- 1. Table existence (2 tests)
 SELECT has_table('app_security', 'listing_moderation_scan_receipts', 'receipts table exists');
@@ -25,7 +25,7 @@ SELECT has_table('app_security', 'listing_media_verified_hashes', 'verified hash
 -- 2. Table Privileges (6 tests)
 SELECT table_privs_are('app_security', 'listing_moderation_scan_receipts', 'anon', ARRAY[]::text[], 'anon has no privs on scan receipts');
 SELECT table_privs_are('app_security', 'listing_moderation_scan_receipts', 'authenticated', ARRAY[]::text[], 'authenticated has no privs on scan receipts');
-SELECT table_privs_are('app_security', 'listing_moderation_scan_receipts', 'service_role', ARRAY['SELECT', 'INSERT', 'UPDATE']::text[], 'service_role has receipt privs');
+SELECT table_privs_are('app_security', 'listing_moderation_scan_receipts', 'service_role', ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']::text[], 'service_role has receipt privs');
 
 SELECT table_privs_are('app_security', 'listing_media_verified_hashes', 'anon', ARRAY[]::text[], 'anon has no privs on verified hashes');
 SELECT table_privs_are('app_security', 'listing_media_verified_hashes', 'authenticated', ARRAY[]::text[], 'authenticated has no privs on verified hashes');
@@ -371,6 +371,309 @@ BEGIN
 END;
 $test_legacy_fresh$;
 SELECT pass('Legacy prototype worker cannot bypass gate even on a fresh eligible listing');
+
+-- 12. Invariant: Inactive category or unapproved macro category cannot be auto-approved
+DO $test_inactive_category$
+DECLARE
+  v_user_id uuid := '10000000-0000-0000-0000-000000000001'::uuid;
+  v_cat_inactive_id uuid := '20000000-0000-0000-0000-000000000099'::uuid;
+  v_city_id uuid := '30000000-0000-0000-0000-000000000001'::uuid;
+  v_listing_id uuid := '40000000-0000-0000-0000-000000000005'::uuid;
+  v_media_id uuid := '50000000-0000-0000-0000-000000000005'::uuid;
+  v_req_id uuid := '60000000-0000-0000-0000-000000000005'::uuid;
+  v_gen_id uuid := '70000000-0000-0000-0000-000000000005'::uuid;
+  v_claim_token uuid := '80000000-0000-0000-0000-000000000005'::uuid;
+  v_sha text := 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  v_digest text;
+  v_receipt_id uuid;
+  v_res jsonb;
+BEGIN
+  INSERT INTO public.categories (id, slug, name, is_active, macro_category)
+  VALUES (v_cat_inactive_id, 'hidden-inactive-cat', 'Hidden Category', false, 'goods');
+
+  INSERT INTO public.listings (id, seller_id, title, description, category_id, city_id, status, revision)
+  VALUES (v_listing_id, v_user_id, 'Listing in Inactive Category', 'Description', v_cat_inactive_id, v_city_id, 'pending_review', 1);
+
+  INSERT INTO public.listing_media (id, listing_id, original_storage_path, processing_status, display_order)
+  VALUES (v_media_id, v_listing_id, 'listings/photo_inactive_cat.jpg', 'ready', 0);
+
+  INSERT INTO public.listing_moderation_requests (
+    id, listing_id, listing_revision, generation_id, status, claim_token, claim_expires_at,
+    attempt_count, evaluated_title, evaluated_description
+  ) VALUES (
+    v_req_id, v_listing_id, 1, v_gen_id, 'claimed', v_claim_token, clock_timestamp() + interval '5 minutes',
+    1, 'Listing in Inactive Category', 'Description'
+  );
+
+  v_digest := encode(extensions.digest(v_media_id::text || ':' || 'listings/photo_inactive_cat.jpg' || ':' || v_sha, 'sha256'), 'hex');
+
+  SELECT app_security.register_moderation_scan_receipt(
+    v_req_id, v_claim_token, v_listing_id, 1, v_gen_id, v_digest,
+    'APPROVE', 'india_v1.0.0', 'multimodal_five_check',
+    ARRAY['check_india_fraud_rules', 'check_openai_moderation', 'check_vision_nsfw', 'check_vision_category', 'check_ocr_qr'],
+    ARRAY[]::text[], '[]'::jsonb, '{}'::jsonb,
+    jsonb_build_array(jsonb_build_object('id', v_media_id, 'path', 'listings/photo_inactive_cat.jpg', 'sha256', v_sha)),
+    1
+  ) INTO v_receipt_id;
+
+  SELECT app_security.impl_finalize_moderation_result(
+    v_req_id, v_claim_token, 'no_review_flags', 'india_v1.0.0', 'multimodal_five_check',
+    ARRAY['check_india_fraud_rules', 'check_openai_moderation', 'check_vision_nsfw', 'check_vision_category', 'check_ocr_qr'],
+    ARRAY[]::text[], '[]'::jsonb, '[]'::jsonb
+  ) INTO v_res;
+
+  IF v_res->>'decision' != 'routed_to_admin' THEN
+    RAISE EXCEPTION 'Security breach: inactive category auto-approved; expected routed_to_admin, got %', v_res->>'decision';
+  END IF;
+END;
+$test_inactive_category$;
+SELECT pass('Inactive category listing routes to admin and blocks auto-approval');
+
+-- 13. Invariant: Unmapped macro_category cannot be auto-approved
+DO $test_unmapped_category$
+DECLARE
+  v_user_id uuid := '10000000-0000-0000-0000-000000000001'::uuid;
+  v_cat_unmapped_id uuid := '20000000-0000-0000-0000-000000000098'::uuid;
+  v_city_id uuid := '30000000-0000-0000-0000-000000000001'::uuid;
+  v_listing_id uuid := '40000000-0000-0000-0000-000000000006'::uuid;
+  v_media_id uuid := '50000000-0000-0000-0000-000000000006'::uuid;
+  v_req_id uuid := '60000000-0000-0000-0000-000000000006'::uuid;
+  v_gen_id uuid := '70000000-0000-0000-0000-000000000006'::uuid;
+  v_claim_token uuid := '80000000-0000-0000-0000-000000000006'::uuid;
+  v_sha text := 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  v_digest text;
+  v_receipt_id uuid;
+  v_res jsonb;
+BEGIN
+  INSERT INTO public.categories (id, slug, name, is_active, macro_category)
+  VALUES (v_cat_unmapped_id, 'unmapped-macro-cat', 'Unmapped Category', true, NULL);
+
+  INSERT INTO public.listings (id, seller_id, title, description, category_id, city_id, status, revision)
+  VALUES (v_listing_id, v_user_id, 'Listing in Unmapped Category', 'Description', v_cat_unmapped_id, v_city_id, 'pending_review', 1);
+
+  INSERT INTO public.listing_media (id, listing_id, original_storage_path, processing_status, display_order)
+  VALUES (v_media_id, v_listing_id, 'listings/photo_unmapped_cat.jpg', 'ready', 0);
+
+  INSERT INTO public.listing_moderation_requests (
+    id, listing_id, listing_revision, generation_id, status, claim_token, claim_expires_at,
+    attempt_count, evaluated_title, evaluated_description
+  ) VALUES (
+    v_req_id, v_listing_id, 1, v_gen_id, 'claimed', v_claim_token, clock_timestamp() + interval '5 minutes',
+    1, 'Listing in Unmapped Category', 'Description'
+  );
+
+  v_digest := encode(extensions.digest(v_media_id::text || ':' || 'listings/photo_unmapped_cat.jpg' || ':' || v_sha, 'sha256'), 'hex');
+
+  SELECT app_security.register_moderation_scan_receipt(
+    v_req_id, v_claim_token, v_listing_id, 1, v_gen_id, v_digest,
+    'APPROVE', 'india_v1.0.0', 'multimodal_five_check',
+    ARRAY['check_india_fraud_rules', 'check_openai_moderation', 'check_vision_nsfw', 'check_vision_category', 'check_ocr_qr'],
+    ARRAY[]::text[], '[]'::jsonb, '{}'::jsonb,
+    jsonb_build_array(jsonb_build_object('id', v_media_id, 'path', 'listings/photo_unmapped_cat.jpg', 'sha256', v_sha)),
+    1
+  ) INTO v_receipt_id;
+
+  SELECT app_security.impl_finalize_moderation_result(
+    v_req_id, v_claim_token, 'no_review_flags', 'india_v1.0.0', 'multimodal_five_check',
+    ARRAY['check_india_fraud_rules', 'check_openai_moderation', 'check_vision_nsfw', 'check_vision_category', 'check_ocr_qr'],
+    ARRAY[]::text[], '[]'::jsonb, '[]'::jsonb
+  ) INTO v_res;
+
+  IF v_res->>'decision' != 'routed_to_admin' THEN
+    RAISE EXCEPTION 'Security breach: unmapped category auto-approved; expected routed_to_admin, got %', v_res->>'decision';
+  END IF;
+END;
+$test_unmapped_category$;
+SELECT pass('Unmapped category listing routes to admin and blocks auto-approval');
+
+-- 14. Invariant: Cars category routes to admin in both Production (no test_submission_policies) and Test schema
+DO $test_cars_category$
+DECLARE
+  v_user_id uuid := '10000000-0000-0000-0000-000000000001'::uuid;
+  v_cat_cars_id uuid := '20000000-0000-0000-0000-000000000011'::uuid;
+  v_city_id uuid := '30000000-0000-0000-0000-000000000001'::uuid;
+  v_listing_id uuid := '40000000-0000-0000-0000-000000000011'::uuid;
+  v_media_id uuid := '50000000-0000-0000-0000-000000000011'::uuid;
+  v_req_id uuid := '60000000-0000-0000-0000-000000000011'::uuid;
+  v_gen_id uuid := '70000000-0000-0000-0000-000000000011'::uuid;
+  v_claim_token uuid := '80000000-0000-0000-0000-000000000011'::uuid;
+  v_sha text := 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+  v_digest text;
+  v_receipt_id uuid;
+  v_res jsonb;
+BEGIN
+  INSERT INTO public.categories (id, slug, name, is_active, macro_category)
+  VALUES (v_cat_cars_id, 'cars-hatchback', 'Cars Hatchback', true, 'vehicles');
+
+  INSERT INTO public.car_category_contracts (category_id)
+  VALUES (v_cat_cars_id);
+
+  INSERT INTO public.listings (id, seller_id, title, description, category_id, city_id, status, revision)
+  VALUES (v_listing_id, v_user_id, '2020 Honda Civic', 'Description', v_cat_cars_id, v_city_id, 'pending_review', 1);
+
+  INSERT INTO public.listing_car_contexts (listing_id)
+  VALUES (v_listing_id);
+
+  INSERT INTO public.listing_media (id, listing_id, original_storage_path, processing_status, display_order)
+  VALUES (v_media_id, v_listing_id, 'listings/photo_car.jpg', 'ready', 0);
+
+  INSERT INTO public.listing_moderation_requests (
+    id, listing_id, listing_revision, generation_id, status, claim_token, claim_expires_at,
+    attempt_count, evaluated_title, evaluated_description
+  ) VALUES (
+    v_req_id, v_listing_id, 1, v_gen_id, 'claimed', v_claim_token, clock_timestamp() + interval '5 minutes',
+    1, '2020 Honda Civic', 'Description'
+  );
+
+  v_digest := encode(extensions.digest(v_media_id::text || ':' || 'listings/photo_car.jpg' || ':' || v_sha, 'sha256'), 'hex');
+
+  SELECT app_security.register_moderation_scan_receipt(
+    v_req_id, v_claim_token, v_listing_id, 1, v_gen_id, v_digest,
+    'APPROVE', 'india_v1.0.0', 'multimodal_five_check',
+    ARRAY['check_india_fraud_rules', 'check_openai_moderation', 'check_vision_nsfw', 'check_vision_category', 'check_ocr_qr'],
+    ARRAY[]::text[], '[]'::jsonb, '{}'::jsonb,
+    jsonb_build_array(jsonb_build_object('id', v_media_id, 'path', 'listings/photo_car.jpg', 'sha256', v_sha)),
+    1
+  ) INTO v_receipt_id;
+
+  SELECT app_security.impl_finalize_moderation_result(
+    v_req_id, v_claim_token, 'no_review_flags', 'india_v1.0.0', 'multimodal_five_check',
+    ARRAY['check_india_fraud_rules', 'check_openai_moderation', 'check_vision_nsfw', 'check_vision_category', 'check_ocr_qr'],
+    ARRAY[]::text[], '[]'::jsonb, '[]'::jsonb
+  ) INTO v_res;
+
+  IF v_res->>'decision' != 'routed_to_admin' THEN
+    RAISE EXCEPTION 'Security breach: car listing auto-approved; expected routed_to_admin, got %', v_res->>'decision';
+  END IF;
+END;
+$test_cars_category$;
+SELECT pass('Cars category listing routes to admin in all schemas without automatic publication');
+
+-- 15. Invariant: Two-wheelers category routes to admin in all schemas
+DO $test_two_wheelers_category$
+DECLARE
+  v_user_id uuid := '10000000-0000-0000-0000-000000000001'::uuid;
+  v_cat_tw_id uuid := '20000000-0000-0000-0000-000000000012'::uuid;
+  v_city_id uuid := '30000000-0000-0000-0000-000000000001'::uuid;
+  v_listing_id uuid := '40000000-0000-0000-0000-000000000012'::uuid;
+  v_media_id uuid := '50000000-0000-0000-0000-000000000012'::uuid;
+  v_req_id uuid := '60000000-0000-0000-0000-000000000012'::uuid;
+  v_gen_id uuid := '70000000-0000-0000-0000-000000000012'::uuid;
+  v_claim_token uuid := '80000000-0000-0000-0000-000000000012'::uuid;
+  v_sha text := 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+  v_digest text;
+  v_receipt_id uuid;
+  v_res jsonb;
+BEGIN
+  INSERT INTO public.categories (id, slug, name, is_active, macro_category)
+  VALUES (v_cat_tw_id, 'motorcycles', 'Motorcycles', true, 'vehicles');
+
+  INSERT INTO public.vehicle_category_contracts (category_id)
+  VALUES (v_cat_tw_id);
+
+  INSERT INTO public.listings (id, seller_id, title, description, category_id, city_id, status, revision)
+  VALUES (v_listing_id, v_user_id, 'Royal Enfield Classic 350', 'Description', v_cat_tw_id, v_city_id, 'pending_review', 1);
+
+  INSERT INTO public.listing_vehicle_contexts (listing_id)
+  VALUES (v_listing_id);
+
+  INSERT INTO public.listing_media (id, listing_id, original_storage_path, processing_status, display_order)
+  VALUES (v_media_id, v_listing_id, 'listings/photo_tw.jpg', 'ready', 0);
+
+  INSERT INTO public.listing_moderation_requests (
+    id, listing_id, listing_revision, generation_id, status, claim_token, claim_expires_at,
+    attempt_count, evaluated_title, evaluated_description
+  ) VALUES (
+    v_req_id, v_listing_id, 1, v_gen_id, 'claimed', v_claim_token, clock_timestamp() + interval '5 minutes',
+    1, 'Royal Enfield Classic 350', 'Description'
+  );
+
+  v_digest := encode(extensions.digest(v_media_id::text || ':' || 'listings/photo_tw.jpg' || ':' || v_sha, 'sha256'), 'hex');
+
+  SELECT app_security.register_moderation_scan_receipt(
+    v_req_id, v_claim_token, v_listing_id, 1, v_gen_id, v_digest,
+    'APPROVE', 'india_v1.0.0', 'multimodal_five_check',
+    ARRAY['check_india_fraud_rules', 'check_openai_moderation', 'check_vision_nsfw', 'check_vision_category', 'check_ocr_qr'],
+    ARRAY[]::text[], '[]'::jsonb, '{}'::jsonb,
+    jsonb_build_array(jsonb_build_object('id', v_media_id, 'path', 'listings/photo_tw.jpg', 'sha256', v_sha)),
+    1
+  ) INTO v_receipt_id;
+
+  SELECT app_security.impl_finalize_moderation_result(
+    v_req_id, v_claim_token, 'no_review_flags', 'india_v1.0.0', 'multimodal_five_check',
+    ARRAY['check_india_fraud_rules', 'check_openai_moderation', 'check_vision_nsfw', 'check_vision_category', 'check_ocr_qr'],
+    ARRAY[]::text[], '[]'::jsonb, '[]'::jsonb
+  ) INTO v_res;
+
+  IF v_res->>'decision' != 'routed_to_admin' THEN
+    RAISE EXCEPTION 'Security breach: two-wheeler listing auto-approved; expected routed_to_admin, got %', v_res->>'decision';
+  END IF;
+END;
+$test_two_wheelers_category$;
+SELECT pass('Two-wheelers category listing routes to admin in all schemas without automatic publication');
+
+-- 16. Invariant: Property category routes to admin in all schemas
+DO $test_property_category$
+DECLARE
+  v_user_id uuid := '10000000-0000-0000-0000-000000000001'::uuid;
+  v_cat_prop_id uuid := '20000000-0000-0000-0000-000000000013'::uuid;
+  v_city_id uuid := '30000000-0000-0000-0000-000000000001'::uuid;
+  v_listing_id uuid := '40000000-0000-0000-0000-000000000013'::uuid;
+  v_media_id uuid := '50000000-0000-0000-0000-000000000013'::uuid;
+  v_req_id uuid := '60000000-0000-0000-0000-000000000013'::uuid;
+  v_gen_id uuid := '70000000-0000-0000-0000-000000000013'::uuid;
+  v_claim_token uuid := '80000000-0000-0000-0000-000000000013'::uuid;
+  v_sha text := 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+  v_digest text;
+  v_receipt_id uuid;
+  v_res jsonb;
+BEGIN
+  INSERT INTO public.categories (id, slug, name, is_active, macro_category)
+  VALUES (v_cat_prop_id, 'rental-flats', 'Rental Flats', true, 'property');
+
+  INSERT INTO public.property_category_contracts (category_id)
+  VALUES (v_cat_prop_id);
+
+  INSERT INTO public.listings (id, seller_id, title, description, category_id, city_id, status, revision)
+  VALUES (v_listing_id, v_user_id, '2 BHK Apartment', 'Description', v_cat_prop_id, v_city_id, 'pending_review', 1);
+
+  INSERT INTO public.listing_property_contexts (listing_id)
+  VALUES (v_listing_id);
+
+  INSERT INTO public.listing_media (id, listing_id, original_storage_path, processing_status, display_order)
+  VALUES (v_media_id, v_listing_id, 'listings/photo_prop.jpg', 'ready', 0);
+
+  INSERT INTO public.listing_moderation_requests (
+    id, listing_id, listing_revision, generation_id, status, claim_token, claim_expires_at,
+    attempt_count, evaluated_title, evaluated_description
+  ) VALUES (
+    v_req_id, v_listing_id, 1, v_gen_id, 'claimed', v_claim_token, clock_timestamp() + interval '5 minutes',
+    1, '2 BHK Apartment', 'Description'
+  );
+
+  v_digest := encode(extensions.digest(v_media_id::text || ':' || 'listings/photo_prop.jpg' || ':' || v_sha, 'sha256'), 'hex');
+
+  SELECT app_security.register_moderation_scan_receipt(
+    v_req_id, v_claim_token, v_listing_id, 1, v_gen_id, v_digest,
+    'APPROVE', 'india_v1.0.0', 'multimodal_five_check',
+    ARRAY['check_india_fraud_rules', 'check_openai_moderation', 'check_vision_nsfw', 'check_vision_category', 'check_ocr_qr'],
+    ARRAY[]::text[], '[]'::jsonb, '{}'::jsonb,
+    jsonb_build_array(jsonb_build_object('id', v_media_id, 'path', 'listings/photo_prop.jpg', 'sha256', v_sha)),
+    1
+  ) INTO v_receipt_id;
+
+  SELECT app_security.impl_finalize_moderation_result(
+    v_req_id, v_claim_token, 'no_review_flags', 'india_v1.0.0', 'multimodal_five_check',
+    ARRAY['check_india_fraud_rules', 'check_openai_moderation', 'check_vision_nsfw', 'check_vision_category', 'check_ocr_qr'],
+    ARRAY[]::text[], '[]'::jsonb, '[]'::jsonb
+  ) INTO v_res;
+
+  IF v_res->>'decision' != 'routed_to_admin' THEN
+    RAISE EXCEPTION 'Security breach: property listing auto-approved; expected routed_to_admin, got %', v_res->>'decision';
+  END IF;
+END;
+$test_property_category$;
+SELECT pass('Property category listing routes to admin in all schemas without automatic publication');
 
 SELECT * FROM finish();
 ROLLBACK;

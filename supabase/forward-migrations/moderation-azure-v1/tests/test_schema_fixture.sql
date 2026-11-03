@@ -81,13 +81,16 @@ ON CONFLICT (setting_key) DO UPDATE SET setting_value = 'true';
 CREATE TABLE IF NOT EXISTS public.categories (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   slug text UNIQUE NOT NULL,
-  name text NOT NULL
+  name text NOT NULL,
+  is_active boolean NOT NULL DEFAULT true,
+  macro_category text DEFAULT 'goods'
 );
 
 CREATE TABLE IF NOT EXISTS public.cities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   slug text UNIQUE NOT NULL,
-  name text NOT NULL
+  name text NOT NULL,
+  is_active boolean NOT NULL DEFAULT true
 );
 
 -- 6. Enums
@@ -176,4 +179,25 @@ CREATE TABLE IF NOT EXISTS public.listing_moderation_results (
   decision public.moderation_decision_state NOT NULL,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+
+-- 10. Family Category Contracts and Contexts Fixtures
+CREATE TABLE IF NOT EXISTS public.car_category_contracts (
+  category_id uuid PRIMARY KEY REFERENCES public.categories(id)
+);
+CREATE TABLE IF NOT EXISTS public.vehicle_category_contracts (
+  category_id uuid PRIMARY KEY REFERENCES public.categories(id)
+);
+CREATE TABLE IF NOT EXISTS public.property_category_contracts (
+  category_id uuid PRIMARY KEY REFERENCES public.categories(id)
+);
+CREATE TABLE IF NOT EXISTS public.listing_car_contexts (
+  listing_id uuid PRIMARY KEY REFERENCES public.listings(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS public.listing_vehicle_contexts (
+  listing_id uuid PRIMARY KEY REFERENCES public.listings(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS public.listing_property_contexts (
+  listing_id uuid PRIMARY KEY REFERENCES public.listings(id) ON DELETE CASCADE
+);
+
 
