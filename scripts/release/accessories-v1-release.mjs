@@ -252,7 +252,12 @@ export function postflightKeys(stage) {
   return keys;
 }
 
-export function runAccessoriesPostflight(candidate, rawOutput) {
+// Only these two assertions describe the pre-Tablets phone wrappers; Tablets legitimately replaces them. A caller may exempt
+// them solely in a separately verified post-Tablets adoption. Every other key must still be true.
+export const POST_TABLETS_EXEMPT_KEYS = Object.freeze(['mobile_wrappers_extended', 'tablets_not_wrapped']);
+
+export function runAccessoriesPostflight(candidate, rawOutput, {exemptKeys = []} = {}) {
+  if (exemptKeys.some(k => !POST_TABLETS_EXEMPT_KEYS.includes(k))) fail('POSTFLIGHT_EXEMPTION_NOT_ALLOWED');
   let check;
   try {
     check = JSON.parse(String(rawOutput).trim());
@@ -262,7 +267,9 @@ export function runAccessoriesPostflight(candidate, rawOutput) {
   const keys = postflightKeys(candidate.stage);
   if (!check || typeof check !== 'object' || Array.isArray(check)) fail('POSTFLIGHT_INVALID_RESPONSE');
   const unexpected = Object.keys(check).filter(k => !keys.includes(k));
-  const failed = keys.filter(k => check[k] !== true);
+  const failed = keys.filter(k => check[k] !== true && !exemptKeys.includes(k));
+  const missing = exemptKeys.filter(k => !(k in check));
+  if (missing.length) failed.push(...missing);
   if (unexpected.length || failed.length) {
     fail('POSTFLIGHT_VERIFICATION_FAILED', [...failed, ...unexpected.map(k => `unexpected:${k}`)].join(','));
   }

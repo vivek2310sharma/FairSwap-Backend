@@ -1710,7 +1710,7 @@ const activationRow = over => ({version: '20261102164137', name: 'activate_acces
 const historyRows = () => baseHistory.map(version => ({version, name: 'historical', ...hist('a'.repeat(64))}));
 const activatedLedger = () => [...historyRows(), foundationRow(), activationRow()];
 
-function adoptionRunner({ledger = activatedLedger(), counts = {'20261102164135': 58, '20261102164137': 1}, storedSql = {'20261102164137': STORED_SQL}, post, calls = [], changeAfter = false} = {}) {
+function adoptionRunner({ledger = activatedLedger(), counts = {'20261102164135': 58, '20261102164137': 1}, storedSql = {'20261102164137': STORED_SQL}, post, tabletsPost, calls = [], changeAfter = false} = {}) {
   let reads = 0;
   const good = goodPost('activation');
   return (cmd, args) => {
@@ -1726,9 +1726,16 @@ function adoptionRunner({ledger = activatedLedger(), counts = {'20261102164135':
     if (q.includes('supabase_migrations.schema_migrations')) {
       return JSON.stringify(changeAfter && ++reads > 1 ? [...ledger, {version: '20261104999999', name: 'x', ...hist('a'.repeat(64))}] : ledger);
     }
+    if (q.includes('tablets_v1_catalogue()')) return JSON.stringify(tabletsPost ?? TABLETS_GOOD);
     return JSON.stringify(post ?? good);
   };
 }
+const TABLETS_GOOD = Object.fromEntries(['release_state', 'catalogue', 'forced_rls', 'client_permissions', 'function_permissions', 'listing_guard', 'phone_contract'].map(k => [k, true]));
+const tabletsFoundationRow = over => ({version: '20261102165946', name: 'posting_v2_tablets', ...hist('b'.repeat(64)), ...over});
+const tabletsActivationRow = over => ({version: '20261102170611', name: 'activate_tablets_v1', ...hist('c'.repeat(64)), ...over});
+const postTabletsLedger = () => [...activatedLedger(), tabletsFoundationRow(), tabletsActivationRow()];
+const EXEMPT = ['mobile_wrappers_extended', 'tablets_not_wrapped'];
+const postTabletsPost = () => ({...goodPost('activation'), mobile_wrappers_extended: false, tablets_not_wrapped: false});
 const adoptCtx = {...baseEnv, GITHUB_SHA: A40, GITHUB_RUN_ID: '50'};
 const adoptFailing = async (o, re, {environment = 'FairSwapProd', candidateId = AF, context = adoptCtx} = {}) => {
   const dir = mkdtempSync(join(tmpdir(), 'fs-adopt-'));
@@ -1783,7 +1790,10 @@ test('adoption registry pins the observed digests; the activation row is ONE sto
   assert.equal(activation.storedSqlSha256, getCandidate(AA).sha256);
   assert.equal(activation.reviewedSourceStatementsSha256, null, 'the CLI-split digest of the file is not what the hosted ledger holds and is no longer attested');
   assert.equal('matchesReviewedSource' in activation, false, 'provenance is computed, never a registry boolean');
-  assert.ok(record.forbiddenLedgerVersions.includes('20261102165946') && record.forbiddenLedgerVersions.includes('20261104120000'));
+  assert.deepEqual(record.forbiddenLedgerVersions, ['20261104120000', '20261104120100']);
+  assert.deepEqual(record.postTabletsLedger.map(e => [e.ledgerVersion, e.ledgerName]), [['20261102165946', 'posting_v2_tablets'], ['20261102170611', 'activate_tablets_v1']]);
+  for (const e of record.postTabletsLedger) assert.equal(getCandidate(e.candidateId).filename.slice(15, -4), e.ledgerName);
+  assert.deepEqual(record.postTabletsExemptKeys, EXEMPT);
 });
 
 test('adoption is registered only for the Accessories Production foundation and needs no fabricated evidence', () => {
@@ -1862,7 +1872,7 @@ test('adoption rejects disabled, foundation-only, partial, missing, tampered and
   await adoptFailing({storedSql: {'20261102164137': ''}}, /ADOPTION_STORED_SQL_HASH_MISMATCH/);
   await adoptFailing({storedSql: {'20261102164137': STORED_SQL.toUpperCase()}}, /ADOPTION_STORED_SQL_HASH_MISMATCH/);
   // later chain stages recorded
-  for (const version of ['20261102165946', '20261102170611', '20261104120000', '20261104120100']) {
+  for (const version of ['20261104120000', '20261104120100']) {
     await adoptFailing({ledger: withRow({version, name: 'later', ...hist('a'.repeat(64))})}, /ADOPTION_LATER_STAGE_RECORDED/);
   }
   // installed-state drift in every class the active postflight covers
@@ -1953,4 +1963,57 @@ test('workflow exposes adoption only as a protected, Accessories-foundation-only
   const test = yaml.slice(yaml.indexOf('\n  test:'), yaml.indexOf('\n  verify_test:'));
   assert.ok(!test.includes('adopt'));
   assert.ok(/test:\n    needs: verify\n    if: .*inputs\.target == 'test'/.test(yaml));
+});
+
+// ---- Accessories read-only adoption in the known post-Tablets state ----------------------------------------------------
+
+test('post-Tablets adoption succeeds, runs the active Tablets postflight and exempts only the two obsolete wrapper assertions', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fs-adopt-'));
+  try {
+    const calls = [];
+    const runner = adoptionRunner({ledger: postTabletsLedger(), post: postTabletsPost(), calls});
+    const receipt = await adoptExistingInstallation({environment: 'FairSwapProd', candidateId: AF, context: adoptCtx, runner, receiptDir: dir});
+    assert.equal(receipt.adoption.kind, 'existing-installation');
+    assert.equal(receipt.postflightVerified, true);
+    assert.ok(calls.every(c => c === 'psql'));
+    // the pre-Tablets state is still accepted unchanged
+    await adoptExistingInstallation({environment: 'FairSwapProd', candidateId: AF, context: adoptCtx, runner: adoptionRunner(), receiptDir: dir});
+  } finally { rmSync(dir, {recursive: true, force: true}); }
+});
+
+test('post-Tablets adoption stays strict: partial/renamed Tablets rows, Tablets postflight drift, Wearables and any other Accessories drift all fail', async () => {
+  const ok = postTabletsPost();
+  const tl = postTabletsLedger;
+  // partial Tablets pair or mismatched rows
+  await adoptFailing({ledger: [...activatedLedger(), tabletsFoundationRow()], post: ok}, /ADOPTION_TABLETS_LEDGER_MISMATCH/);
+  await adoptFailing({ledger: [...activatedLedger(), tabletsActivationRow()], post: ok}, /ADOPTION_TABLETS_LEDGER_MISMATCH/);
+  await adoptFailing({ledger: [...activatedLedger(), tabletsFoundationRow({name: 'renamed'}), tabletsActivationRow()], post: ok}, /ADOPTION_TABLETS_LEDGER_MISMATCH/);
+  await adoptFailing({ledger: [...activatedLedger(), tabletsFoundationRow(), tabletsActivationRow({hasStatements: false})], post: ok}, /ADOPTION_TABLETS_LEDGER_MISMATCH/);
+  // Tablets security postflight drift
+  for (const key of Object.keys(TABLETS_GOOD)) {
+    await adoptFailing({ledger: tl(), post: ok, tabletsPost: {...TABLETS_GOOD, [key]: false}}, /TABLETS_POSTFLIGHT_FAILED/);
+  }
+  // already-installed Wearables migrations are still rejected, with or without Tablets
+  for (const version of ['20261104120000', '20261104120100']) {
+    await adoptFailing({ledger: [...tl(), {version, name: 'w', ...hist('a'.repeat(64))}], post: ok}, /ADOPTION_LATER_STAGE_RECORDED/);
+  }
+  // every non-exempt Accessories assertion is still enforced in the post-Tablets path
+  for (const key of postflightKeys('activation').filter(k => !EXEMPT.includes(k))) {
+    await adoptFailing({ledger: tl(), post: {...ok, [key]: false}}, /POSTFLIGHT_VERIFICATION_FAILED/);
+  }
+  await adoptFailing({ledger: tl(), post: {...ok, surprise: true}}, /POSTFLIGHT_VERIFICATION_FAILED/);
+  await adoptFailing({ledger: tl(), post: (() => { const p = {...ok}; delete p.mobile_wrappers_extended; return p; })()}, /POSTFLIGHT_VERIFICATION_FAILED/);
+  // existing provenance checks still apply
+  await adoptFailing({ledger: tl().map(r => (r.version === '20261102164137' ? {...r, statementsSha256: 'f'.repeat(64)} : r)), post: ok}, /ADOPTION_STATEMENTS_HASH_MISMATCH/);
+  // without Tablets, the exemption is NOT granted
+  await adoptFailing({post: ok}, /POSTFLIGHT_VERIFICATION_FAILED/);
+});
+
+test('the wrapper exemption is limited to the two named keys and is unavailable to other callers by default', () => {
+  const f = getCandidate('accessories-v1-activation');
+  const post = postTabletsPost();
+  assert.throws(() => runAccessoriesPostflight(f, JSON.stringify(post)), /POSTFLIGHT_VERIFICATION_FAILED/);
+  assert.doesNotThrow(() => runAccessoriesPostflight(f, JSON.stringify(post), {exemptKeys: EXEMPT}));
+  assert.throws(() => runAccessoriesPostflight(f, JSON.stringify({...post, rls_forced: false}), {exemptKeys: EXEMPT}), /rls_forced/);
+  assert.throws(() => runAccessoriesPostflight(f, JSON.stringify(post), {exemptKeys: ['rls_forced']}), /EXEMPTION_NOT_ALLOWED/);
 });
