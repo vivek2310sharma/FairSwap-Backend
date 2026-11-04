@@ -12,6 +12,8 @@ on:
           - moderation-analytics-v1
           - accessories-v1-foundation
           - accessories-v1-activation
+          - tablets-v1-foundation
+          - tablets-v1-activation
       approved_sha:
         description: 'Exact reviewed commit SHA on main'
         required: true
@@ -21,7 +23,7 @@ on:
         required: true
         type: string
       target:
-        description: 'Stage: test (moderation also auto-promotes), or production (Accessories only, after Test evidence)'
+        description: 'Stage: test (moderation also auto-promotes), or production (Accessories and Tablets, after Test evidence)'
         required: true
         default: 'test'
         type: choice
@@ -29,23 +31,23 @@ on:
           - test
           - production
       web_staging_sha:
-        description: 'Accessories: verified matching Web staging commit SHA'
+        description: 'Accessories and Tablets: verified matching Web staging commit SHA'
         required: false
         type: string
       web_production_sha:
-        description: 'Accessories activation in Production: deployed Web production commit SHA'
+        description: 'Production activation: deployed Web production commit SHA'
         required: false
         type: string
       test_foundation_run_id:
-        description: 'Accessories: successful Test foundation run ID'
+        description: 'Accessories and Tablets: successful Test foundation run ID'
         required: false
         type: string
       test_activation_run_id:
-        description: 'Accessories: successful Test activation run ID'
+        description: 'Accessories and Tablets: successful Test activation run ID'
         required: false
         type: string
       prod_foundation_run_id:
-        description: 'Accessories activation in Production: successful Production foundation run ID'
+        description: 'Production activation: successful Production foundation run ID'
         required: false
         type: string
 
@@ -61,6 +63,8 @@ jobs:
   verify:
     outputs:
       auto_promote: ${{ steps.plan.outputs.auto_promote }}
+      foundation_ledger_sha: ${{ steps.plan.outputs.foundation_ledger_sha }}
+      candidate_ledger_sha: ${{ steps.plan.outputs.candidate_ledger_sha }}
     if: >-
       github.repository == 'vivek2310sharma/FairSwap-Backend' &&
       github.ref == 'refs/heads/main' &&
@@ -142,7 +146,14 @@ jobs:
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
             prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID
           }});
-          await requireStageEvidence(plan.priorRuns, e);
+          const receipts = await requireStageEvidence(plan.priorRuns, e);
+          if (plan.candidate.id.startsWith('tablets-v1-')) {
+            const stage = plan.candidate.stage;
+            const foundation = plan.target === 'production' ? receipts.prod_foundation_run_id : receipts.test_foundation_run_id;
+            const testCandidate = receipts[`test_${stage}_run_id`];
+            if (stage === 'activation') appendFileSync(e.GITHUB_OUTPUT, `foundation_ledger_sha=${foundation.ledgerStatementsSha256}\n`);
+            if (plan.target === 'production') appendFileSync(e.GITHUB_OUTPUT, `candidate_ledger_sha=${testCandidate.ledgerStatementsSha256}\n`);
+          }
           appendFileSync(e.GITHUB_OUTPUT, `auto_promote=${plan.candidate.autoPromote === true}\n`);
           NODE
 
@@ -202,6 +213,8 @@ jobs:
 
       - name: Execute Test release and automated read-only verification
         env:
+          TABLETS_FOUNDATION_LEDGER_SHA: ${{ needs.verify.outputs.foundation_ledger_sha }}
+          TABLETS_CANDIDATE_LEDGER_SHA: ${{ needs.verify.outputs.candidate_ledger_sha }}
           CANDIDATE: ${{ inputs.candidate }}
           EXPECTED_SHA: ${{ inputs.expected_candidate_sha256 }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN }}
@@ -269,7 +282,7 @@ jobs:
           printf '%s  %s-fairswaptest.json\n' "$EXPECTED_SHA" "$CANDIDATE" | sha256sum --check --status
 
   production:
-    # Moderation: automatic after verified Test (unchanged). Accessories: only a dedicated target=production
+    # Moderation: automatic after verified Test (unchanged). Accessories and Tablets: only a dedicated target=production
     # dispatch, whose Web and earlier-stage Test/Production evidence was already enforced by the verify job.
     needs: [verify, test, verify_test]
     if: >-
@@ -326,6 +339,8 @@ jobs:
 
       - name: Execute Production release and automated read-only verification
         env:
+          TABLETS_FOUNDATION_LEDGER_SHA: ${{ needs.verify.outputs.foundation_ledger_sha }}
+          TABLETS_CANDIDATE_LEDGER_SHA: ${{ needs.verify.outputs.candidate_ledger_sha }}
           CANDIDATE: ${{ inputs.candidate }}
           EXPECTED_SHA: ${{ inputs.expected_candidate_sha256 }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN }}

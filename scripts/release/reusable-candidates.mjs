@@ -39,6 +39,34 @@ export const CANDIDATES = Object.freeze({
     autoPromote: false,
     requiredLedgerVersions: Object.freeze(['20261102164135']),
     incompatibleLedgerVersions: Object.freeze(['20261102165946'])
+  }),
+  'tablets-v1-foundation': Object.freeze({
+    id: 'tablets-v1-foundation',
+    version: '20261102165946',
+    filename: '20261102165946_posting_v2_tablets.sql',
+    path: 'supabase/forward-migrations/tablets-v1/supabase/migrations/20261102165946_posting_v2_tablets.sql',
+    sha256: 'bf081edd9f89d1244de5a8735b1c1f25f71aa75d6a34df8e1b83115c2ea7860a',
+    description: 'Tablets V1 foundation (category installed disabled)',
+    strict: true,
+    stage: 'foundation',
+    autoPromote: false,
+    // Accessories activation must also precede Tablets because its existing release gate
+    // rejects the Tablet phone wrapper and its migration version sorts before Tablets.
+    requiredLedgerVersions: Object.freeze(['20261102164135', '20261102164137']),
+    incompatibleLedgerVersions: Object.freeze(['20261102170611'])
+  }),
+  'tablets-v1-activation': Object.freeze({
+    id: 'tablets-v1-activation',
+    version: '20261102170611',
+    filename: '20261102170611_activate_tablets_v1.sql',
+    path: 'supabase/forward-migrations/tablets-v1/activation/supabase/migrations/20261102170611_activate_tablets_v1.sql',
+    sha256: '08b4c4e27e2df8782c4879b184d4bb57e7ed28d884cdc15999d36f296ed149b4',
+    description: 'Tablets V1 activation',
+    strict: true,
+    stage: 'activation',
+    autoPromote: false,
+    requiredLedgerVersions: Object.freeze(['20261102164135', '20261102164137', '20261102165946']),
+    incompatibleLedgerVersions: Object.freeze([])
   })
 });
 
@@ -49,7 +77,7 @@ export const PROJECT_REFS = Object.freeze({
 
 // Web commits the Accessories release is pinned to (verified GitHub baselines).
 export const ACCESSORIES_WEB = Object.freeze({
-  stagingSha: '327338f18a758ffaa7e135f6fdfcdadca3f9c1da',
+  stagingSha: 'b5efb427b0cd5cb8acb0f8503593eebcaafce39e',
   productionBaselineSha: 'd3e183dc204dcefc536494e73cf412a80e9836f0',
   repository: 'vivek2310sharma/FairSwap-Web',
   productionEnvironment: 'Production'
@@ -101,19 +129,22 @@ export function planDispatch({candidateId, target = 'test', inputs = {}}) {
     need(sha === ACCESSORIES_WEB.stagingSha, 'WEB_STAGING_VERIFICATION_REQUIRED');
     return sha;
   };
+  const family = candidate.id.slice(0, -candidate.stage.length);
+  const foundationId = family + 'foundation';
+  const activationId = family + 'activation';
   const priorRuns = [];
   let webStagingSha = null;
   let webProductionSha = null;
   if (candidate.stage === 'foundation' && target === 'production') {
-    priorRuns.push(run('test_foundation_run_id', 'accessories-v1-foundation', 'test'));
-    priorRuns.push(run('test_activation_run_id', 'accessories-v1-activation', 'test'));
+    priorRuns.push(run('test_foundation_run_id', foundationId, 'test'));
+    priorRuns.push(run('test_activation_run_id', activationId, 'test'));
     webStagingSha = stagingWeb();
   } else if (candidate.stage === 'activation' && target === 'test') {
-    priorRuns.push(run('test_foundation_run_id', 'accessories-v1-foundation', 'test'));
+    priorRuns.push(run('test_foundation_run_id', foundationId, 'test'));
     webStagingSha = stagingWeb();
   } else if (candidate.stage === 'activation' && target === 'production') {
-    priorRuns.push(run('test_activation_run_id', 'accessories-v1-activation', 'test'));
-    priorRuns.push(run('prod_foundation_run_id', 'accessories-v1-foundation', 'prod'));
+    priorRuns.push(run('test_activation_run_id', activationId, 'test'));
+    priorRuns.push(run('prod_foundation_run_id', foundationId, 'prod'));
     webStagingSha = stagingWeb();
     webProductionSha = String(inputs.web_production_sha ?? '');
     need(SHA40.test(webProductionSha) && webProductionSha !== ACCESSORIES_WEB.productionBaselineSha, 'WEB_PRODUCTION_VERIFICATION_REQUIRED');
