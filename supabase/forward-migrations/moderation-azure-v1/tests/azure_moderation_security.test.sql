@@ -83,13 +83,41 @@ PREPARE test_incomplete_checks AS
 SELECT throws_ok('test_incomplete_checks', 'INCOMPLETE_CHECKS_CANNOT_APPROVE', 'Throws when attempting to register APPROVE with incomplete checks');
 
 -- 6. Behavioural check: registering APPROVE with media count mismatch throws exception (1 test)
+-- Seed a valid claimed moderation request with active lease, then deliberately submit mismatched media count
+DO $seed_mismatch$
+DECLARE
+  v_user_id uuid := '10000000-0000-0000-0000-000000000000'::uuid;
+  v_cat_id uuid := '20000000-0000-0000-0000-000000000000'::uuid;
+  v_city_id uuid := '30000000-0000-0000-0000-000000000000'::uuid;
+  v_listing_id uuid := '40000000-0000-0000-0000-000000000000'::uuid;
+  v_req_id uuid := '60000000-0000-0000-0000-000000000000'::uuid;
+  v_gen_id uuid := '70000000-0000-0000-0000-000000000000'::uuid;
+  v_claim_token uuid := '80000000-0000-0000-0000-000000000000'::uuid;
+BEGIN
+  INSERT INTO auth.users (id, email) VALUES (v_user_id, 'mismatch_test@test.invalid');
+  INSERT INTO public.categories (id, slug, name) VALUES (v_cat_id, 'mismatch-cat', 'Mismatch Category');
+  INSERT INTO public.cities (id, slug, name) VALUES (v_city_id, 'mismatch-city', 'Mismatch City');
+
+  INSERT INTO public.listings (id, seller_id, title, description, category_id, city_id, status, revision)
+  VALUES (v_listing_id, v_user_id, 'Listing for Mismatch Test', 'Desc', v_cat_id, v_city_id, 'pending_review', 1);
+
+  INSERT INTO public.listing_moderation_requests (
+    id, listing_id, listing_revision, generation_id, status, claim_token, claim_expires_at,
+    attempt_count, evaluated_title, evaluated_description
+  ) VALUES (
+    v_req_id, v_listing_id, 1, v_gen_id, 'claimed', v_claim_token, clock_timestamp() + interval '5 minutes',
+    1, 'Listing for Mismatch Test', 'Desc'
+  );
+END;
+$seed_mismatch$;
+
 PREPARE test_media_count_mismatch AS
   SELECT app_security.register_moderation_scan_receipt(
-    '11111111-1111-1111-1111-111111111111'::uuid,
-    '22222222-2222-2222-2222-222222222222'::uuid,
-    '33333333-3333-3333-3333-333333333333'::uuid,
+    '60000000-0000-0000-0000-000000000000'::uuid,
+    '80000000-0000-0000-0000-000000000000'::uuid,
+    '40000000-0000-0000-0000-000000000000'::uuid,
     1,
-    '44444444-4444-4444-4444-444444444444'::uuid,
+    '70000000-0000-0000-0000-000000000000'::uuid,
     'some-digest',
     'APPROVE',
     'india_v1.0.0',
@@ -99,7 +127,7 @@ PREPARE test_media_count_mismatch AS
     '[]'::jsonb,
     '{}'::jsonb,
     '[{"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","path":"listing-originals/p.jpg","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]'::jsonb,
-    0 -- Claimed 0 but manifest has 1
+    0 -- Claimed 0 but manifest has 1 (manifest_count=1 vs scanned_media_count=0 and db_media_count=0)
   );
 SELECT throws_ok('test_media_count_mismatch', 'MEDIA_COUNT_MISMATCH', 'Throws when manifest count does not match scanned_media_count');
 
