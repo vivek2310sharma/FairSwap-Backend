@@ -185,8 +185,15 @@ export const EXISTING_INSTALLATIONS = Object.freeze({
         reviewedSourceStatementsSha256: null
       })
     ]),
-    // Later chain stages must be absent: the attested state is Accessories foundation + activation only.
-    forbiddenLedgerVersions: Object.freeze(['20261102165946', '20261102170611', '20261104120000', '20261104120100'])
+    // Later chain stages must be absent: Wearables must never be recorded.
+    forbiddenLedgerVersions: Object.freeze(['20261104120000', '20261104120100']),
+    // Tablets foundation + activation may be recorded ONLY as a complete, verified pair (the known post-Tablets state). Either
+    // one alone is rejected. In that state the obsolete Accessories wrapper assertions are exempt (see postTabletsExemptKeys).
+    postTabletsLedger: Object.freeze([
+      Object.freeze({candidateId: 'tablets-v1-foundation', ledgerVersion: '20261102165946', ledgerName: 'posting_v2_tablets'}),
+      Object.freeze({candidateId: 'tablets-v1-activation', ledgerVersion: '20261102170611', ledgerName: 'activate_tablets_v1'})
+    ]),
+    postTabletsExemptKeys: Object.freeze(['mobile_wrappers_extended', 'tablets_not_wrapped'])
   })
 });
 

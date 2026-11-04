@@ -696,12 +696,27 @@ export async function adoptExistingInstallation({
         observed[entry.ledgerVersion] = stored;
       }
     }
-    // Only the registered chain may be recorded: Tablets and Wearables must not exist yet.
+    // Wearables (and any other forbidden later stage) must not be recorded.
     if (adoption.forbiddenLedgerVersions.some(version => ledger.some(item => item.version === version))) fail('LATER_STAGE_RECORDED');
+    // Tablets is allowed only as a complete verified foundation+activation pair; a partial pair is a different, rejected state.
+    const tabletRows = adoption.postTabletsLedger.map(entry => ledger.find(item => item.version === entry.ledgerVersion));
+    const postTablets = tabletRows.some(Boolean);
+    if (postTablets) {
+      adoption.postTabletsLedger.forEach((entry, index) => {
+        verifyCandidateSha(entry.candidateId, root);
+        const row = tabletRows[index];
+        if (!row || row.name !== entry.ledgerName || row.hasStatements !== true) fail('TABLETS_LEDGER_MISMATCH');
+      });
+    }
     // The observed installation is ACTIVATED: validate the active-state postflight (release enabled, category active, RLS,
     // ACL, guards). A disabled or foundation-only installation is a different state and is rejected here.
     const activation = getCandidate(adoption.entries.find(entry => entry.role === 'activation').candidateId);
-    const postflight = runAccessoriesPostflight(activation, q(postflightQuery(activation.stage), 'postflight_sql'));
+    if (postTablets) {
+      // Existing active Tablets security postflight; throws REUSABLE_RELEASE_TABLETS_POSTFLIGHT_FAILED on any drift.
+      runTabletsPostflight(true, sql => q(sql, 'postflight_sql'));
+    }
+    const postflight = runAccessoriesPostflight(activation, q(postflightQuery(activation.stage), 'postflight_sql'),
+      {exemptKeys: postTablets ? adoption.postTabletsExemptKeys : []});
     if (!postflight || typeof postflight !== 'object') fail('POSTFLIGHT_VERIFICATION_FAILED');
     // The ledger must be unchanged by the read-only checks above (guards against concurrent change during attestation).
     if (JSON.stringify(readTabletsLedger(sql => q(sql, 'ledger_sql'))) !== JSON.stringify(ledger)) fail('LEDGER_CHANGED');
