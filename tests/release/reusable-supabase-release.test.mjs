@@ -307,7 +307,7 @@ const baseEnv = {
   CHAT_DB_POOLER_HOST: 'aws-0-ap-south-1.pooler.supabase.com', CHAT_DB_SSL_ROOT_CERT_PEM: validPem
 };
 
-function makeRunner({before, after, pre = goodPre, post, version, filename, calls = []}) {
+function makeRunner({before, after, pre = goodPre, post, version, filename, calls = [], sql}) {
   let listCalls = 0;
   return (cmd, args) => {
     calls.push(cmd === 'psql' ? `psql:${args[args.length - 1].split('\n')[0]}` : `${cmd} ${args.filter(a => !a.startsWith('--')).join(' ')}`);
@@ -328,7 +328,7 @@ function makeRunner({before, after, pre = goodPre, post, version, filename, call
     if (cmd === 'supabase' && args.includes('list')) return ledger(listCalls++ === 0 ? before : after);
     if (cmd === 'psql') {
       const q = args[args.length - 1];
-      return JSON.stringify(q.includes('accessories-preflight') ? pre : post);
+      return JSON.stringify(sql ? sql(q) : q.includes('accessories-preflight') ? pre : post);
     }
     return '';
   };
@@ -401,7 +401,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'moderation-analytics-v1', 'moderation-azure-v1']);
+  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'moderation-analytics-v1', 'moderation-azure-v1', 'tablets-v1-activation', 'tablets-v1-foundation']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -893,4 +893,91 @@ test('workflow gates Production behind verified evidence and keeps moderation au
   assert(!/^name:.*accessories/im.test(yaml));
   const secrets = [...yaml.matchAll(/secrets\.([A-Z0-9_]+)/g)].map(m => m[1]).sort();
   assert.deepEqual([...new Set(secrets)], ['CHAT_DATABASE_PASSWORD', 'CHAT_DB_SSL_ROOT_CERT_PEM', 'CHAT_RELEASE_AUDIT_TOKEN', 'FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN', 'FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN']);
+});
+
+test('Tablets SQL is pinned and both Accessories stages must precede it', () => {
+  const foundation = verifyCandidateSha('tablets-v1-foundation').candidate;
+  const activation = verifyCandidateSha('tablets-v1-activation').candidate;
+  const ledger = (...versions) => 'LOCAL | REMOTE | TIME (UTC)\n' + versions.map(v => `${v} | ${v} | time`).join('\n');
+  const prerequisites = ['20261102164135', '20261102164137'];
+  assert.throws(() => assertLedgerOrdering(foundation, ledger(prerequisites[0])), /PREREQUISITE_MIGRATION_MISSING/);
+  assert.equal(assertLedgerOrdering(foundation, ledger(...prerequisites)).state, 'absent');
+  assert.throws(() => assertLedgerOrdering(activation, ledger(...prerequisites)), /PREREQUISITE_MIGRATION_MISSING/);
+  assert.equal(assertLedgerOrdering(activation, ledger(...prerequisites, foundation.version)).state, 'absent');
+  assert.throws(() => assertLedgerOrdering(foundation, ledger(...prerequisites, activation.version)), /INCOMPATIBLE_MIGRATION_ORDER/);
+});
+
+test('Tablets Production requires the corresponding successful Test stages', () => {
+  const inputs = {
+    web_staging_sha: ACCESSORIES_WEB.stagingSha,
+    web_production_sha: '1'.repeat(40),
+    test_foundation_run_id: '12',
+    test_activation_run_id: '13',
+    prod_foundation_run_id: '14'
+  };
+  const plan = (stage, evidence = inputs) =>
+    planDispatch({candidateId: `tablets-v1-${stage}`, target: 'production', inputs: evidence});
+  assert.deepEqual(plan('foundation').priorRuns.map(r => [r.candidateId, r.environment]), [
+    ['tablets-v1-foundation', 'test'], ['tablets-v1-activation', 'test']
+  ]);
+  assert.deepEqual(plan('activation').priorRuns.map(r => [r.candidateId, r.environment]), [
+    ['tablets-v1-activation', 'test'], ['tablets-v1-foundation', 'prod']
+  ]);
+  assert.equal(plan('foundation').webStagingSha, '1039873c2fa62845f19627d298cb9f3ba185d819');
+  assert.throws(() => plan('foundation', {...inputs, web_staging_sha: 'b5efb427b0cd5cb8acb0f8503593eebcaafce39e'}),
+    /WEB_STAGING_VERIFICATION_REQUIRED/);
+  assert.throws(() => plan('foundation', {...inputs, test_activation_run_id: ''}), /EVIDENCE_RUN_REQUIRED/);
+  assert.throws(() => plan('activation', {...inputs, prod_foundation_run_id: ''}), /EVIDENCE_RUN_REQUIRED/);
+});
+
+test('Tablets ledger postflight detects changed historical SQL and wrong candidate identity', async () => {
+  const {verifyTabletsLedger} = await import('../../scripts/release/tablets-v1-release.mjs');
+  const candidate = getCandidate('tablets-v1-foundation');
+  const old = {version: '20261102164135', name: 'accessories_v1', statementsSha256: 'a'.repeat(64), hasStatements: true};
+  const next = {version: candidate.version, name: 'posting_v2_tablets', statementsSha256: 'b'.repeat(64), hasStatements: true};
+  assert.equal(verifyTabletsLedger([old], [old, next], candidate), next.statementsSha256);
+  assert.throws(() => verifyTabletsLedger([old], [{...old, statementsSha256: 'c'.repeat(64)}, next], candidate), /LEDGER_CHANGED/);
+  assert.throws(() => verifyTabletsLedger([old], [old, {...next, name: 'wrong'}], candidate), /LEDGER_CHANGED/);
+});
+
+test('Tablets release checks history before apply and records the installed statement hash', async () => {
+  const candidateId = 'tablets-v1-foundation';
+  const candidate = getCandidate(candidateId);
+  const names = {
+    '20261102164135': 'accessories_v1',
+    '20261102164137': 'activate_accessories_v1',
+    [candidate.version]: 'posting_v2_tablets'
+  };
+  const before = [...baseHistory, ...candidate.requiredLedgerVersions];
+  const after = [...before, candidate.version];
+  const entry = version => ({
+    version, name: names[version] ?? 'historical', hasStatements: true, statementsSha256: 'a'.repeat(64)
+  });
+  const mock = change => {
+    let reads = 0;
+    return {
+      before, after,
+      sql: query => {
+        assert.match(query, /^BEGIN READ ONLY;/);
+        if (!query.includes('supabase_migrations.schema_migrations')) {
+          return Object.fromEntries([...query.matchAll(/'([a-z_]+)', \(/g)].map(([, key]) => [key, true]));
+        }
+        const history = (++reads < 3 ? before : after).map(entry);
+        if (change && reads === 2) history[0].statementsSha256 = 'b'.repeat(64);
+        return history;
+      }
+    };
+  };
+  const {receipt, dir} = await release(candidateId, 'FairSwapTest', mock(false));
+  try {
+    assert.equal(receipt.ledgerStatementsSha256, 'a'.repeat(64));
+    assert.equal(receipt.postflightVerified, true);
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+  const calls = [];
+  const runner = makeRunner({...mock(true), filename: candidate.filename, calls});
+  await assert.rejects(releaseReusable({environment: 'FairSwapTest', candidateId, context: baseEnv, runner}),
+    /TABLETS_LEDGER_CHANGED/);
+  assert.equal(calls.filter(call => call.startsWith('supabase db push ')).length, 1);
 });

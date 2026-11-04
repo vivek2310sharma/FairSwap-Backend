@@ -8,10 +8,12 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
-import {getCandidate, verifyCandidateSha, PROJECT_REFS} from './reusable-candidates.mjs';
+import {CANDIDATES, getCandidate, verifyCandidateSha, PROJECT_REFS} from './reusable-candidates.mjs';
 import {
   assertLedgerOrdering, assertStageInputs, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved
 } from './accessories-v1-release.mjs';
+
+import {readTabletsLedger, runTabletsPostflight, runTabletsPreflight, verifyTabletsLedger} from './tablets-v1-release.mjs';
 
 export const REFS = PROJECT_REFS;
 
@@ -323,6 +325,10 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
     }
     return check;
   }
+  if (candidate.id.startsWith('tablets-v1-')) {
+    return runTabletsPostflight(candidate.stage === 'activation',
+      sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+  }
   if (candidate.strict) {
     const rawOutput = psqlQuery(postflightQuery(candidate.stage), psqlUrl, env, runner, 'postflight_sql');
     return runAccessoriesPostflight(candidate, rawOutput);
@@ -437,6 +443,10 @@ export async function releaseReusable({
     const initialLedger = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
     let isAlreadyApplied = false;
     let beforeRemote = null;
+    const tablets = candidate.id.startsWith('tablets-v1-');
+    const readLedger = () => readTabletsLedger(sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
+    let ledgerBefore;
+    let ledgerStatementsSha256;
     if (candidate.strict) {
       // Prerequisites, ordering and partial state fail closed; resumption of a verified release is allowed in both environments.
       const ordering = assertLedgerOrdering(candidate, initialLedger);
@@ -448,6 +458,30 @@ export async function releaseReusable({
         isAlreadyApplied = true;
       } catch {
         isAlreadyApplied = false;
+      }
+    }
+
+    if (tablets) {
+      // A pre-existing entry has no trusted receipt tying it to the reviewed source bytes.
+      if (isAlreadyApplied) throw new Error('REUSABLE_RELEASE_TABLETS_ALREADY_RECORDED');
+      ledgerBefore = readLedger();
+      for (const version of candidate.requiredLedgerVersions) {
+        const prerequisite = Object.values(CANDIDATES).find(entry => entry.version === version);
+        const row = ledgerBefore.find(entry => entry.version === version);
+        if (!row?.hasStatements || row.name !== prerequisite.filename.slice(15, -4)) {
+          throw new Error('REUSABLE_RELEASE_TABLETS_PREREQUISITE_LEDGER_MISMATCH');
+        }
+      }
+      if (candidate.stage === 'activation' &&
+          ledgerBefore.find(row => row.version === '20261102165946')?.statementsSha256 !== context.TABLETS_FOUNDATION_LEDGER_SHA) {
+        throw new Error('REUSABLE_RELEASE_TABLETS_FOUNDATION_EVIDENCE_MISMATCH');
+      }
+      if (environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
+        throw new Error('REUSABLE_RELEASE_TABLETS_TEST_LEDGER_EVIDENCE_REQUIRED');
+      }
+      if (ledgerBefore.length !== beforeRemote.size || ledgerBefore.some(row =>
+        !beforeRemote.has(row.version) || row.version >= candidate.version)) {
+        throw new Error('REUSABLE_RELEASE_TABLETS_LEDGER_MISMATCH');
       }
     }
 
@@ -465,7 +499,8 @@ export async function releaseReusable({
       // Standard path: candidate-only dry run, migration apply, ledger verification and postflight
       if (candidate.strict) {
         phase = 'preflight';
-        runLivePreflight(candidate, sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
+        const preflight = tablets ? runTabletsPreflight : runLivePreflight;
+        preflight(candidate, sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
       }
         // 4. Copy candidate migration into workspace
       const destMigration = join(workspace, 'supabase/migrations', candidate.filename);
@@ -481,6 +516,9 @@ export async function releaseReusable({
       dryRunPending = parsePendingDryRun(dryRunOutput, candidate.filename);
 
       // 6. Apply candidate migration
+      if (tablets && JSON.stringify(readLedger()) !== JSON.stringify(ledgerBefore)) {
+        throw new Error('REUSABLE_RELEASE_TABLETS_LEDGER_CHANGED');
+      }
       phase = 'apply';
       run('supabase', ['db', 'push', '--db-url', psqlUrl, '--yes', '--workdir', workspace], env);
 
@@ -489,6 +527,12 @@ export async function releaseReusable({
       const ledgerOutput = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
       verifyLedgerVersion(ledgerOutput, candidate.version);
       if (candidate.strict) verifyHistoryPreserved(beforeRemote, ledgerOutput, candidate.version);
+      if (tablets) {
+        ledgerStatementsSha256 = verifyTabletsLedger(ledgerBefore, readLedger(), candidate);
+        if (environment === 'FairSwapProd' && ledgerStatementsSha256 !== context.TABLETS_CANDIDATE_LEDGER_SHA) {
+          throw new Error('REUSABLE_RELEASE_TABLETS_TEST_LEDGER_MISMATCH');
+        }
+      }
 
       // 8. Automated Read-only Postflight Verification (awaited and validated before receipt)
       phase = 'postflight';
@@ -512,6 +556,7 @@ export async function releaseReusable({
       status,
       dryRunPending,
       postflightVerified: true,
+      ...(tablets ? {ledgerStatementsSha256} : {}),
       ...(candidate.strict ? {
         stage: candidate.stage,
         webStagingSha: stagePlan.webStagingSha,

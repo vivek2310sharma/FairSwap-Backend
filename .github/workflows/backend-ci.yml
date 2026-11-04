@@ -105,6 +105,14 @@ jobs:
           node scripts/ci/test-tablets-v1.mjs tests/ratings --with-accessories
           node scripts/ci/test-tablet-phone-wrapper.mjs tests/ratings
 
+      - name: Require Wearables V1 SQL, catalogue, RLS and cross-category PGlite regressions
+        timeout-minutes: 9
+        run: |
+          PG=tests/ratings/node_modules/@electric-sql/pglite/dist/index.js
+          WEB="$GITHUB_WORKSPACE/tests/wearables-v1/web-fixture"
+          node scripts/ci/test-wearables-v1.mjs --pglite-module="$PG" --web="$WEB"
+          node scripts/ci/test-wearables-tablets-v1.mjs --pglite-module="$PG" --web="$WEB"
+
       - name: Require all 115 public search regression checks (pinned PGlite)
         timeout-minutes: 2
         run: |
@@ -242,6 +250,12 @@ jobs:
             bash tests/posting-v212/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin" --accessories-v1
           env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
             bash tests/tablets-v1/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+
+      - name: Require Wearables V1 native PG17 ownership, concurrency and Tablet race regressions
+        timeout-minutes: 7
+        run: |
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
+            bash tests/wearables-v1/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin" --web="$GITHUB_WORKSPACE/tests/wearables-v1/web-fixture"
 
       - name: Require Accessories V1 release guards on native PostgreSQL 17
         timeout-minutes: 4
