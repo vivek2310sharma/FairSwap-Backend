@@ -1,0 +1,30 @@
+brand,evidence_url,source_type
+Acer,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue
+Alcatel,https://us.alcatelmobile.com/alcatel-joy-tab-2/,manufacturer
+Amazon,https://developer.amazon.com/docs/device-specs/ft-device-specifications-firehd-models.html,manufacturer
+Apple,https://support.apple.com/en-in/108043,manufacturer
+Asus,https://www.asus.com/laptops/for-home/everyday-use/asus-transformer-mini-t102/techspec/,manufacturer
+Datawind,https://www.gadgets360.com/tablets/news/datawind-ubislate-7ci-and-ubislate-7c-budget-android-tablets-launched-in-uk-459671,contemporaneous launch reporting
+Google,https://support.google.com/googlepixeltablet/answer/13555146?hl=en-AU,manufacturer
+Honor,https://www.honor.com/global/tablets/comparison/,manufacturer
+Huawei,https://consumer.huawei.com/en/tablets/matepad-se-11/,manufacturer
+iBall,https://www.gadgets360.com/tablets/news/iball-slide-q27-4g-tablet-with-reliance-jio-support-launched-at-rs-12799-1475381,contemporaneous launch reporting
+Infinix,https://infinixmobiles.in/collections/tablets,manufacturer
+iQOO,https://www.vivo.com.cn/vivo/iqoopad/,manufacturer
+itel,https://www.gadgets360.com/tablets/news/itel-pad-one-tablet-price-in-india-rs-12999-specifications-features-3831825,contemporaneous Indian launch reporting
+Lava,https://www.gadgets360.com/lava-ivorys-1563,contemporaneous launch reporting
+Lenovo,https://news.lenovo.com/pressroom/press-releases/top-seven-reasons-new-lenovo-tab-v7-tablet-and-smartphone/,manufacturer
+Micromax,https://www.gadgets360.com/videos/micromax-funbook-talk-p360-launched-for-rs-7049-271424,contemporaneous launch reporting
+Microsoft,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer
+Motorola,https://www.motorola.in/tablet,manufacturer
+Nokia,https://www.hmd.com/en_in/nokia-smartphones-and-tablets,manufacturer
+OnePlus,https://www.oneplus.in/pad-4,manufacturer
+Oppo,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue
+POCO,https://www.po.co/global/product/poco-pad-m1/,manufacturer
+realme,https://www.realme.com/in/realme-pad,manufacturer
+Redmi,https://www.mi.com/global/support/faq/details/KA-267783/,manufacturer
+Samsung,https://news.samsung.com/in/samsung-galaxy-j2-2016-launched-with-industry-first-turbo-speed-technology-and-smart-glow-versatile-large-screen-galaxy-j-max-also-introduced,manufacturer
+Swipe,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue
+Tecno,https://www.tecno-mobile.com/laptops/product-detail/product/megapad-11/,manufacturer
+Vivo,https://asia-exstatic-vivofs.vivo.com/PSee2l50xoirPK7y/activity/1726036437437/zip/img/vivo_Sustainability_Report_2023.pdf,manufacturer
+Xiaomi,https://www.phonearena.com/news/Xiaomi-Mi-Pad-4-Plus-official_id107757,contemporaneous launch reporting

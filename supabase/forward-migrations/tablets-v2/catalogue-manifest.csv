@@ -1,0 +1,277 @@
+canonical_brand,canonical_model,canonical_family,verified_release_year,evidence_url,source_type,market,decision,aliases,source_rows
+Acer,Iconia One 10,Iconia,,https://global-download.acer.com/GDFiles/Document/User%20Manual/User%20Manual_Acer_1.0_A_A.pdf?Step2=ICONIA+ONE+10&Step3=B3-A50FHD&acerid=636632571247286526,manufacturer,import identity; India availability unverified,publish,Acer Iconia One 10,2
+Acer,Iconia One 7,Iconia,,https://global-download.acer.com/GDFiles/Document/User%20Manual/User%20Manual_Acer_1.0_A_A.pdf?Step2=ICONIA+ONE+7&Step3=B1-7A0&acerid=636420141445662720,manufacturer,import identity; India availability unverified,publish,Acer Iconia One 7,3
+Acer,Iconia One 8,Iconia,,https://news.acer.com/acer-launches-pocket-friendly-8-inch-android-tablet-for-families,manufacturer,import identity; India availability unverified,publish,Acer Iconia One 8,4
+Acer,Iconia Tab 10,Iconia,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Acer Iconia Tab 10,5
+Alcatel,1T 10,Alcatel 1T,2018,https://www.alcatelmobile.com/legacy/tcl-communication-unveils-two-new-accessibly-priced-alcatel-tablets-with-android-8-1-oreo-at-mobile-world-congress-2018/,manufacturer,import identity; India availability unverified,publish,Alcatel 1T 10,6
+Alcatel,1T 7,Alcatel 1T,2018,https://www.alcatelmobile.com/legacy/tcl-communication-unveils-two-new-accessibly-priced-alcatel-tablets-with-android-8-1-oreo-at-mobile-world-congress-2018/,manufacturer,import identity; India availability unverified,publish,Alcatel 1T 7,7
+Alcatel,3T 10,Alcatel 3T,,https://www.alcatelmobile.com/wp-content/uploads/2020/10/Aquaman-10-4G_UM_EUEN_V0.3.pdf,manufacturer,import identity; India availability unverified,publish,Alcatel 3T 10,8
+Alcatel,3T 8,Alcatel 3T,2018,https://www.alcatelmobile.com/legacy/tcl-communication-introduces-alcatel-3t-8-tablet-powered-by-android-oreo-go-edition-at-ifa-2018/,manufacturer,import identity; India availability unverified,publish,Alcatel 3T 8,9
+Alcatel,JOY TAB,JOY TAB,,https://us.alcatelmobile.com/alcatel-joy-tab/,manufacturer,import identity; India availability unverified,publish,Alcatel Joy Tab,10
+Alcatel,JOY TAB 2,JOY TAB,,https://us.alcatelmobile.com/alcatel-joy-tab-2/,manufacturer,import identity; India availability unverified,publish,Alcatel Joy Tab 2,11
+Amazon,Fire 7 (2017),Fire,2017,https://developer.amazon.com/docs/device-specs/ft-device-specifications-fire-models.html,manufacturer,import identity; India availability unverified,publish,,12
+Amazon,Fire 7 (2019),Fire,2019,https://developer.amazon.com/docs/device-specs/ft-device-specifications-fire-models.html,manufacturer,import identity; India availability unverified,publish,,13
+Amazon,Fire 7 (2022),Fire,2022,https://developer.amazon.com/docs/device-specs/ft-device-specifications-fire-models.html,manufacturer,import identity; India availability unverified,publish,,14
+Amazon,Fire HD 10 (2017),Fire HD,2017,https://developer.amazon.com/docs/device-specs/ft-device-specifications-firehd-models.html,manufacturer,import identity; India availability unverified,publish,,15
+Amazon,Fire HD 10 (2019),Fire HD,2019,https://developer.amazon.com/docs/device-specs/ft-device-specifications-firehd-models.html,manufacturer,import identity; India availability unverified,publish,,16
+Amazon,Fire HD 10 (2021),Fire HD,2021,https://developer.amazon.com/docs/device-specs/ft-device-specifications-firehd-models.html,manufacturer,import identity; India availability unverified,publish,,17
+Amazon,Fire HD 10 (2023),Fire HD,2023,https://developer.amazon.com/docs/device-specs/ft-device-specifications-firehd-models.html,manufacturer,import identity; India availability unverified,publish,,manufacturer addition
+Amazon,Fire HD 10 Plus (2021),Fire HD,2021,https://developer.amazon.com/docs/device-specs/ft-device-specifications-firehd-models.html,manufacturer,import identity; India availability unverified,publish,,18
+Amazon,Fire HD 8 (2018),Fire HD,2018,https://developer.amazon.com/docs/device-specs/ft-device-specifications-firehd-models.html,manufacturer,import identity; India availability unverified,publish,,19
+Amazon,Fire HD 8 (2020),Fire HD,2020,https://developer.amazon.com/docs/device-specs/ft-device-specifications-firehd-models.html,manufacturer,import identity; India availability unverified,publish,,20
+Amazon,Fire HD 8 (2022),Fire HD,2022,https://developer.amazon.com/docs/device-specs/ft-device-specifications-firehd-models.html,manufacturer,import identity; India availability unverified,publish,,21
+Amazon,Fire HD 8 (2024),Fire HD,2024,https://developer.amazon.com/docs/device-specs/ft-device-specifications-firehd-models.html,manufacturer,import identity; India availability unverified,publish,,manufacturer addition
+Amazon,Fire HD 8 Plus (2022),Fire HD,2022,https://developer.amazon.com/docs/device-specs/ft-device-specifications-firehd-models.html,manufacturer,import identity; India availability unverified,publish,,22
+Amazon,Fire Max 11,Fire HD,2023,https://developer.amazon.com/docs/device-specs/ft-device-specifications-firehd-models.html,manufacturer,import identity; India availability unverified,publish,,23
+Apple,iPad (10th generation),iPad,2022,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,retain-existing,,24
+Apple,iPad (3rd generation),iPad,2012,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,iPad 3,33
+Apple,iPad (4th generation),iPad,2012,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,25
+Apple,iPad (5th generation),iPad,2017,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,26
+Apple,iPad (6th generation),iPad,2018,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,27
+Apple,iPad (7th generation),iPad,2019,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,28
+Apple,iPad (8th generation),iPad,2020,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,29
+Apple,iPad (9th generation),iPad,2021,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,retain-existing,,30
+Apple,iPad (A16),iPad,2025,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,"iPad (A16, 11-inch)",31
+Apple,iPad 2,iPad,2011,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,32
+Apple,iPad Air,iPad Air,2013,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,iPad Air (1st generation),34
+Apple,iPad Air (3rd generation),iPad Air,2019,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,35
+Apple,iPad Air (4th generation),iPad Air,2020,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,36
+Apple,iPad Air (5th generation),iPad Air,2022,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,retain-existing,,37
+Apple,iPad Air 11-inch (M2),iPad Air,2024,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,38
+Apple,iPad Air 11-inch (M3),iPad Air,2025,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,39
+Apple,iPad Air 13-inch (M2),iPad Air,2024,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,40
+Apple,iPad Air 13-inch (M3),iPad Air,2025,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,41
+Apple,iPad Air 2,iPad Air,2014,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,42
+Apple,iPad Pro (10.5-inch),iPad Pro,2017,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,iPad Pro 10.5-inch,62
+Apple,iPad Pro (12.9-inch),iPad Pro,2015,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,iPad Pro 12.9-inch (1st generation),63
+Apple,iPad Pro (9.7-inch),iPad Pro,2016,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,iPad Pro 9.7-inch,65
+Apple,iPad Pro 11-inch (1st generation),iPad Pro,2018,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,50
+Apple,iPad Pro 11-inch (2nd generation),iPad Pro,2020,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,52
+Apple,iPad Pro 11-inch (3rd generation),iPad Pro,2021,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,retain-existing,,54
+Apple,iPad Pro 11-inch (4th generation),iPad Pro,2022,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,56
+Apple,iPad Pro 11-inch (M4),iPad Pro,2024,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,58
+Apple,iPad Pro 11-inch (M5),iPad Pro,2025,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,60
+Apple,iPad Pro 12.9-inch (2nd generation),iPad Pro,2017,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,64
+Apple,iPad Pro 12.9-inch (3rd generation),iPad Pro,2018,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,51
+Apple,iPad Pro 12.9-inch (4th generation),iPad Pro,2020,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,53
+Apple,iPad Pro 12.9-inch (5th generation),iPad Pro,2021,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,55
+Apple,iPad Pro 12.9-inch (6th generation),iPad Pro,2022,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,57
+Apple,iPad Pro 13-inch (M4),iPad Pro,2024,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,59
+Apple,iPad Pro 13-inch (M5),iPad Pro,2025,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,61
+Apple,iPad mini,iPad mini,2012,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,iPad mini (1st generation),43
+Apple,iPad mini (5th generation),iPad mini,2019,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,44
+Apple,iPad mini (6th generation),iPad mini,2021,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,retain-existing,,45
+Apple,iPad mini (A17 Pro),iPad mini,2024,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,46
+Apple,iPad mini 2,iPad mini,2013,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,47
+Apple,iPad mini 3,iPad mini,2014,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,48
+Apple,iPad mini 4,iPad mini,2015,https://support.apple.com/en-in/108043,manufacturer,India support catalogue; includes legacy,publish,,49
+Asus,Transformer 3,Transformer,,https://www.asus.com/event/2016/productguide/id/Transformer-3.pdf,manufacturer,import identity; India availability unverified,publish,Asus Transformer 3,66
+Asus,Transformer Mini T102,Transformer,,https://www.asus.com/laptops/for-home/everyday-use/asus-transformer-mini-t102/techspec/,manufacturer,import identity; India availability unverified,publish,Asus Transformer Mini,67
+Asus,ZenPad 10,ZenPad,,https://www.asus.com/mobile-handhelds/tablets/all-series/asus-zenpad-10-z300cnl/techspec/,manufacturer,import identity; India availability unverified,publish,Asus ZenPad 10,68
+Asus,ZenPad 3S 10,ZenPad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Asus ZenPad 3S 10,69
+Asus,ZenPad 7.0,ZenPad,,https://www.asus.com/event/2015/productguide/vn/Mobile-Booklet_Q42015_ACVN.pdf,manufacturer,import identity; India availability unverified,publish,Asus ZenPad 7.0,70
+Asus,ZenPad 8.0,ZenPad,,https://www.asus.com/event/2015/productguide/vn/Mobile-Booklet_Q42015_ACVN.pdf,manufacturer,import identity; India availability unverified,publish,Asus ZenPad 8.0,71
+Asus,ZenPad Z8,ZenPad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Asus ZenPad Z8,72
+Datawind,UbiSlate 10Ci,UbiSlate,,https://indianexpress.com/article/technology/mobile-tabs/datawind-launches-10-inch-ubislate-models-for-rs-5999/lite/,contemporaneous Indian launch reporting,India legacy,publish,Datawind Ubislate 10Ci,73
+Datawind,UbiSlate 3G7,UbiSlate,,https://www.gadgets360.com/tablets/news/datawind-ubislate-7cx-ubislate-3g7-and-ubislate-9ci-tablets-launched-in-india-430005,contemporaneous launch reporting,India legacy,publish,Datawind Ubislate 3G7,74
+Datawind,UbiSlate 7C+,UbiSlate,,https://www.gadgets360.com/tablets/news/datawind-ubislate-7ci-and-ubislate-7c-budget-android-tablets-launched-in-uk-459671,contemporaneous launch reporting,import identity; India availability unverified,publish,Datawind Ubislate 7C+,75
+Datawind,UbiSlate 7Ci,UbiSlate,,https://www.gadgets360.com/tablets/news/datawind-ubislate-7ci-and-ubislate-7c-budget-android-tablets-launched-in-uk-459671,contemporaneous launch reporting,import identity; India availability unverified,publish,Datawind Ubislate 7Ci,76
+Datawind,UbiSlate 7Cx,UbiSlate,,https://www.gadgets360.com/tablets/news/datawind-ubislate-7cx-ubislate-3g7-and-ubislate-9ci-tablets-launched-in-india-430005,contemporaneous launch reporting,India legacy,publish,,manufacturer addition
+Datawind,UbiSlate 9Ci,UbiSlate,,https://www.gadgets360.com/tablets/news/datawind-ubislate-7cx-ubislate-3g7-and-ubislate-9ci-tablets-launched-in-india-430005,contemporaneous launch reporting,India legacy,publish,Datawind Ubislate 9Ci,77
+Google,Pixel C,Pixel,,https://support.google.com/pixel/faq/6323244?hl=en,manufacturer,import identity; India availability unverified,publish,,78
+Google,Pixel Tablet,Pixel,,https://support.google.com/googlepixeltablet/answer/13555146?hl=en-AU,manufacturer,import identity; India availability unverified,publish,,79
+Honor,Pad 10,Honor Pad,,https://www.honor.com/global/tablets/comparison/,manufacturer,import identity; India availability unverified,publish,Honor Pad 10,80
+Honor,Pad 8,Honor Pad,,https://www.honor.com/in/tablets/,manufacturer,India catalogue,publish,Honor Pad 8,82
+Honor,Pad 9,Honor Pad,,https://www.honor.com/in/tablets/,manufacturer,India catalogue,publish,Honor Pad 9,83
+Honor,Pad X8,Honor Pad,,https://www.honor.com/in/tablets/,manufacturer,India catalogue,publish,Honor Pad X8,84
+Honor,Pad X8a,Honor Pad,,https://www.honor.com/in/tablets/,manufacturer,India catalogue,publish,Honor Pad X8a,85
+Honor,Pad X9,Honor Pad,,https://www.honor.com/in/tablets/,manufacturer,India catalogue,publish,Honor Pad X9,86
+Honor,Pad X9a,Honor Pad,,https://www.honor.com/global/tablets/comparison/,manufacturer,import identity; India availability unverified,publish,Honor Pad X9a,87
+Huawei,MatePad 11.5 (2025),MatePad,2025,https://consumer.huawei.com/ro/tablets/matepad-11-5-2025/specs/,manufacturer,import identity; India availability unverified,publish,,manufacturer addition
+Huawei,MatePad Pro 12.6,MatePad,,https://consumer.huawei.com/sa-en/tablets/matepad-pro-12-6/specs/,manufacturer,import identity; India availability unverified,publish,Huawei MatePad Pro 12.6,92
+Huawei,MatePad Pro 13.2,MatePad,,https://consumer.huawei.com/fr/tablets/matepad-pro-13-2/specs/,manufacturer,import identity; India availability unverified,publish,Huawei MatePad Pro 13.2,93
+Huawei,MatePad SE,MatePad,,https://consumer.huawei.com/es/tablets/matepad-se/buy/,manufacturer,import identity; India availability unverified,publish,Huawei MatePad SE,94
+Huawei,MatePad SE 11,MatePad,,https://consumer.huawei.com/en/tablets/matepad-se-11/,manufacturer,import identity; India availability unverified,publish,,manufacturer addition
+Huawei,MatePad T 10s,MatePad,,https://consumer.huawei.com/ph/tablets/matepad-t-10s/buy/,manufacturer,import identity; India availability unverified,publish,Huawei MatePad T10s,96
+Huawei,MediaPad M2,MediaPad,,https://consumer.huawei.com/cn/support/content/zh-cn16040437/,manufacturer,import identity; India availability unverified,publish,Huawei MediaPad M2,97
+Huawei,MediaPad M5 10.8,MediaPad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,manufacturer addition
+Huawei,MediaPad M5 8.4,MediaPad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,manufacturer addition
+Huawei,MediaPad M5 lite,MediaPad,,https://consumer.huawei.com/cn/support/content/zh-cn16040437/,manufacturer,import identity; India availability unverified,publish,Huawei MediaPad M5 Lite,100
+Huawei,MediaPad T3,MediaPad,,https://consumer.huawei.com/cn/support/content/zh-cn16040437/,manufacturer,import identity; India availability unverified,publish,Huawei MediaPad T3,101
+Huawei,MediaPad T5,MediaPad,,https://consumer.huawei.com/cn/support/content/zh-cn16040437/,manufacturer,import identity; India availability unverified,publish,Huawei MediaPad T5,102
+Infinix,XPAD,XPAD,,https://infinixmobiles.in/collections/tablets,manufacturer,India catalogue,publish,Infinix XPAD,112
+Infinix,XPAD 20,XPAD,,https://infinixmobiles.in/collections/tablets,manufacturer,India catalogue,publish,Infinix XPAD 20,113
+Lava,Aura,Lava tablet,2021,https://www.gadgets360.com/tablets/news/lava-magnum-xl-aura-ivory-price-in-india-rs-11999-9999-7399-launch-specifications-features-2396513/amp,contemporaneous Indian launch reporting,India legacy,publish,Lava Aura Tab,120
+Lava,Ivory,Lava tablet,2021,https://www.gadgets360.com/tablets/news/lava-magnum-xl-aura-ivory-price-in-india-rs-11999-9999-7399-launch-specifications-features-2396513/amp,contemporaneous Indian launch reporting,India legacy,publish,Lava Ivory Pad,121
+Lava,IvoryS,Ivory,,https://www.gadgets360.com/lava-ivorys-1563,contemporaneous launch reporting,India legacy,publish,Lava Ivory S,122
+Lava,Magnum XL,Lava tablet,2021,https://www.gadgets360.com/tablets/news/lava-magnum-xl-aura-ivory-price-in-india-rs-11999-9999-7399-launch-specifications-features-2396513/amp,contemporaneous Indian launch reporting,India legacy,publish,Lava Magnum XL,123
+Lenovo,Tab 4 10,Lenovo Tab 4,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab 4 10,126
+Lenovo,Tab 4 10 Plus,Lenovo Tab 4,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab 4 10 Plus,127
+Lenovo,Tab 4 8,Lenovo Tab 4,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab 4 8,128
+Lenovo,Tab 4 8 Plus,Lenovo Tab 4,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab 4 8 Plus,129
+Lenovo,Tab E10,Lenovo Tab E,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab E10,130
+Lenovo,Tab E7,Lenovo Tab E,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab E7,131
+Lenovo,Tab E8,Lenovo Tab E,,https://psrefstuff.lenovo.com/syspool/Sys/PDF/datasheet/Tab_E8_datasheet_EN.pdf,manufacturer,import identity; India availability unverified,publish,Lenovo Tab E8,132
+Lenovo,Tab Extreme,Lenovo Tab,,https://psref.lenovo.com/Product/Lenovo_Tablets/Tab_extreme,manufacturer,import identity; India availability unverified,publish,Lenovo Tab Extreme,149
+Lenovo,Tab K10,Lenovo Tab K,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab K10,133
+Lenovo,Tab M10 (3rd Gen),Lenovo Tab M,,https://pcsupport.lenovo.com/us/en/products/tablets/m-series-tablets/tab-m10-3rd-gen/solutions/ht513574-lenovo-tab-m10-3rd-gen-tb328fu-tb328xu-frequently-asked-questions-faqs,manufacturer,import identity; India availability unverified,publish,Lenovo Tab M10 (3rd Gen),135
+Lenovo,Tab M10 (FHD),Lenovo Tab M,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,manufacturer addition
+Lenovo,Tab M10 (HD),Lenovo Tab M,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab M10 HD,137
+Lenovo,Tab M10 5G,Lenovo Tab,,https://psref.lenovo.com/Product/Lenovo_Tablets/Tab_M10_5G,manufacturer,import identity; India availability unverified,publish,,manufacturer addition
+Lenovo,Tab M10 FHD Plus,Lenovo Tab M,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab M10 FHD Plus,136
+Lenovo,Tab M10 HD (2nd Gen),Lenovo Tab M,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,manufacturer addition
+Lenovo,Tab M10 Plus (3rd Gen),Lenovo Tab M,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab M10 Plus (3rd Gen),138
+Lenovo,Tab M11,Lenovo Tab,,https://psref.lenovo.com/Product/Lenovo_Tablets/Tab_M11,manufacturer,import identity; India availability unverified,publish,Lenovo Tab M11,139
+Lenovo,Tab M7,Lenovo Tab M,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab M7,140
+Lenovo,Tab M7 (3rd Gen),Lenovo Tab M,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab M7 (3rd Gen),141
+Lenovo,Tab M8,Lenovo Tab M,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab M8,142
+Lenovo,Tab M8 (3rd Gen),Lenovo Tab M,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab M8 (3rd Gen),143
+Lenovo,Tab M8 (4th Gen),Lenovo Tab M,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab M8 (4th Gen),144
+Lenovo,Tab M9,Lenovo Tab M,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab M9,147
+Lenovo,Tab P11,Lenovo Tab P,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab P11,150
+Lenovo,Tab P11 (2nd Gen),Lenovo Tab P,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab P11 (2nd Gen),151
+Lenovo,Tab P11 Plus,Lenovo Tab P,,https://psref.lenovo.com/syspool/Sys/PDF/datasheet/Lenovo%20Tab%20P11%20Plus_datasheet_EN.pdf?linkId=190513870,manufacturer,import identity; India availability unverified,publish,Lenovo Tab P11 Plus,152
+Lenovo,Tab P11 Pro,Lenovo Tab P,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab P11 Pro,153
+Lenovo,Tab P11 Pro Gen 2,Lenovo Tab P,,https://www.lenovo.com/de/de/p/tablets/android-tablets/lenovo-tab-series/tab-p11-pro-gen-2/len103l0011,manufacturer,import identity; India availability unverified,publish,Lenovo Tab P11 Pro Gen 2,154
+Lenovo,Tab P12,Lenovo Tab,,https://psref.lenovo.com/Product/Lenovo_Tablets/Tab_P12,manufacturer,import identity; India availability unverified,publish,Lenovo Tab P12,155
+Lenovo,Tab P12 Pro,Lenovo Tab P,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab P12 Pro,156
+Lenovo,Tab Plus,Lenovo Tab,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Tab Plus,157
+Lenovo,Tab V7,Lenovo Tab,2019,https://news.lenovo.com/pressroom/press-releases/top-seven-reasons-new-lenovo-tab-v7-tablet-and-smartphone/,manufacturer,India legacy,publish,Lenovo Tab V7,148
+Lenovo,Yoga Smart Tab,Lenovo Yoga Tab,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Yoga Smart Tab,158
+Lenovo,Yoga Tab 11,Lenovo Yoga Tab,,https://psref.lenovo.com/Product/Lenovo_Tablets/Yoga_Tab_11,manufacturer,import identity; India availability unverified,publish,Lenovo Yoga Tab 11,159
+Lenovo,Yoga Tab 13,Lenovo Yoga Tab,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Lenovo Yoga Tab 13,160
+Lenovo,Yoga Tab 3 10-inch,Lenovo Yoga Tab,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,manufacturer addition
+Lenovo,Yoga Tab 3 8-inch,Lenovo Yoga Tab,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,manufacturer addition
+Lenovo,Yoga Tab 3 Plus,Lenovo Yoga Tab,,https://psref.lenovo.com/syspool/Sys/PDF/datasheet/Yoga_Tab_3_Plus_Datasheet_EN.pdf,manufacturer,import identity; India availability unverified,publish,,manufacturer addition
+Lenovo,Yoga Tab 3 Pro,Lenovo Yoga Tab,,https://support.lenovo.com/gb/en/solutions/pd104413-overview-for-yoga-tab-3-pro,manufacturer,import identity; India availability unverified,publish,Lenovo Yoga Tab 3 Pro,162
+Micromax,Canvas Plex Tab,Canvas,,https://www.gadgets360.com/tablets/news/micromax-canvas-plex-tab-price-india-specifications-eros-now-1743752/amp,contemporaneous launch reporting,India legacy,publish,Micromax Canvas Plex,163
+Micromax,Canvas Tab P701,Canvas Tab,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Micromax Canvas Tab P701,164
+Micromax,Canvas Tab P702,Canvas Tab,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Micromax Canvas Tab P702,165
+Micromax,Funbook Pro,Funbook,,https://www.gadgets360.com/tablets/news/micromax-launches-101-inch-funbook-pro-for-rs-9999-256143,contemporaneous launch reporting,India legacy,publish,Micromax Funbook Pro,166
+Micromax,Funbook Talk P360,Funbook,,https://www.gadgets360.com/videos/micromax-funbook-talk-p360-launched-for-rs-7049-271424,contemporaneous launch reporting,India legacy,publish,Micromax Funbook Talk,167
+Microsoft,Surface Go,Surface Go,2018,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer,import identity; India availability unverified,publish,,168
+Microsoft,Surface Go 2,Surface Go,2020,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer,import identity; India availability unverified,publish,,169
+Microsoft,Surface Go 3,Surface Go,2021,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer,import identity; India availability unverified,publish,,170
+Microsoft,Surface Go 4,Surface Go,2023,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer,import identity; India availability unverified,publish,,171
+Microsoft,Surface Pro 10 for Business,Surface Pro,2024,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer,import identity; India availability unverified,publish,Surface Pro 10,172
+Microsoft,Surface Pro 11th Edition (Snapdragon),Surface Pro,2024,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer,import identity; India availability unverified,publish,Surface Pro 11,173
+Microsoft,Surface Pro 6,Surface Pro,2018,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer,import identity; India availability unverified,publish,,174
+Microsoft,Surface Pro 7,Surface Pro,2019,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer,import identity; India availability unverified,publish,,175
+Microsoft,Surface Pro 7+,Surface Pro,2021,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer,import identity; India availability unverified,publish,,176
+Microsoft,Surface Pro 8,Surface Pro,2021,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer,import identity; India availability unverified,publish,,177
+Microsoft,Surface Pro 9,Surface Pro,2022,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer,import identity; India availability unverified,publish,,178
+Microsoft,Surface Pro X,Surface Pro,,https://learn.microsoft.com/en-us/surface/surface-driver-firmware-lifecycle-support,manufacturer,import identity; India availability unverified,publish,,179
+Motorola,Moto Pad 60 Neo,Moto Pad,,https://www.motorola.in/tablet,manufacturer,India catalogue,publish,,manufacturer addition
+Motorola,Moto Pad 60 Pro,Moto Pad,,https://www.motorola.in/tablet,manufacturer,India catalogue,publish,,manufacturer addition
+Motorola,Moto Pad 70,Moto Pad,,https://www.motorola.in/tablet,manufacturer,India catalogue,publish,,manufacturer addition
+Motorola,Moto Pad 70 Groove,Moto Pad,,https://www.motorola.in/tablet,manufacturer,India catalogue,publish,,manufacturer addition
+Motorola,Moto Pad 70 Pro,Moto Pad,,https://www.motorola.in/tablet,manufacturer,India catalogue,publish,,manufacturer addition
+Motorola,Moto Tab G20,Moto Tab,,https://www.motorola.in/tablet,manufacturer,India legacy,publish,Motorola Moto Tab G20,180
+Motorola,Moto Tab G62,Moto Tab,,https://www.motorola.in/tablet,manufacturer,India legacy,publish,Motorola Moto Tab G62,181
+Motorola,Moto Tab G70,Moto Tab,,https://www.motorola.in/tablet,manufacturer,India legacy,publish,Motorola Moto Tab G70,182
+Nokia,T10,Nokia T,,https://www.hmd.com/en_in/nokia-smartphones-and-tablets,manufacturer,India catalogue; includes legacy,publish,Nokia T10,184
+Nokia,T20,Nokia T,,https://www.hmd.com/en_in/nokia-smartphones-and-tablets,manufacturer,India catalogue; includes legacy,publish,Nokia T20,185
+Nokia,T21,Nokia T,,https://www.hmd.com/en_in/nokia-smartphones-and-tablets,manufacturer,India catalogue; includes legacy,publish,Nokia T21,186
+OnePlus,OnePlus Pad,OnePlus Pad,,https://www.oneplus.in/oneplus-pad,manufacturer,India catalogue,publish,,187
+OnePlus,OnePlus Pad 2,OnePlus Pad,,https://www.oneplus.in/oneplus-pad-2,manufacturer,India catalogue,publish,,188
+OnePlus,OnePlus Pad 3,OnePlus Pad,,https://www.oneplus.in/oneplus-pad-3,manufacturer,India catalogue,publish,,189
+OnePlus,OnePlus Pad 4,OnePlus Pad,,https://www.oneplus.in/pad-4,manufacturer,India catalogue,publish,,manufacturer addition
+OnePlus,OnePlus Pad Go,OnePlus Pad,,https://www.oneplus.in/oneplus-pad-go,manufacturer,India catalogue,publish,,190
+OnePlus,OnePlus Pad Go 2,OnePlus Pad,,https://www.oneplus.in/oneplus-pad-go-2,manufacturer,India catalogue,publish,,191
+OnePlus,OnePlus Pad Lite,OnePlus Pad,,https://www.oneplus.in/oneplus-pad-lite,manufacturer,India catalogue,publish,,192
+Oppo,OPPO Pad 2,OPPO Pad,,https://www.oppo.com/it/tablets/,manufacturer,import identity; India availability unverified,publish,Oppo Pad 2,194
+Oppo,OPPO Pad 3,OPPO Pad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Oppo Pad 3,195
+Oppo,OPPO Pad 3 Pro,OPPO Pad,,https://www.oppo.com/it/tablets/,manufacturer,import identity; India availability unverified,publish,,manufacturer addition
+Oppo,OPPO Pad Air,OPPO Pad,,https://www.oppo.com/it/tablets/,manufacturer,import identity; India availability unverified,publish,Oppo Pad Air,196
+Oppo,OPPO Pad Neo,OPPO Pad,,https://www.oppo.com/it/tablets/,manufacturer,import identity; India availability unverified,publish,Oppo Pad Neo,198
+Oppo,OPPO Pad SE,OPPO Pad,,https://www.oppo.com/it/tablets/,manufacturer,import identity; India availability unverified,publish,,manufacturer addition
+POCO,POCO Pad,POCO Pad,,https://www.po.co/global/product/poco-pad/,manufacturer,import identity; India availability unverified,publish,,199
+POCO,POCO Pad M1,POCO Pad,,https://www.po.co/global/product/poco-pad-m1/,manufacturer,import identity; India availability unverified,publish,,200
+POCO,POCO Pad X1,POCO Pad,,https://www.po.co/global/product/poco-pad-x1/,manufacturer,import identity; India availability unverified,publish,,201
+Redmi,Redmi Pad,Redmi Pad,,https://store.mi.com/in/accessories/473-0-10-0,manufacturer,India legacy,publish,,208
+Redmi,Redmi Pad 2,Redmi Pad,,https://www.mi.com/in/product/redmi-pad-2/specs/,manufacturer,India catalogue,publish,,209
+Redmi,Redmi Pad 2 Pro,Redmi Pad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,210
+Redmi,Redmi Pad Pro,Redmi Pad,,https://www.mi.com/in/blog/tablets/redmi-pad-pro-5g/,manufacturer,India catalogue,publish,,211
+Redmi,Redmi Pad SE,Redmi Pad,,https://store.mi.com/in/accessories/473-0-10-0,manufacturer,India legacy,publish,,212
+Redmi,Redmi Pad SE 8.7,Redmi Pad,,https://www.mi.com/global/support/faq/details/KA-267783/,manufacturer,import identity; India availability unverified,publish,,213
+Samsung,Galaxy J Max,Galaxy J,2016,https://news.samsung.com/in/samsung-galaxy-j2-2016-launched-with-industry-first-turbo-speed-technology-and-smart-glow-versatile-large-screen-galaxy-j-max-also-introduced,manufacturer,India legacy,publish,Galaxy Tab J Max,235
+Samsung,Galaxy Tab 3 Lite,Galaxy Tab,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,230
+Samsung,Galaxy Tab A 10.1 (2016),Galaxy Tab A,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Galaxy Tab A (2016),214
+Samsung,Galaxy Tab A 10.1 (2019),Galaxy Tab A,2019,https://news.samsung.com/in/samsung-india-redefines-tablet-category-with-the-launch-of-galaxy-tab-s5e-and-galaxy-tab-a-10-1,manufacturer,India legacy,publish,,215
+Samsung,Galaxy Tab A 10.5 (2018),Galaxy Tab A,2018,https://www.samsungmobilepress.com/articles/fit-for-the-whole-family-samsung-introduces-the-galaxy-tab-a-10-5,manufacturer,import identity; India availability unverified,publish,,216
+Samsung,Galaxy Tab A 8.0 (2017),Galaxy Tab A,2017,https://news.samsung.com/global/samsung-introduces-the-new-samsung-galaxy-tab-a-2017-8-0-an-everyday-tablet-designed-for-the-whole-family,manufacturer,import identity; India availability unverified,publish,,217
+Samsung,Galaxy Tab A 8.0 (2019),Galaxy Tab A,2019,https://news.samsung.com/vn/samsung-gioi-thieu-khai-niem-dien-thoai-bang-moi-galaxy-tab-a-8-0-2019,manufacturer,import identity; India availability unverified,publish,,218
+Samsung,Galaxy Tab A11,Galaxy Tab A,,https://www.samsung.com/in/tablets/galaxy-tab-a/,manufacturer,India catalogue,publish,,219
+Samsung,Galaxy Tab A11+,Galaxy Tab A,,https://www.samsung.com/in/tablets/galaxy-tab-a/,manufacturer,India catalogue,publish,,220
+Samsung,Galaxy Tab A7 (2020),Galaxy Tab A,2020,https://news.samsung.com/in/samsung-india-launches-galaxy-tab-a7-entertainment-powerhouse-with-big-screen-and-quad-speakers-pre-book-for-exciting-offers,manufacturer,India legacy,publish,,221
+Samsung,Galaxy Tab A7 Lite,Galaxy Tab A,2021,https://news.samsung.com/in/samsung-launches-galaxy-tab-s7-fe-galaxy-tab-a7-lite-in-india,manufacturer,India legacy,publish,,222
+Samsung,Galaxy Tab A8 (2021),Galaxy Tab A,2021,https://news.samsung.com/in/introducing-samsungs-new-galaxy-tab-a8-more-screen-more-power-and-more-performance,manufacturer,India legacy,publish,,223
+Samsung,Galaxy Tab A9,Galaxy Tab A,2023,https://www.samsung.com/in/tablets/galaxy-tab-a/,manufacturer,India catalogue,retain-existing,,224
+Samsung,Galaxy Tab A9+,Galaxy Tab A,2023,https://www.samsung.com/in/tablets/galaxy-tab-a/,manufacturer,India catalogue,publish,,225
+Samsung,Galaxy Tab Active Pro,Galaxy Tab Active,,https://news.samsung.com/us/samsung-ruggedized-devices-infographic-toughness-evolution-history/,manufacturer,import identity; India availability unverified,publish,,226
+Samsung,Galaxy Tab Active3,Galaxy Tab Active,,https://news.samsung.com/us/samsung-ruggedized-devices-infographic-toughness-evolution-history/,manufacturer,import identity; India availability unverified,publish,,227
+Samsung,Galaxy Tab Active4 Pro,Galaxy Tab Active,,https://news.samsung.com/us/samsung-ruggedized-devices-infographic-toughness-evolution-history/,manufacturer,import identity; India availability unverified,publish,,228
+Samsung,Galaxy Tab Active5,Galaxy Tab Active,,https://news.samsung.com/in/samsung-launches-galaxy-tab-active5-in-india-rugged-5g-enabled-tablet-built-for-enterprise-workforce,manufacturer,India catalogue,publish,,229
+Samsung,Galaxy Tab E 8.0,Galaxy Tab E,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,232
+Samsung,Galaxy Tab E 9.6,Galaxy Tab E,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,233
+Samsung,Galaxy Tab Iris,Galaxy Tab,2016,https://news.samsung.com/global/samsung-introduces-galaxy-tab-iris-equipped-with-iris-recognition-technology-for-government-and-enterprises-in-india,manufacturer,India legacy,publish,,234
+Samsung,Galaxy Tab S10 FE,Galaxy Tab S,2025,https://news.samsung.com/in/samsung-launches-galaxy-tab-s10fe-series-in-india-starting-at-inr-42999,manufacturer,India legacy,publish,,236
+Samsung,Galaxy Tab S10 FE+,Galaxy Tab S,2025,https://news.samsung.com/in/samsung-launches-galaxy-tab-s10fe-series-in-india-starting-at-inr-42999,manufacturer,India legacy,publish,,237
+Samsung,Galaxy Tab S10 Ultra,Galaxy Tab S,2024,https://news.samsung.com/in/galaxy-tab-s10-series-is-samsungs-ai-ready-tablet,manufacturer,India legacy,publish,,238
+Samsung,Galaxy Tab S10+,Galaxy Tab S,2024,https://news.samsung.com/in/galaxy-tab-s10-series-is-samsungs-ai-ready-tablet,manufacturer,India legacy,publish,,239
+Samsung,Galaxy Tab S11,Galaxy Tab S,,https://www.samsung.com/in/tablets/,manufacturer,India catalogue,publish,,240
+Samsung,Galaxy Tab S11 Ultra,Galaxy Tab S,,https://www.samsung.com/in/tablets/,manufacturer,India catalogue,publish,,241
+Samsung,Galaxy Tab S12 Ultra,Galaxy Tab S,,https://www.samsung.com/in/tablets/,manufacturer,India catalogue,publish,,manufacturer addition
+Samsung,Galaxy Tab S12+,Galaxy Tab S,,https://www.samsung.com/in/tablets/,manufacturer,India catalogue,publish,,manufacturer addition
+Samsung,Galaxy Tab S2,Galaxy Tab S,2015,https://news.samsung.com/in/samsung-launches-the-worlds-slimmest-tablet-galaxy-tab-s2,manufacturer,India legacy,publish,,242
+Samsung,Galaxy Tab S3,Galaxy Tab S,2017,https://news.samsung.com/in/samsung-launches-stylish-and-versatile-galaxy-tab-s3-in-india,manufacturer,India legacy,publish,,243
+Samsung,Galaxy Tab S4,Galaxy Tab S,2018,https://news.samsung.com/in/samsung-india-launches-galaxy-tab-s4-with-dex-and-refined-s-pen-that-lets-you-super-task-anytime-anywhere,manufacturer,India legacy,publish,,244
+Samsung,Galaxy Tab S5e,Galaxy Tab S,2019,https://news.samsung.com/in/samsung-india-redefines-tablet-category-with-the-launch-of-galaxy-tab-s5e-and-galaxy-tab-a-10-1,manufacturer,India legacy,publish,,245
+Samsung,Galaxy Tab S6,Galaxy Tab S,2019,https://news.samsung.com/in/samsung-strengthens-its-tablet-and-wearable-portfolio-in-india-introduces-galaxy-tab-s6-watch-4g-and-watch-active2,manufacturer,India legacy,publish,,246
+Samsung,Galaxy Tab S6 Lite,Galaxy Tab S,,https://news.samsung.com/in/samsung-launches-the-stylish-galaxy-tab-s6-lite-in-india-your-go-to-device-for-learning-and-entertainment,manufacturer,India legacy,publish,,247
+Samsung,Galaxy Tab S7,Galaxy Tab S,2020,https://news.samsung.com/in/samsung-launches-galaxy-tab-s7-and-tab-s7-in-india-pre-book-now-for-exciting-offers,manufacturer,India legacy,publish,,248
+Samsung,Galaxy Tab S7 FE,Galaxy Tab S,2021,https://news.samsung.com/in/samsung-launches-galaxy-tab-s7-fe-galaxy-tab-a7-lite-in-india,manufacturer,India legacy,publish,,249
+Samsung,Galaxy Tab S7+,Galaxy Tab S,2020,https://news.samsung.com/in/samsung-launches-galaxy-tab-s7-and-tab-s7-in-india-pre-book-now-for-exciting-offers,manufacturer,India legacy,publish,,250
+Samsung,Galaxy Tab S8,Galaxy Tab S,2022,https://news.samsung.com/in/samsung-unveils-powerful-galaxy-tab-s8-series-in-india-its-biggest-boldest-most-versatile-tablet-ever,manufacturer,India legacy,publish,,251
+Samsung,Galaxy Tab S8 Ultra,Galaxy Tab S,2022,https://news.samsung.com/in/samsung-unveils-powerful-galaxy-tab-s8-series-in-india-its-biggest-boldest-most-versatile-tablet-ever,manufacturer,India legacy,publish,,252
+Samsung,Galaxy Tab S8+,Galaxy Tab S,2022,https://news.samsung.com/in/samsung-unveils-powerful-galaxy-tab-s8-series-in-india-its-biggest-boldest-most-versatile-tablet-ever,manufacturer,India legacy,publish,,253
+Samsung,Galaxy Tab S9,Galaxy Tab S,2023,https://news.samsung.com/in/samsung-galaxy-tab-s9-sets-the-new-standard-to-bring-galaxys-premium-experience-to-a-tablet,manufacturer,India legacy,publish,,254
+Samsung,Galaxy Tab S9 FE,Galaxy Tab S,2023,https://news.samsung.com/in/samsung-expands-its-fe-ecosystem-in-india-to-bring-premium-experience-with-galaxy-tab-s9-fe-and-galaxy-buds-fe,manufacturer,India legacy,publish,,255
+Samsung,Galaxy Tab S9 FE+,Galaxy Tab S,2023,https://news.samsung.com/in/samsung-expands-its-fe-ecosystem-in-india-to-bring-premium-experience-with-galaxy-tab-s9-fe-and-galaxy-buds-fe,manufacturer,India legacy,publish,,256
+Samsung,Galaxy Tab S9 Ultra,Galaxy Tab S,2023,https://news.samsung.com/in/samsung-galaxy-tab-s9-sets-the-new-standard-to-bring-galaxys-premium-experience-to-a-tablet,manufacturer,India legacy,publish,,257
+Samsung,Galaxy Tab S9+,Galaxy Tab S,2023,https://news.samsung.com/in/samsung-galaxy-tab-s9-sets-the-new-standard-to-bring-galaxys-premium-experience-to-a-tablet,manufacturer,India legacy,publish,,258
+Swipe,Slate 2,Slate,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Swipe Slate 2,260
+Swipe,Slate Pro,Slate,,https://www.indiatoday.in/amp/technology/news/story/swipe-slate-pro-with-5000mah-battery-16gb-storage-launched-at-rs-8499-1070941-2017-10-27,contemporaneous Indian launch reporting,India legacy,publish,Swipe Slate Pro,261
+Tecno,MEGAPAD 10,MEGAPAD,,https://www.tecno-mobile.com/laptops/product-detail/product/megapad-10/,manufacturer,import identity; India availability unverified,publish,Tecno Megapad 10,263
+Tecno,MEGAPAD 11,MEGAPAD,,https://www.tecno-mobile.com/laptops/product-detail/product/megapad-11/,manufacturer,import identity; India availability unverified,publish,Tecno Megapad 11,264
+Vivo,Pad,vivo Pad,,https://asia-exstatic-vivofs.vivo.com/PSee2l50xoirPK7y/activity/1726036437437/zip/img/vivo_Sustainability_Report_2023.pdf,manufacturer,import identity; India availability unverified,publish,Vivo Pad,266
+Vivo,Pad Air,vivo Pad,,https://www.vivo.com.cn/vivo/vivopadair/,manufacturer,import identity; India availability unverified,publish,Vivo Pad Air,267
+Vivo,Pad SE,vivo Pad,,https://www.vivo.com.cn/vivo/vivopadse/,manufacturer,import identity; India availability unverified,publish,Vivo Pad SE,269
+Vivo,Pad2,vivo Pad,,https://www.vivo.com.cn/vivo/vivopad2/,manufacturer,import identity; India availability unverified,publish,Vivo Pad2,270
+Vivo,Pad3,vivo Pad,,https://www.vivo.com.cn/vivo/vivopad3/,manufacturer,import identity; India availability unverified,publish,Vivo Pad3,271
+Xiaomi,Mi Pad 2,Mi Pad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,272
+Xiaomi,Mi Pad 3,Mi Pad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,273
+Xiaomi,Mi Pad 4,Mi Pad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,,274
+Xiaomi,Mi Pad 4 Plus,Mi Pad,2018,https://www.phonearena.com/news/Xiaomi-Mi-Pad-4-Plus-official_id107757,contemporaneous launch reporting,import identity; India availability unverified,publish,,275
+Xiaomi,Pad 5,Xiaomi Pad,,https://store.mi.com/in/accessories/473-0-10-0,manufacturer,India legacy,publish,Xiaomi Pad 5,276
+Xiaomi,Pad 5 Pro,Xiaomi Pad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Xiaomi Pad 5 Pro,277
+Xiaomi,Pad 6,Xiaomi Pad,,https://store.mi.com/in/accessories/473-0-10-0,manufacturer,India legacy,publish,Xiaomi Pad 6,278
+Xiaomi,Pad 6 Max 14,Xiaomi Pad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Xiaomi Pad 6 Max,279
+Xiaomi,Pad 6 Pro,Xiaomi Pad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Xiaomi Pad 6 Pro,280
+Xiaomi,Pad 7,Xiaomi Pad,,https://www.mi.com/in/product/xiaomi-pad-7/,manufacturer,India catalogue,publish,Xiaomi Pad 7,281
+Xiaomi,Pad 7 Pro,Xiaomi Pad,,https://www.mi.com/global/product/xiaomi-pad-7-pro/,manufacturer,import identity; India availability unverified,publish,Xiaomi Pad 7 Pro,282
+Xiaomi,Pad 7 Ultra,Xiaomi Pad,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,Xiaomi Pad 7 Ultra,283
+iBall,Slide Brisk 4G2,Slide,2017,https://www.business-standard.com/article/news-ians/iball-unveils-7-inch-tablet-at-rs-8-999-117013000876_1.html,contemporaneous Indian launch reporting,India legacy,publish,iBall Slide Brisk 4G2,103
+iBall,Slide Cuboid,Slide,,https://indianexpress.com/article/technology/gadgets/iball-slide-cuboid-8-inch-tablet-with-fm-radio-launched-specs-features-price-availability-3034400/,contemporaneous launch reporting,India legacy,publish,iBall Slide Cuboid,104
+iBall,Slide Q27 4G,Slide,,https://www.gadgets360.com/tablets/news/iball-slide-q27-4g-tablet-with-reliance-jio-support-launched-at-rs-12799-1475381,contemporaneous launch reporting,India legacy,publish,iBall Slide Q27,107
+iBall,Slide Snap 4G2,Slide,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,iBall Slide Snap 4G2,110
+iBall,Slide Wings,Slide,,https://storage.googleapis.com/play_public/supported_devices.html,Google Play device identity catalogue,import identity; India availability unverified,publish,iBall Slide Wings,111
+iQOO,iQOO Pad,iQOO Pad,,https://www.vivo.com.cn/vivo/iqoopad/,manufacturer,import identity; India availability unverified,publish,,114
+iQOO,iQOO Pad Air,iQOO Pad,,https://www.vivo.com.cn/vivo/param/iqoopadair,manufacturer,import identity; India availability unverified,publish,,115
+itel,Pad One,itel Pad,2023,https://www.gadgets360.com/tablets/news/itel-pad-one-tablet-price-in-india-rs-12999-specifications-features-3831825,contemporaneous Indian launch reporting,India legacy,publish,itel Pad 1 | itel Pad One,116 | 117
+realme,Pad,realme Pad,,https://www.realme.com/in/realme-pad,manufacturer,India catalogue,publish,Realme Pad,202
+realme,Pad 2,realme Pad,,https://www.realme.com/in/realme-pad-2,manufacturer,India catalogue,publish,Realme Pad 2,203
+realme,Pad 2 Lite,realme Pad,,https://www.realme.com/in/more-products/realme-pad-2-lite/specs,manufacturer,India catalogue,publish,Realme Pad 2 Lite,204
+realme,Pad 3,realme Pad,,https://www.realme.com/in/realme-pad-3,manufacturer,India catalogue,publish,Realme Pad 3,205
+realme,Pad Mini,realme Pad,,https://www.realme.com/in/realme-pad-mini,manufacturer,India catalogue,publish,Realme Pad Mini,206
+realme,Pad X,realme Pad,,https://www.realme.com/in/realme-pad,manufacturer,India catalogue,publish,Realme Pad X,207
