@@ -1,7 +1,7 @@
 // Accessories V1 release gates: ledger ordering, live preflight, strict read-only postflight, stage evidence.
 import {inflateRawSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
-import {ACCESSORIES_WEB, PROJECT_REFS, getCandidate, planDispatch, verifyCandidateSha} from './reusable-candidates.mjs';
+import {PROJECT_REFS, getCandidate, planDispatch, verifyCandidateSha, webPin} from './reusable-candidates.mjs';
 
 const BACKEND = 'vivek2310sharma/FairSwap-Backend';
 const WORKFLOW_ID = 404601811;
@@ -9,7 +9,7 @@ const FOUNDATION = 'accessories-v1-foundation';
 const ACTIVATION = 'accessories-v1-activation';
 const SHA40 = /^[a-f0-9]{40}$/;
 const ID = /^[1-9][0-9]*$/;
-const WORKFLOW_PATH = '.github/workflows/reusable-supabase-release.yml';
+export const WORKFLOW_PATH = '.github/workflows/reusable-supabase-release.yml';
 const TABLES = ['accessory_release_v1', 'accessory_types_v1', 'listing_accessory_contexts'];
 const TYPE_IDS = [
   'audio', 'cable', 'charger', 'hub', 'keyboard-case', 'other-phone', 'other-wearable', 'phone-case',
@@ -17,7 +17,7 @@ const TYPE_IDS = [
   'tablet-protector', 'tablet-stand', 'watch-case', 'watch-charger', 'watch-strap', 'wireless-charger'
 ];
 
-function fail(code, detail) {
+export function fail(code, detail) {
   throw new Error(`REUSABLE_RELEASE_${code}${detail ? `: ${detail}` : ''}`);
 }
 
@@ -57,7 +57,7 @@ export function assertLedgerOrdering(candidate, ledgerOutput) {
   for (const v of candidate.incompatibleLedgerVersions ?? []) {
     if (local.has(v) || remote.has(v)) fail('INCOMPATIBLE_MIGRATION_ORDER', v);
   }
-  if (candidate.id?.startsWith('tablets-v1-') &&
+  if (/^(tablets|wearables)-v1-/.test(candidate.id ?? '') &&
       (local.size !== remote.size || [...local].some(version => !remote.has(version)))) {
     fail('LEDGER_HISTORY_CHANGED');
   }
@@ -280,14 +280,15 @@ export function assertStageInputs(candidate, environment, ctx) {
     inputs: {
       web_staging_sha: ctx.WEB_STAGING_SHA, web_production_sha: ctx.WEB_PRODUCTION_SHA,
       test_foundation_run_id: ctx.TEST_FOUNDATION_RUN_ID, test_activation_run_id: ctx.TEST_ACTIVATION_RUN_ID,
-      prod_foundation_run_id: ctx.PROD_FOUNDATION_RUN_ID
+      prod_foundation_run_id: ctx.PROD_FOUNDATION_RUN_ID,
+      accessories_prod_foundation_run_id: ctx.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: ctx.TEST_E2E_RUN_ID
     }
   });
 }
 
 const GITHUB_HEADERS = token => ({Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'});
 
-async function getJson(url, token, fetcher, code = 'EVIDENCE_LOOKUP_FAILED') {
+export async function getJson(url, token, fetcher, code = 'EVIDENCE_LOOKUP_FAILED') {
   const res = await fetcher(url, {headers: GITHUB_HEADERS(token)});
   if (!res.ok) {
     const hint = code === 'WEB_DEPLOYMENT_LOOKUP_FAILED' && res.status === 404
@@ -303,10 +304,11 @@ async function getJson(url, token, fetcher, code = 'EVIDENCE_LOOKUP_FAILED') {
 // Pure inspection of GitHub Deployments of the Web repository (created and updated by the Vercel integration).
 // Staging evidence must come from a non-Production environment, Production evidence only from the Production
 // environment, so one environment can never satisfy the other.
-async function deploymentReady(web, token, fetcher, sha, wantProduction) {
+export async function deploymentReady(pin, token, fetcher, sha, wantProduction) {
+  const web = pin.repository;
   const list = await getJson(`https://api.github.com/repos/${web}/deployments?sha=${sha}&per_page=100`, token, fetcher, 'WEB_DEPLOYMENT_LOOKUP_FAILED');
   if (!Array.isArray(list)) fail('WEB_DEPLOYMENT_LOOKUP_FAILED', 'shape');
-  const candidates = list.filter(d => d && d.sha === sha && (d.environment === ACCESSORIES_WEB.productionEnvironment) === wantProduction);
+  const candidates = list.filter(d => d && d.sha === sha && (d.environment === pin.productionEnvironment) === wantProduction);
   for (const d of candidates) {
     const statuses = await getJson(`https://api.github.com/repos/${web}/deployments/${d.id}/statuses?per_page=1`, token, fetcher, 'WEB_DEPLOYMENT_LOOKUP_FAILED');
     if (Array.isArray(statuses) && statuses[0]?.state === 'success') return d;
@@ -319,18 +321,19 @@ export async function verifyWebDeployments(plan, c, fetcher = fetch) {
   if (!plan.candidate.strict) return null;
   const token = c.WEB_EVIDENCE_TOKEN;
   if (!token) fail('WEB_EVIDENCE_UNAVAILABLE', 'no token');
-  const web = ACCESSORIES_WEB.repository;
+  const pin = webPin(plan.candidate);
+  const web = pin.repository;
   const result = {};
   if (plan.webStagingSha) {
-    const d = await deploymentReady(web, token, fetcher, plan.webStagingSha, false);
+    const d = await deploymentReady(pin, token, fetcher, plan.webStagingSha, false);
     if (!d) fail('WEB_STAGING_DEPLOYMENT_NOT_READY', plan.webStagingSha);
     result.stagingDeploymentId = d.id;
   }
   if (plan.webProductionSha) {
     const sha = plan.webProductionSha;
-    const live = await getJson(`https://api.github.com/repos/${web}/deployments?environment=${ACCESSORIES_WEB.productionEnvironment}&per_page=1`, token, fetcher, 'WEB_DEPLOYMENT_LOOKUP_FAILED');
-    if (!Array.isArray(live) || live[0]?.sha !== sha || live[0]?.environment !== ACCESSORIES_WEB.productionEnvironment) fail('WEB_PRODUCTION_NOT_CURRENT_DEPLOYMENT', sha);
-    const d = await deploymentReady(web, token, fetcher, sha, true);
+    const live = await getJson(`https://api.github.com/repos/${web}/deployments?environment=${pin.productionEnvironment}&per_page=1`, token, fetcher, 'WEB_DEPLOYMENT_LOOKUP_FAILED');
+    if (!Array.isArray(live) || live[0]?.sha !== sha || live[0]?.environment !== pin.productionEnvironment) fail('WEB_PRODUCTION_NOT_CURRENT_DEPLOYMENT', sha);
+    const d = await deploymentReady(pin, token, fetcher, sha, true);
     if (!d || d.id !== live[0].id) fail('WEB_PRODUCTION_DEPLOYMENT_NOT_READY', sha);
     // The deployed Production commit must contain the tested staging commit and be an ancestor of (or equal to) Web main.
     const tested = await getJson(`https://api.github.com/repos/${web}/compare/${plan.webStagingSha}...${sha}`, token, fetcher, 'WEB_DEPLOYMENT_LOOKUP_FAILED');
@@ -346,8 +349,8 @@ export async function verifyWebDeployments(plan, c, fetcher = fetch) {
 
 const MAX_RECEIPT_ZIP = 256 * 1024;
 const MAX_RECEIPT_FILE = 64 * 1024;
-const RECEIPT_STATUSES = ['APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED', 'ALREADY_APPLIED_VERIFIED'];
-const ENVIRONMENT_NAMES = {test: 'FairSwapTest', prod: 'FairSwapProd'};
+export const RECEIPT_STATUSES = ['APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED', 'ALREADY_APPLIED_VERIFIED'];
+export const ENVIRONMENT_NAMES = {test: 'FairSwapTest', prod: 'FairSwapProd'};
 // Which earlier runs a receipt must itself record, keyed by `${candidateId}|${environment}`.
 const RECEIPT_CHAIN = {
   'accessories-v1-foundation|test': [],
@@ -357,8 +360,14 @@ const RECEIPT_CHAIN = {
   'tablets-v1-foundation|test': [],
   'tablets-v1-activation|test': ['test_foundation_run_id'],
   'tablets-v1-foundation|prod': ['test_foundation_run_id', 'test_activation_run_id'],
-  'tablets-v1-activation|prod': []
+  'tablets-v1-activation|prod': [],
+  'wearables-v1-foundation|test': [],
+  'wearables-v1-activation|test': ['test_foundation_run_id'],
+  'wearables-v1-foundation|prod': ['test_foundation_run_id', 'test_activation_run_id'],
+  'wearables-v1-activation|prod': []
 };
+// Candidates whose receipts must carry the installed-statements ledger hash (Test→Production byte identity).
+export const usesLedgerHash = candidate => /^(tablets|wearables)-v1-/.test(candidate.id);
 
 // Minimal bounded ZIP reader for the single GitHub artifact archive (stored or deflate entries only).
 export function readZipEntries(buf) {
@@ -416,12 +425,12 @@ export function validateReceipt(p, c, files, {originalChain = false} = {}) {
   try { r = JSON.parse(body.toString('utf8')); } catch { fail('RECEIPT_CONTENT_INVALID', `${p.key}:json`); }
   if (!r || typeof r !== 'object' || Array.isArray(r)) fail('RECEIPT_CONTENT_INVALID', `${p.key}:json`);
   const chain = RECEIPT_CHAIN[`${candidate.id}|${p.environment}`];
-  const stagingWeb = candidate.stage === 'activation' || p.environment === 'prod' ? ACCESSORIES_WEB.stagingSha : null;
+  const stagingWeb = candidate.stage === 'activation' || p.environment === 'prod' ? webPin(candidate).stagingSha : null;
   const checks = {
     candidate: r.candidateId === candidate.id,
     version: r.migrationVersion === candidate.version && r.migrationFile === candidate.filename,
     hash: r.migrationSha256 === candidate.sha256 &&
-      (!candidate.id.startsWith('tablets-v1-') || /^[a-f0-9]{64}$/.test(r.ledgerStatementsSha256 ?? '')),
+      (!usesLedgerHash(candidate) || /^[a-f0-9]{64}$/.test(r.ledgerStatementsSha256 ?? '')),
     environment: r.environment === env && r.projectRef === PROJECT_REFS[env],
     commit: r.reviewedCommit === c.GITHUB_SHA,
     run: String(r.releaseWorkflowRun) === p.runId,
@@ -440,7 +449,7 @@ export function validateReceipt(p, c, files, {originalChain = false} = {}) {
   return r;
 }
 
-async function downloadArtifact(url, token, fetcher) {
+export async function downloadArtifact(url, token, fetcher) {
   const res = await fetcher(url, {headers: GITHUB_HEADERS(token), redirect: 'follow'});
   if (!res.ok) fail('EVIDENCE_LOOKUP_FAILED', String(res.status));
   return Buffer.from(await res.arrayBuffer());

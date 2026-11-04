@@ -15,6 +15,8 @@ on:
           - accessories-v1-activation
           - tablets-v1-foundation
           - tablets-v1-activation
+          - wearables-v1-foundation
+          - wearables-v1-activation
       approved_sha:
         description: 'Exact reviewed commit SHA on main'
         required: true
@@ -24,13 +26,14 @@ on:
         required: true
         type: string
       target:
-        description: 'Stage: test (moderation also auto-promotes), or production (Accessories and Tablets, after Test evidence)'
+        description: 'Stage: test (moderation also auto-promotes), production (strict candidates, after Test evidence), or adopt (read-only attestation of an existing registered Production installation)'
         required: true
         default: 'test'
         type: choice
         options:
           - test
           - production
+          - adopt
       web_staging_sha:
         description: 'Accessories and Tablets: verified matching Web staging commit SHA'
         required: false
@@ -49,6 +52,14 @@ on:
         type: string
       prod_foundation_run_id:
         description: 'Production activation: successful Production foundation run ID'
+        required: false
+        type: string
+      accessories_prod_foundation_run_id:
+        description: 'Wearables Production: successful Accessories Production foundation run ID (prior commit allowed if ancestor)'
+        required: false
+        type: string
+      test_e2e_run_id:
+        description: 'Wearables Production: successful independent Wearables Test E2E run ID'
         required: false
         type: string
 
@@ -138,16 +149,20 @@ jobs:
           TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
+          ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
+          TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
         run: |
           node --input-type=module - <<'NODE'
           import {appendFileSync} from 'node:fs';
           import {planDispatch} from './scripts/release/reusable-candidates.mjs';
-          import {recoveredFoundationSha, requireStageEvidence} from './scripts/release/accessories-v1-release.mjs';
+          import {recoveredFoundationSha, requireStageEvidence, usesLedgerHash} from './scripts/release/accessories-v1-release.mjs';
+          import {requirePriorCommitEvidence} from './scripts/release/wearables-v1-release.mjs';
           const e = process.env;
           const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
             web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
-            prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID
+            prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID,
+            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID
           }});
           const accessories = plan.candidate.id.startsWith('accessories-v1-');
           const receipts = await requireStageEvidence(plan.priorRuns, e, fetch, {allowFoundationAncestors: accessories});
@@ -158,7 +173,8 @@ jobs:
               appendFileSync(e.GITHUB_OUTPUT, 'accessories_recheck_prod_foundation=true\n');
             }
           }
-          if (plan.candidate.id.startsWith('tablets-v1-')) {
+          await requirePriorCommitEvidence(plan, e);
+          if (usesLedgerHash(plan.candidate)) {
             const stage = plan.candidate.stage;
             const foundation = plan.target === 'production' ? receipts.prod_foundation_run_id : receipts.test_foundation_run_id;
             const testCandidate = receipts[`test_${stage}_run_id`];
@@ -202,18 +218,23 @@ jobs:
           TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
+          ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
+          TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
           WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
         run: |
           node --input-type=module - <<'NODE'
           import {planDispatch} from './scripts/release/reusable-candidates.mjs';
           import {verifyWebDeployments} from './scripts/release/accessories-v1-release.mjs';
+          import {verifyE2eEvidence} from './scripts/release/wearables-v1-release.mjs';
           const e = process.env;
           const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
             web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
-            prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID
+            prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID,
+            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID
           }});
           await verifyWebDeployments(plan, e);
+          await verifyE2eEvidence(plan, e);
           NODE
 
       - name: Install psql client
@@ -238,6 +259,8 @@ jobs:
           TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
+          ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
+          TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
         run: |
           node --input-type=module - <<'NODE'
           import {releaseReusable} from './scripts/release/reusable-supabase-release.mjs';
@@ -300,7 +323,8 @@ jobs:
     if: >-
       ${{ always() && needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
       ((inputs.target == 'test' && needs.verify.outputs.auto_promote == 'true' && needs.test.result == 'success' && needs.verify_test.result == 'success') ||
-      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped')) }}
+      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped') ||
+      (inputs.target == 'adopt' && inputs.candidate == 'accessories-v1-foundation' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped')) }}
     environment: FairSwapProd
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -329,18 +353,23 @@ jobs:
           TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
+          ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
+          TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
           WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
         run: |
           node --input-type=module - <<'NODE'
           import {planDispatch} from './scripts/release/reusable-candidates.mjs';
           import {verifyWebDeployments} from './scripts/release/accessories-v1-release.mjs';
+          import {verifyE2eEvidence} from './scripts/release/wearables-v1-release.mjs';
           const e = process.env;
           const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
             web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
-            prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID
+            prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID,
+            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID
           }});
           await verifyWebDeployments(plan, e);
+          await verifyE2eEvidence(plan, e);
           NODE
 
       - name: Install psql client
@@ -353,6 +382,7 @@ jobs:
         env:
           ACCESSORIES_RECHECK_PROD_FOUNDATION: ${{ needs.verify.outputs.accessories_recheck_prod_foundation }}
           ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
+          TARGET: ${{ inputs.target }}
           TABLETS_FOUNDATION_LEDGER_SHA: ${{ needs.verify.outputs.foundation_ledger_sha }}
           TABLETS_CANDIDATE_LEDGER_SHA: ${{ needs.verify.outputs.candidate_ledger_sha }}
           CANDIDATE: ${{ inputs.candidate }}
@@ -366,14 +396,15 @@ jobs:
           TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
+          ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
+          TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
         run: |
           node --input-type=module - <<'NODE'
-          import {releaseReusable} from './scripts/release/reusable-supabase-release.mjs';
-          await releaseReusable({
-            environment: 'FairSwapProd',
-            candidateId: process.env.CANDIDATE,
-            receiptDir: 'release-receipts'
-          });
+          import {adoptExistingInstallation, releaseReusable} from './scripts/release/reusable-supabase-release.mjs';
+          const options = {environment: 'FairSwapProd', candidateId: process.env.CANDIDATE, receiptDir: 'release-receipts'};
+          // adopt: read-only attestation of an installation that predates the pipeline; applies nothing.
+          if (process.env.TARGET === 'adopt') await adoptExistingInstallation(options);
+          else await releaseReusable(options);
           NODE
 
       - name: Upload sanitized, immutable Production migration receipt

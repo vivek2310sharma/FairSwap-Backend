@@ -8,12 +8,13 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
-import {CANDIDATES, getCandidate, verifyCandidateSha, PROJECT_REFS} from './reusable-candidates.mjs';
+import {CANDIDATES, adoptionAttestation, getAdoption, getCandidate, planDispatch, verifyCandidateSha, PROJECT_REFS} from './reusable-candidates.mjs';
 import {
   assertLedgerOrdering, assertStageInputs, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved, verifyAccessoriesLedger
 } from './accessories-v1-release.mjs';
 
 import {readTabletsLedger, runTabletsPostflight, runTabletsPreflight, verifyTabletsLedger} from './tablets-v1-release.mjs';
+import {ADOPTED_STATUS, assertLedgerTail, assertMobilePhonesProvenance, runWearablesPostflight, runWearablesPreflight} from './wearables-v1-release.mjs';
 
 export const REFS = PROJECT_REFS;
 
@@ -329,6 +330,9 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
     return runTabletsPostflight(candidate.stage === 'activation',
       sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
   }
+  if (candidate.id.startsWith('wearables-v1-')) {
+    return runWearablesPostflight(candidate, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+  }
   if (candidate.strict) {
     const rawOutput = psqlQuery(postflightQuery(candidate.stage), psqlUrl, env, runner, 'postflight_sql');
     return runAccessoriesPostflight(candidate, rawOutput);
@@ -458,6 +462,12 @@ export async function releaseReusable({
     let isAlreadyApplied = false;
     let beforeRemote = null;
     const tablets = candidate.id.startsWith('tablets-v1-');
+    const wearables = candidate.id.startsWith('wearables-v1-');
+    // Tablets and Wearables pin the ledger: history is read before apply, must not change, and the installed
+    // statements hash is carried Test -> Production through the receipts.
+    const pinned = tablets || wearables;
+    const label = wearables ? 'WEARABLES' : 'TABLETS';
+    const foundationVersion = wearables ? '20261104120000' : '20261102165946';
     const readLedger = () => readTabletsLedger(sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
     let ledgerBefore;
     let ledgerStatementsSha256;
@@ -475,27 +485,42 @@ export async function releaseReusable({
       }
     }
 
-    if (tablets) {
+    if (pinned) {
       // A pre-existing entry has no trusted receipt tying it to the reviewed source bytes.
-      if (isAlreadyApplied) throw new Error('REUSABLE_RELEASE_TABLETS_ALREADY_RECORDED');
+      if (isAlreadyApplied) throw new Error(`REUSABLE_RELEASE_${label}_ALREADY_RECORDED`);
       ledgerBefore = readLedger();
+      if (wearables) {
+        assertMobilePhonesProvenance(environment, ledgerBefore);
+        assertLedgerTail(candidate, ledgerBefore);
+      }
       for (const version of candidate.requiredLedgerVersions) {
         const prerequisite = Object.values(CANDIDATES).find(entry => entry.version === version);
         const row = ledgerBefore.find(entry => entry.version === version);
         if (!row?.hasStatements || row.name !== prerequisite.filename.slice(15, -4)) {
-          throw new Error('REUSABLE_RELEASE_TABLETS_PREREQUISITE_LEDGER_MISMATCH');
+          throw new Error(`REUSABLE_RELEASE_${label}_PREREQUISITE_LEDGER_MISMATCH`);
+        }
+
+      }
+      if (wearables && environment === 'FairSwapProd') {
+        // Production Accessories predates the pipeline: both installed rows (foundation and activation) must be exactly the
+        // adopted, observed installation (names, statements, pinned digests).
+        for (const entry of getAdoption('accessories-v1-foundation', 'FairSwapProd').entries) {
+          const row = ledgerBefore.find(item => item.version === entry.ledgerVersion);
+          if (!row?.hasStatements || row.name !== entry.ledgerName || row.statementsSha256 !== entry.statementsSha256) {
+            throw new Error('REUSABLE_RELEASE_WEARABLES_ACCESSORIES_ADOPTION_LEDGER_MISMATCH');
+          }
         }
       }
       if (candidate.stage === 'activation' &&
-          ledgerBefore.find(row => row.version === '20261102165946')?.statementsSha256 !== context.TABLETS_FOUNDATION_LEDGER_SHA) {
-        throw new Error('REUSABLE_RELEASE_TABLETS_FOUNDATION_EVIDENCE_MISMATCH');
+          ledgerBefore.find(row => row.version === foundationVersion)?.statementsSha256 !== context.TABLETS_FOUNDATION_LEDGER_SHA) {
+        throw new Error(`REUSABLE_RELEASE_${label}_FOUNDATION_EVIDENCE_MISMATCH`);
       }
       if (environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
-        throw new Error('REUSABLE_RELEASE_TABLETS_TEST_LEDGER_EVIDENCE_REQUIRED');
+        throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_EVIDENCE_REQUIRED`);
       }
       if (ledgerBefore.length !== beforeRemote.size || ledgerBefore.some(row =>
         !beforeRemote.has(row.version) || row.version >= candidate.version)) {
-        throw new Error('REUSABLE_RELEASE_TABLETS_LEDGER_MISMATCH');
+        throw new Error(`REUSABLE_RELEASE_${label}_LEDGER_MISMATCH`);
       }
     }
 
@@ -526,7 +551,7 @@ export async function releaseReusable({
       // Standard path: candidate-only dry run, migration apply, ledger verification and postflight
       if (candidate.strict) {
         phase = 'preflight';
-        const preflight = tablets ? runTabletsPreflight : runLivePreflight;
+        const preflight = tablets ? runTabletsPreflight : wearables ? runWearablesPreflight : runLivePreflight;
         preflight(candidate, sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
       }
         // 4. Copy candidate migration into workspace
@@ -543,8 +568,8 @@ export async function releaseReusable({
       dryRunPending = parsePendingDryRun(dryRunOutput, candidate.filename);
 
       // 6. Apply candidate migration
-      if (tablets && JSON.stringify(readLedger()) !== JSON.stringify(ledgerBefore)) {
-        throw new Error('REUSABLE_RELEASE_TABLETS_LEDGER_CHANGED');
+      if (pinned && JSON.stringify(readLedger()) !== JSON.stringify(ledgerBefore)) {
+        throw new Error(`REUSABLE_RELEASE_${label}_LEDGER_CHANGED`);
       }
       phase = 'apply';
       run('supabase', ['db', 'push', '--db-url', psqlUrl, '--yes', '--workdir', workspace], env);
@@ -554,10 +579,10 @@ export async function releaseReusable({
       const ledgerOutput = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
       verifyLedgerVersion(ledgerOutput, candidate.version);
       if (candidate.strict) verifyHistoryPreserved(beforeRemote, ledgerOutput, candidate.version);
-      if (tablets) {
+      if (pinned) {
         ledgerStatementsSha256 = verifyTabletsLedger(ledgerBefore, readLedger(), candidate);
         if (environment === 'FairSwapProd' && ledgerStatementsSha256 !== context.TABLETS_CANDIDATE_LEDGER_SHA) {
-          throw new Error('REUSABLE_RELEASE_TABLETS_TEST_LEDGER_MISMATCH');
+          throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_MISMATCH`);
         }
       }
 
@@ -584,8 +609,16 @@ export async function releaseReusable({
       status,
       dryRunPending,
       postflightVerified: true,
-      ...(tablets ? {ledgerStatementsSha256} : {}),
+      ...(pinned ? {ledgerStatementsSha256} : {}),
       ...(recovering ? {recoveredFoundationCommit: recoveredCommit} : {}),
+      ...(wearables ? {
+        // SQL postflight is a catalogue/ACL/ownership/moderation integrity check, never E2E evidence.
+        postflightScope: 'sql-integrity-smoke-not-e2e',
+        ...(stagePlan.e2eRunId ? {
+          e2eRunId: stagePlan.e2eRunId,
+          accessoriesProdFoundationRunId: stagePlan.crossCommitRuns[0].runId
+        } : {})
+      } : {}),
       ...(candidate.strict ? {
         stage: candidate.stage,
         webStagingSha: stagePlan.webStagingSha,
@@ -601,6 +634,102 @@ export async function releaseReusable({
     writeFileSync(receiptFile, receiptBytes, {mode: 0o600});
     writeFileSync(join(receiptDir, `SHA256SUMS_${environment.toLowerCase()}`), `${sha(receiptBytes)}  ${candidateId}-${environment.toLowerCase()}.json\n`, {mode: 0o600});
 
+    return receipt;
+  } finally {
+    rmSync(tempDir, {recursive: true, force: true});
+  }
+}
+
+// Read-only adoption of an existing Production installation that has no release-workflow receipt (it predates the
+// pipeline). It attests the CURRENT ledger row (version, name, statement count, JSON-statements digest), the reviewed
+// source bytes and the strict installed-state postflight. It applies nothing, never touches the Supabase CLI or the
+// migration workspace, and its receipt states that the installation was not performed by this workflow. No historical
+// run ID or receipt is fabricated.
+export async function adoptExistingInstallation({
+  environment,
+  candidateId,
+  context = process.env,
+  runner,
+  receiptDir = resolve('release-receipts')
+}) {
+  if (environment !== 'FairSwapProd') throw new Error(`REUSABLE_RELEASE_ADOPTION_ENVIRONMENT_NOT_ALLOWED: ${environment}`);
+  const candidate = getCandidate(candidateId);
+  const adoption = getAdoption(candidateId, environment);
+  planDispatch({candidateId, target: 'adopt'});
+  const {sha256: candidateSha} = verifyCandidateSha(candidateId, root);
+  const dbPassword = context.CHAT_DATABASE_PASSWORD;
+  const poolerHost = context.CHAT_DB_POOLER_HOST;
+  const sslCert = context.CHAT_DB_SSL_ROOT_CERT_PEM;
+  if (!dbPassword || !sslCert || !poolerHost) throw new Error('REUSABLE_RELEASE_MISSING_CREDENTIALS');
+  if (!/^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$/.test(poolerHost)) throw new Error('REUSABLE_RELEASE_INVALID_POOLER_HOST');
+  const projectRef = REFS[environment];
+  const tempDir = mkdtempSync(join(tmpdir(), `fs-adopt-${candidateId}-`));
+  chmodSync(tempDir, 0o700);
+  try {
+    const certPath = join(tempDir, 'ca.pem');
+    writeFileSync(certPath, validateRootCertificate(sslCert), {flag: 'wx', mode: 0o600});
+    const env = {
+      ...process.env, HOME: tempDir, PGSSLMODE: 'verify-full', PGCONNECT_TIMEOUT: '10', PGPASSWORD: dbPassword, PGSSLROOTCERT: certPath
+    };
+    const psqlUrl = `postgresql://postgres.${projectRef}@${poolerHost}:5432/postgres?sslmode=verify-full&sslrootcert=${encodeURIComponent(certPath)}&connect_timeout=10`;
+    const q = (sql, phase) => psqlQuery(sql, psqlUrl, env, runner, phase);
+    const fail = code => { throw new Error(`REUSABLE_RELEASE_ADOPTION_${code}`); };
+
+    const ledger = readTabletsLedger(sql => q(sql, 'ledger_sql'));
+    if (ledger.length < 50) fail('UNEXPECTED_HISTORY_COUNT');
+    const observed = {};
+    for (const entry of adoption.entries) {
+      // Reviewed source bytes for every attested migration must still be the registered ones.
+      const reviewed = verifyCandidateSha(entry.candidateId, root);
+      const row = ledger.find(item => item.version === entry.ledgerVersion);
+      if (!row) fail('LEDGER_ENTRY_MISSING');
+      if (row.name !== entry.ledgerName || row.hasStatements !== true) fail('LEDGER_ENTRY_MISMATCH');
+      if (row.statementsSha256 !== entry.statementsSha256) fail('STATEMENTS_HASH_MISMATCH');
+      const count = Number(String(q(`BEGIN READ ONLY; SET LOCAL statement_timeout = '15s'; SELECT cardinality(statements) FROM supabase_migrations.schema_migrations WHERE version = '${entry.ledgerVersion}'; COMMIT;`, 'ledger_sql')).trim());
+      if (!Number.isInteger(count) || count !== entry.statementCount) fail('STATEMENT_COUNT_MISMATCH');
+      if (entry.storedSqlSha256 !== null) {
+        // Stored SQL text provenance: the single hosted statement must be byte-identical to the pinned digest AND to the reviewed
+        // source file read just above (verifyCandidateSha). The digest is computed in the database over the stored text.
+        const stored = String(q(`BEGIN READ ONLY; SET LOCAL statement_timeout = '15s'; SELECT encode(sha256(convert_to(statements[1], 'UTF8')), 'hex') FROM supabase_migrations.schema_migrations WHERE version = '${entry.ledgerVersion}'; COMMIT;`, 'ledger_sql')).trim();
+        if (!/^[a-f0-9]{64}$/.test(stored) || stored !== entry.storedSqlSha256) fail('STORED_SQL_HASH_MISMATCH');
+        if (stored !== reviewed.sha256) fail('STORED_SQL_SOURCE_MISMATCH');
+        observed[entry.ledgerVersion] = stored;
+      }
+    }
+    // Only the registered chain may be recorded: Tablets and Wearables must not exist yet.
+    if (adoption.forbiddenLedgerVersions.some(version => ledger.some(item => item.version === version))) fail('LATER_STAGE_RECORDED');
+    // The observed installation is ACTIVATED: validate the active-state postflight (release enabled, category active, RLS,
+    // ACL, guards). A disabled or foundation-only installation is a different state and is rejected here.
+    const activation = getCandidate(adoption.entries.find(entry => entry.role === 'activation').candidateId);
+    const postflight = runAccessoriesPostflight(activation, q(postflightQuery(activation.stage), 'postflight_sql'));
+    if (!postflight || typeof postflight !== 'object') fail('POSTFLIGHT_VERIFICATION_FAILED');
+    // The ledger must be unchanged by the read-only checks above (guards against concurrent change during attestation).
+    if (JSON.stringify(readTabletsLedger(sql => q(sql, 'ledger_sql'))) !== JSON.stringify(ledger)) fail('LEDGER_CHANGED');
+
+    const receipt = {
+      environment,
+      projectRef,
+      candidateId: candidate.id,
+      migrationVersion: candidate.version,
+      migrationFile: candidate.filename,
+      migrationSha256: candidateSha,
+      reviewedCommit: context.GITHUB_SHA || 'unknown',
+      releaseWorkflowRun: context.GITHUB_RUN_ID || 'local',
+      status: ADOPTED_STATUS,
+      dryRunPending: [],
+      postflightVerified: true,
+      stage: candidate.stage,
+      webStagingSha: null,
+      webProductionSha: null,
+      priorRuns: [],
+      adoption: adoptionAttestation(adoption, observed),
+      timestamp: new Date().toISOString()
+    };
+    mkdirSync(receiptDir, {recursive: true, mode: 0o700});
+    const receiptBytes = JSON.stringify(receipt, null, 2) + '\n';
+    const lower = environment.toLowerCase();
+    writeFileSync(join(receiptDir, `${candidateId}-${lower}.json`), receiptBytes, {mode: 0o600});
+    writeFileSync(join(receiptDir, `SHA256SUMS_${lower}`), `${sha(receiptBytes)}  ${candidateId}-${lower}.json\n`, {mode: 0o600});
     return receipt;
   } finally {
     rmSync(tempDir, {recursive: true, force: true});
