@@ -21,7 +21,9 @@ try {
  await db.exec(`insert into public.posting_upload_sessions(id,owner_id) values('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')`);
  await db.exec(readFileSync(resolve(root,'supabase/forward-migrations/posting-v2/session-recovery/supabase/migrations/20261101234604_posting_v212_session_recovery.sql'),'utf8'));
  if(process.argv.includes('--with-accessories'))await db.exec(readFileSync(resolve(root,'supabase/forward-migrations/accessories-v1/foundation/supabase/migrations/20261102164135_accessories_v1.sql'),'utf8'));
- if(process.argv.includes('--with-tablets'))await db.exec(readFileSync(resolve(root,'supabase/forward-migrations/tablets-v1/supabase/migrations/20261102165946_posting_v2_tablets.sql'),'utf8'));
+ const tabletsV2=process.argv.includes('--with-tablets-v2');
+  if(tabletsV2||process.argv.includes('--with-tablets'))await db.exec(readFileSync(resolve(root,'supabase/forward-migrations/tablets-v1/supabase/migrations/20261102165946_posting_v2_tablets.sql'),'utf8'));
+  if(tabletsV2)await db.exec(readFileSync(resolve(root,'supabase/forward-migrations/tablets-v2/supabase/migrations/20261104215253_tablets_v2_india_catalogue.sql'),'utf8'));
  await test('legacy no-photo sessions backfill to protected, without empty-draft certification',async()=>{
   assert.equal(await scalar(`select draft_protected from public.posting_upload_sessions where id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'`),true);
   assert.equal(await scalar(`select empty_request_id from public.posting_upload_sessions where id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'`),null);

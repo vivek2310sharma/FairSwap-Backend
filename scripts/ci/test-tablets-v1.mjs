@@ -1,13 +1,18 @@
-// Disposable in-memory PostgreSQL only. Supporting auth/storage fixture helpers are substitutes.
+// Disposable in-memory PostgreSQL or a fresh native Unix socket fixture. Supporting auth/storage fixture helpers are substitutes.
 import {createRequire} from 'node:module';
 import {readFileSync,readdirSync} from 'node:fs';
 import {resolve,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
+import {gzipSync} from 'node:zlib';
+import {openTabletPg17} from './tablets-local-pg17.mjs';
 import {installPostingFixture} from './posting-v2-fixture.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 const require=createRequire(resolve(process.argv[2]??'../FairSwap-Web','package.json'));
-const {PGlite}=require('@electric-sql/pglite');const db=new PGlite();let count=0;
+const v2=process.argv.includes('--with-v2');
+const nativeBin=process.argv.find(arg=>arg.startsWith('--native-bin='))?.slice('--native-bin='.length);
+const db=nativeBin?await openTabletPg17(nativeBin,require('pg')):new (require('@electric-sql/pglite').PGlite)();
+let count=0;
 const scalar=async(sql,args=[])=>Object.values((await db.query(sql,args)).rows[0])[0];
 const test=async(label,fn)=>{await fn();console.log(`PASS ${++count}: ${label}`);};
 const reject=(sql,args=[])=>assert.rejects(()=>db.query(sql,args));
@@ -23,6 +28,41 @@ try{
  await test('disabled tablet session fails closed',()=>reject(`select public.tablet_v1_session($1,'create')`,[session]));
  await db.exec(readFileSync(resolve(root,'supabase/forward-migrations/posting-v2/activation/supabase/migrations/20261025135152_activate_posting_v2_mobiles.sql'),'utf8'));
  await db.exec(readFileSync(resolve(root,'supabase/forward-migrations/tablets-v1/activation/supabase/migrations/20261102170611_activate_tablets_v1.sql'),'utf8')); 
+ if(v2){
+  const dir=resolve(root,'supabase/forward-migrations/tablets-v2/supabase/migrations');
+  const migration=readFileSync(resolve(dir,readdirSync(dir).find(file=>file.endsWith('.sql'))),'utf8');
+  const ids=async table=>(await db.query(`select id from public.${table} order by id`)).rows.map(row=>row.id);
+  const installed=await ids('tablet_models_v1');
+  const installedBrands=await ids('tablet_brands_v1');
+  const functionContracts=async()=>(await db.query(`
+   select oid,proname,proacl,proowner,prosecdef,proconfig from pg_proc
+   where proname in ('validate_tablet_v1','impl_submit_tablet_v1','submit_tablet_v1','tablets_v1_catalogue') order by oid
+  `)).rows;
+  const originalContracts=await functionContracts();
+  await test('V2 migration preserves V1 UUIDs, execution contracts and release gate',async()=>{
+   await db.exec(migration);
+   const modelIds=await ids('tablet_models_v1'),brandIds=await ids('tablet_brands_v1');
+   assert.ok(installed.every(id=>modelIds.includes(id)));
+   assert.ok(installedBrands.every(id=>brandIds.includes(id)));
+   assert.deepEqual(await functionContracts(),originalContracts);
+   assert.equal(await scalar('select enabled from public.tablet_release_v1'),true);
+  });
+  await test('V2 migration is rerun-safe and every brand has one Other model',async()=>{
+   const models=await ids('tablet_models_v1'),brands=await ids('tablet_brands_v1');
+   await db.exec(migration);
+   assert.deepEqual(await ids('tablet_models_v1'),models);
+   assert.deepEqual(await ids('tablet_brands_v1'),brands);
+   assert.equal(await scalar(`select count(*)::int from public.tablet_brands_v1 b
+    where (select count(*) from public.tablet_models_v1 m where m.brand_id=b.id and m.other)<>1`),0);
+   assert.equal(await scalar(`select count(*)::int from public.tablet_models_v1 m
+    join public.tablet_brands_v1 b on b.id=m.brand_id where b.name='Other' and not m.other`),0);
+   const catalogue=await scalar('select public.tablets_v1_catalogue()');
+   assert.equal(catalogue.brands.at(-1).name,'Other');
+   for(const brand of catalogue.brands)assert.equal(catalogue.models.filter(model=>model.brand_id===brand.id).at(-1).other,true);
+   const serialized=JSON.stringify(catalogue);
+   console.log(`Catalogue: ${brands.length} brands, ${models.length} models, ${Buffer.byteLength(serialized)} bytes (${gzipSync(serialized).length} gzip)`);
+  });
+ }
  await test('five new tables enforce forced RLS',async()=>assert.equal(await scalar(`select count(*)::int from pg_class where relname in ('tablet_release_v1','tablet_brands_v1','tablet_models_v1','tablet_session_bindings_v1','listing_tablet_contexts') and relrowsecurity and relforcerowsecurity`),5));
  await test('anonymous cannot submit or acquire sessions',async()=>{await db.exec('set role anon');await reject(`select public.tablet_v1_session($1,'create')`,[session]);await reject(`select public.submit_tablet_v1('{}')`);await db.exec('reset role');});
  await test('clients cannot modify contexts, catalogue or binding',async()=>{for(const t of ['listing_tablet_contexts','tablet_models_v1','tablet_session_bindings_v1'])assert.equal(await scalar(`select has_table_privilege('authenticated',$1,'INSERT')`,['public.'+t]),false);});
@@ -38,7 +78,19 @@ try{
  await test('recovery choices include only tablet-bound sessions',async()=>{const r=await scalar("select public.tablet_v1_session(null,'list_recovery')");assert.deepEqual(r.sessions.map(s=>s.id),[session]);});
  const valid=(v)=>db.query('select app_security.validate_tablet_v1($1::jsonb)',[JSON.stringify(v)]);
  await test('valid tablet contract',()=>valid(p));
- await test('locks, forged specs, identifiers and scams rejected',async()=>{for(const patch of [{transfer_lock_status:'locked'},{transfer_lock_status:'unknown'},{connectivity:'five_g'},{storage:'2 TB'},{serial:'secret'},{hardware_model_number:'123456789012345'},{description:'Pay courier fee before pickup'},{description:'Pay an advance to reserve'},{description:'contact seller@okaxis'},{description:'serial: ABC123456789'},{condition:'poor'},{powers_on:'no'},{included:['Under warranty']},{screen_touch_status:'fault'}])await assert.rejects(()=>valid({...p,...patch}));});
+ await test('locks, forged specs, identifiers and scams rejected',async()=>{for(const patch of [{transfer_lock_status:'locked'},{transfer_lock_status:'unknown'},{connectivity:v2?'bogus':'five_g'},{storage:v2?'9000 MB':'2 TB'},{serial:'secret'},{hardware_model_number:'123456789012345'},{description:'Pay courier fee before pickup'},{description:'Pay an advance to reserve'},{description:'contact seller@okaxis'},{description:'serial: ABC123456789'},{condition:'poor'},{powers_on:'no'},{included:['Under warranty']},{screen_touch_status:'fault'}])await assert.rejects(()=>valid({...p,...patch}));});
+ if(v2)await test('cached V1 and V2 use global specs and reject forged additive fields',async()=>{
+  await valid({...p,storage:'2 TB',connectivity:'five_g'});
+  await valid({...p,other_brand:'',storage:'Not sure',storage_other:'8 GB',ram_other:'1 GB',connectivity:'unknown',connectivity_other:'Wi-Fi + 3G'});
+  const fallbacks=(await db.query(`select b.name, b.id brand_id, m.id model_id from public.tablet_models_v1 m join public.tablet_brands_v1 b on b.id=m.brand_id where m.other`)).rows;
+  for(const {name,...pair} of fallbacks)await valid({...p,...pair,other_brand:name==='Other'?'Example':'',other_model:'Legacy Tab'});
+  const {name:otherName,...pair}=fallbacks.find(row=>row.name==='Other');
+  assert.equal(otherName,'Other');
+  const unknown={...p,...pair,other_model:'Legacy Tab'};
+  await valid(unknown);
+  for(const patch of [{other_brand:''},{other_brand:'x'},{other_brand:'x'.repeat(101)},{other_brand:'123456789012345'},{other_brand:'password: mysecret'},{other_brand:'Example',other_model:'x'},{other_brand:'Example',other_model:'x'.repeat(101)},{other_brand:'Example',model_id:p.model_id}])await assert.rejects(()=>valid({...unknown,...patch}));
+  for(const patch of [{other_brand:'Example'},{other_brand:null},{storage_other:'8 GB'},{other_brand:'',storage_other:'8 GB'},{other_brand:'',connectivity:'unknown',connectivity_other:'https://paytm.me/scam'},{other_brand:'',ram_other:'2TB'}])await assert.rejects(()=>valid({...p,...patch}));
+ });
  await test('phone contract cannot finalize tablet session',()=>reject(`select app_security.impl_submit_mobile_v2($1::jsonb)`,[JSON.stringify({...p,selection:{category:'mobiles',subcategory:'mobile-phones',version:2}})]));
  snapshot=await scalar(`select public.posting_v2_session($1,'reserve',$2)`,[session,media]);await db.exec(`select set_config('request.jwt','{"role":"service_role"}',false)`);await scalar(`select public.posting_v2_media_ready($1,$2,$3,1000,800,600)`,[session,media,snapshot.media[0].attempt]);await db.exec(`select set_config('request.jwt','{}',false)`);snapshot=await scalar(`select public.posting_v2_session($1,'prepare')`,[session]);
  await test('missing prepared storage rolls back',async()=>{await reject(`select public.submit_tablet_v1($1::jsonb)`,[JSON.stringify(p)]);assert.equal(await scalar('select count(*)::int from public.listings'),0);});
@@ -52,5 +104,46 @@ try{
  await db.query(`select set_config('request.user',$1,false)`,[other]);await db.exec('set role authenticated');await test('other seller cannot see unpublished context',async()=>assert.equal(await scalar('select count(listing_id)::int from public.listing_tablet_contexts'),0));await db.exec('reset role');
  await db.exec("create or replace function app_security.is_listing_publicly_visible(uuid) returns boolean language sql stable as $$select exists(select 1 from public.listings where id=$1 and status='active')$$;update public.listings set status='active';select set_config('request.user','',false);set role anon");
  await test('approved public tablet exposes only the permitted buyer projection',async()=>{assert.equal(await scalar('select count(listing_id)::int from public.listing_tablet_contexts'),1);await reject('select review_required from public.listing_tablet_contexts');});await db.exec('reset role');
- console.log(`${count} tablet SQL checks passed (PGlite, fixture auth/storage helpers).`);
+ if(v2)await test('typed Other brand is stored with its canonical IDs and needs staff approval',async()=>{
+  await db.query("select set_config('request.user',$1,false)",[u]);
+  const newSession='33333333-3333-4333-8333-333333333334',newMedia='44444444-4444-4444-8444-444444444445';
+  await scalar("select public.tablet_v1_session($1,'create')",[newSession]);
+  const reserved=await scalar("select public.posting_v2_session($1,'reserve',$2)",[newSession,newMedia]);
+  await db.exec(`select set_config('request.jwt','{"role":"service_role"}',false)`);
+  await scalar("select public.posting_v2_media_ready($1,$2,$3,1000,800,600)",[newSession,newMedia,reserved.media[0].attempt]);
+  await db.exec(`select set_config('request.jwt','{}',false)`);
+  const prepared=await scalar("select public.posting_v2_session($1,'prepare')",[newSession]);
+  for(const n of ['original','thumb','medium','large'])await db.query('insert into storage.objects values($1,$2)',[n==='original'?'listing-originals':'listing-derivatives',`${prepared.session.listing_id}/${newMedia}/${n}.webp`]);
+  const pair=(await db.query(`select b.id brand_id,m.id model_id from public.tablet_models_v1 m join public.tablet_brands_v1 b on b.id=m.brand_id where b.name='Other' and m.other`)).rows[0];
+  const payload={...p,...pair,session_id:newSession,media_ids:[newMedia],other_brand:' Example ',other_model:' Legacy Tab ',storage:'Not sure',storage_other:' 8 GB ',connectivity:'unknown',connectivity_other:'Wi-Fi + 3G',ram_other:'1 GB'};
+  const submitSql='select public.submit_tablet_v1($1::jsonb) as result';
+  const args=[JSON.stringify(payload)];
+  let result;
+  if(db.newConnection){
+   const peer=await db.newConnection();
+   try{
+    await peer.query("select set_config('request.user',$1,false)",[u]);
+    const [a,b]=await Promise.all([scalar(submitSql,args),peer.query(submitSql,args)]);
+    result=a;
+    assert.deepEqual(b.rows[0].result,a);
+   }finally{await peer.end();}
+  }else result=await scalar(submitSql,args);
+  assert.equal(result.success,true);
+  assert.equal(await scalar('select count(*)::int from public.listing_tablet_contexts where listing_id=$1',[result.listing_id]),1);
+  const [row]=(await db.query('select * from public.listing_tablet_contexts where listing_id=$1',[result.listing_id])).rows;
+  assert.equal(row.brand_name,'Example');
+  assert.equal(row.model_name,'Legacy Tab');
+  assert.equal(row.brand_id,pair.brand_id);
+  assert.equal(row.model_id,pair.model_id);
+  assert.equal(row.review_required,true);
+  assert.equal(row.details.storage_other,'8 GB');
+  assert.equal(row.details.ram_other,'1 GB');
+  assert.equal(row.details.connectivity_other,'Wi-Fi + 3G');
+  assert.equal('other_brand' in row.details,false);
+  await reject("update public.listings set status='active' where id=$1",[result.listing_id]);
+  await db.exec("select set_config('request.user','',false);set role anon");
+  assert.equal(await scalar('select count(listing_id)::int from public.listing_tablet_contexts where listing_id=$1',[result.listing_id]),0);
+  await db.exec('reset role');
+ });
+ console.log(`${count} tablet SQL checks passed (${db.version??"PGlite"}, fixture auth/storage helpers).`);
 }finally{await db.close();}
