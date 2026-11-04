@@ -200,6 +200,129 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
     }
     return check;
   }
+  if (candidate.id === 'moderation-azure-v1') {
+    // Read-only SQL query to verify Azure Moderation V1 authoritative gate & tables:
+    // 1. app_security.listing_media_verified_hashes (RLS, exact privileges SELECT, INSERT, UPDATE, DELETE)
+    // 2. app_security.listing_moderation_scan_receipts (RLS, exact privileges SELECT, INSERT, UPDATE, DELETE)
+    // 3. Exact RPC signatures, search_path='', and EXECUTE permissions
+    const query = `
+      BEGIN READ ONLY;
+      SET LOCAL statement_timeout = '15s';
+      SELECT jsonb_build_object(
+        'verified_hashes_table_rls', (
+          SELECT c.relrowsecurity AND c.relforcerowsecurity
+          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'app_security' AND c.relname = 'listing_media_verified_hashes'
+        ),
+        'scan_receipts_table_rls', (
+          SELECT c.relrowsecurity AND c.relforcerowsecurity
+          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'app_security' AND c.relname = 'listing_moderation_scan_receipts'
+        ),
+        'tables_no_anon', (
+          SELECT has_table_privilege('anon', 'app_security.listing_media_verified_hashes', 'SELECT') = false
+            AND has_table_privilege('anon', 'app_security.listing_media_verified_hashes', 'INSERT') = false
+            AND has_table_privilege('anon', 'app_security.listing_media_verified_hashes', 'UPDATE') = false
+            AND has_table_privilege('anon', 'app_security.listing_media_verified_hashes', 'DELETE') = false
+            AND has_table_privilege('anon', 'app_security.listing_moderation_scan_receipts', 'SELECT') = false
+            AND has_table_privilege('anon', 'app_security.listing_moderation_scan_receipts', 'INSERT') = false
+            AND has_table_privilege('anon', 'app_security.listing_moderation_scan_receipts', 'UPDATE') = false
+            AND has_table_privilege('anon', 'app_security.listing_moderation_scan_receipts', 'DELETE') = false
+        ),
+        'tables_no_auth', (
+          SELECT has_table_privilege('authenticated', 'app_security.listing_media_verified_hashes', 'SELECT') = false
+            AND has_table_privilege('authenticated', 'app_security.listing_media_verified_hashes', 'INSERT') = false
+            AND has_table_privilege('authenticated', 'app_security.listing_media_verified_hashes', 'UPDATE') = false
+            AND has_table_privilege('authenticated', 'app_security.listing_media_verified_hashes', 'DELETE') = false
+            AND has_table_privilege('authenticated', 'app_security.listing_moderation_scan_receipts', 'SELECT') = false
+            AND has_table_privilege('authenticated', 'app_security.listing_moderation_scan_receipts', 'INSERT') = false
+            AND has_table_privilege('authenticated', 'app_security.listing_moderation_scan_receipts', 'UPDATE') = false
+            AND has_table_privilege('authenticated', 'app_security.listing_moderation_scan_receipts', 'DELETE') = false
+        ),
+        'tables_service_role_all_ops', (
+          SELECT has_table_privilege('service_role', 'app_security.listing_media_verified_hashes', 'SELECT') = true
+            AND has_table_privilege('service_role', 'app_security.listing_media_verified_hashes', 'INSERT') = true
+            AND has_table_privilege('service_role', 'app_security.listing_media_verified_hashes', 'UPDATE') = true
+            AND has_table_privilege('service_role', 'app_security.listing_media_verified_hashes', 'DELETE') = true
+            AND has_table_privilege('service_role', 'app_security.listing_moderation_scan_receipts', 'SELECT') = true
+            AND has_table_privilege('service_role', 'app_security.listing_moderation_scan_receipts', 'INSERT') = true
+            AND has_table_privilege('service_role', 'app_security.listing_moderation_scan_receipts', 'UPDATE') = true
+            AND has_table_privilege('service_role', 'app_security.listing_moderation_scan_receipts', 'DELETE') = true
+        ),
+        'registrar_search_path', (
+          SELECT count(*) = 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'app_security' AND p.proname = 'register_moderation_scan_receipt'
+            AND p.prosecdef AND p.proconfig @> ARRAY['search_path=""']::text[]
+        ),
+        'finalizer_search_path', (
+          SELECT count(*) = 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'app_security' AND p.proname = 'impl_finalize_moderation_result'
+            AND p.prosecdef AND p.proconfig @> ARRAY['search_path=""']::text[]
+        ),
+        'rpc_exact_signatures', (
+          SELECT to_regprocedure('app_security.register_moderation_scan_receipt(uuid,uuid,uuid,integer,uuid,text,text,text,text,text[],text[],jsonb,jsonb,jsonb,integer)') IS NOT NULL
+            AND to_regprocedure('public.register_moderation_scan_receipt(uuid,uuid,uuid,integer,uuid,text,text,text,text,text[],text[],jsonb,jsonb,jsonb,integer)') IS NOT NULL
+            AND to_regprocedure('app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)') IS NOT NULL
+            AND to_regprocedure('public.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)') IS NOT NULL
+        ),
+        'registrar_no_public', (
+          SELECT has_function_privilege('public', 'app_security.register_moderation_scan_receipt(uuid,uuid,uuid,integer,uuid,text,text,text,text,text[],text[],jsonb,jsonb,jsonb,integer)', 'EXECUTE') = false
+            AND has_function_privilege('public', 'public.register_moderation_scan_receipt(uuid,uuid,uuid,integer,uuid,text,text,text,text,text[],text[],jsonb,jsonb,jsonb,integer)', 'EXECUTE') = false
+            AND has_function_privilege('anon', 'public.register_moderation_scan_receipt(uuid,uuid,uuid,integer,uuid,text,text,text,text,text[],text[],jsonb,jsonb,jsonb,integer)', 'EXECUTE') = false
+            AND has_function_privilege('authenticated', 'public.register_moderation_scan_receipt(uuid,uuid,uuid,integer,uuid,text,text,text,text,text[],text[],jsonb,jsonb,jsonb,integer)', 'EXECUTE') = false
+        ),
+        'registrar_service_role', (
+          SELECT has_function_privilege('service_role', 'app_security.register_moderation_scan_receipt(uuid,uuid,uuid,integer,uuid,text,text,text,text,text[],text[],jsonb,jsonb,jsonb,integer)', 'EXECUTE') = true
+            AND has_function_privilege('service_role', 'public.register_moderation_scan_receipt(uuid,uuid,uuid,integer,uuid,text,text,text,text,text[],text[],jsonb,jsonb,jsonb,integer)', 'EXECUTE') = true
+        ),
+        'finalizer_no_public', (
+          SELECT has_function_privilege('public', 'app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)', 'EXECUTE') = false
+            AND has_function_privilege('public', 'public.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)', 'EXECUTE') = false
+            AND has_function_privilege('anon', 'public.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)', 'EXECUTE') = false
+            AND has_function_privilege('authenticated', 'public.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)', 'EXECUTE') = false
+        ),
+        'finalizer_service_role', (
+          SELECT has_function_privilege('service_role', 'app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)', 'EXECUTE') = true
+            AND has_function_privilege('service_role', 'public.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)', 'EXECUTE') = true
+        )
+      )::text;
+      COMMIT;
+    `;
+    let rawOutput;
+    if (runner) {
+      rawOutput = runner('psql', ['-XqAt', '-v', 'ON_ERROR_STOP=1', '-d', psqlUrl, '-c', query], env);
+    } else {
+      const res = spawnSync('psql', ['-XqAt', '-v', 'ON_ERROR_STOP=1', '-d', psqlUrl, '-c', query], {env, encoding: 'utf8'});
+      if (res.status !== 0) {
+        throw subprocessFailure(res, 'postflight_sql');
+      }
+      rawOutput = res.stdout;
+    }
+
+    let check;
+    try {
+      check = JSON.parse(rawOutput.trim());
+    } catch {
+      throw new Error('REUSABLE_RELEASE_POSTFLIGHT_INVALID_RESPONSE');
+    }
+    if (
+      !check.verified_hashes_table_rls ||
+      !check.scan_receipts_table_rls ||
+      !check.tables_no_anon ||
+      !check.tables_no_auth ||
+      !check.tables_service_role_all_ops ||
+      !check.registrar_search_path ||
+      !check.finalizer_search_path ||
+      !check.rpc_exact_signatures ||
+      !check.registrar_no_public ||
+      !check.registrar_service_role ||
+      !check.finalizer_no_public ||
+      !check.finalizer_service_role
+    ) {
+      throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
+    }
+    return check;
+  }
   if (candidate.strict) {
     const rawOutput = psqlQuery(postflightQuery(candidate.stage), psqlUrl, env, runner, 'postflight_sql');
     return runAccessoriesPostflight(candidate, rawOutput);
