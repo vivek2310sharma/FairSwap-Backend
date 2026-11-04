@@ -173,7 +173,7 @@ jobs:
           docker exec -i test-postgres psql -U postgres -v ON_ERROR_STOP=1 < supabase/forward-migrations/moderation-azure-v1/tests/test_schema_fixture.sql
 
           # Apply Forward Migration: Azure Moderation V1 Authoritative Publication Gate
-          docker exec -i test-postgres psql -U postgres -v ON_ERROR_STOP=1 < supabase/forward-migrations/moderation-azure-v1/20261102120000_azure_moderation_finalizer.sql
+          docker exec -i test-postgres psql -U postgres -v ON_ERROR_STOP=1 < supabase/forward-migrations/moderation-azure-v1/20261104113705_azure_moderation_finalizer.sql
 
           # Run pgTAP behavioral tests from mounted repository - any failure exits non-zero and fails CI
           docker exec test-postgres pg_prove -U postgres /workspace/supabase/forward-migrations/moderation-azure-v1/tests/azure_moderation_security.test.sql

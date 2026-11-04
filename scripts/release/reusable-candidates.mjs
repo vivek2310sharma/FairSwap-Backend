@@ -15,9 +15,9 @@ export const CANDIDATES = Object.freeze({
   }),
   'moderation-azure-v1': Object.freeze({
     id: 'moderation-azure-v1',
-    version: '20261102120000',
-    filename: '20261102120000_azure_moderation_finalizer.sql',
-    path: 'supabase/forward-migrations/moderation-azure-v1/20261102120000_azure_moderation_finalizer.sql',
+    version: '20261104113705',
+    filename: '20261104113705_azure_moderation_finalizer.sql',
+    path: 'supabase/forward-migrations/moderation-azure-v1/20261104113705_azure_moderation_finalizer.sql',
     sha256: '8a87ad04f7516737d8248eb4cbd4dcf644428300e67d5dd1190b74ec25090fa8',
     description: 'Azure Moderation V1 Authoritative Publication Gate and Receipt Registry',
     autoPromote: true
