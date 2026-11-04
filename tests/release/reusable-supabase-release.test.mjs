@@ -24,6 +24,19 @@ test('candidate SHA matches actual file on disk', () => {
   assert.equal(result.sha256, '8c046431a4f37369626cafee75dd8eb27bca25db96dab9d70c2125f1a2bc46f8');
 });
 
+test('candidate registry correctly registers moderation-azure-v1', () => {
+  const c = getCandidate('moderation-azure-v1');
+  assert.equal(c.version, '20261102120000');
+  assert.equal(c.filename, '20261102120000_azure_moderation_finalizer.sql');
+  assert.equal(c.sha256, '8a87ad04f7516737d8248eb4cbd4dcf644428300e67d5dd1190b74ec25090fa8');
+  assert.equal(c.autoPromote, true);
+});
+
+test('Azure candidate SHA matches the verified forward migration', () => {
+  const c = verifyCandidateSha('moderation-azure-v1');
+  assert.equal(c.sha256, '8a87ad04f7516737d8248eb4cbd4dcf644428300e67d5dd1190b74ec25090fa8');
+});
+
 test('candidate validation rejects unknown candidate', () => {
   assert.throws(() => {
     getCandidate('unknown-candidate-xyz');
@@ -235,6 +248,36 @@ test('workflow syntax contains required security checks', () => {
   assert(yaml.includes('inputs.approved_sha == github.sha'));
   assert(yaml.includes('environment: FairSwapTest'));
   assert(yaml.includes('environment: FairSwapProd'));
+  assert(yaml.includes('- moderation-azure-v1'));
+});
+
+test('Azure moderation postflight query is evaluated for moderation-azure-v1 candidate', async () => {
+  const {verifyRemotePostflight} = await import('../../scripts/release/reusable-supabase-release.mjs');
+  const mockRunner = (cmd, args) => {
+    if (cmd === 'psql') {
+      return JSON.stringify({
+        verified_hashes_table_rls: true,
+        scan_receipts_table_rls: true,
+        tables_no_anon: true,
+        tables_no_auth: true,
+        tables_service_role_all_ops: true,
+        registrar_search_path: true,
+        finalizer_search_path: true,
+        rpc_exact_signatures: true,
+        registrar_no_public: true,
+        registrar_service_role: true,
+        finalizer_no_public: true,
+        finalizer_service_role: true
+      });
+    }
+    return '';
+  };
+
+  const res = await verifyRemotePostflight('FairSwapTest', 'moderation-azure-v1', 'postgres://mock', {}, mockRunner);
+  assert.equal(res.verified_hashes_table_rls, true);
+  assert.equal(res.tables_service_role_all_ops, true);
+  assert.equal(res.rpc_exact_signatures, true);
+  assert.equal(res.finalizer_service_role, true);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -340,7 +383,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'moderation-analytics-v1', 'tablets-v1-activation', 'tablets-v1-foundation']);
+  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'moderation-analytics-v1', 'moderation-azure-v1', 'tablets-v1-activation', 'tablets-v1-foundation']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {

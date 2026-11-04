@@ -1,0 +1,140 @@
+name: Deploy Azure Moderation ACA (OIDC)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (test or prod)'
+        required: true
+        default: 'test'
+        type: choice
+        options:
+          - test
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set environment specific variables
+        id: env-vars
+        run: |
+          if [ "${{ inputs.environment }}" = "prod" ]; then
+            echo "STORAGE_HOST=kriuhwppxgxsyyrbjsau.supabase.co" >> $GITHUB_OUTPUT
+          else
+            echo "STORAGE_HOST=wpppxlnbzqynvhpeuavd.supabase.co" >> $GITHUB_OUTPUT
+          fi
+          echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 1: Ensure Resource Group exists
+      - name: Ensure Resource Group Exists
+        run: |
+          az group create --name rg-fairswap-moderation-${{ inputs.environment }} --location centralindia
+
+      # Step 2: Provision Azure Container Registry via acr.bicep
+      - name: Provision Azure Container Registry
+        id: acr-deploy
+        uses: azure/arm-deploy@v2
+        with:
+          subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          resourceGroupName: rg-fairswap-moderation-${{ inputs.environment }}
+          template: infra/azure/moderation/acr.bicep
+          parameters: >-
+            environment=${{ inputs.environment }}
+            location=centralindia
+
+      # Step 3: Log in to provisioned ACR
+      - name: Log in to Azure Container Registry
+        run: |
+          az acr login --name ${{ steps.acr-deploy.outputs.acrName }}
+
+      # Step 4: Build and Push immutable container images to ACR
+      - name: Build and Push Controller Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/moderation-azure/controller
+          file: ./services/moderation-azure/controller/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.acr-deploy.outputs.acrLoginServer }}/moderation-controller:${{ steps.env-vars.outputs.IMAGE_TAG }}
+            ${{ steps.acr-deploy.outputs.acrLoginServer }}/moderation-controller:latest
+
+      - name: Build and Push Node Vision Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/moderation-azure/node-vision
+          file: ./services/moderation-azure/node-vision/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.acr-deploy.outputs.acrLoginServer }}/node-vision:${{ steps.env-vars.outputs.IMAGE_TAG }}
+            ${{ steps.acr-deploy.outputs.acrLoginServer }}/node-vision:latest
+
+      - name: Build and Push Python OCR Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/moderation-azure/python-ocr
+          file: ./services/moderation-azure/python-ocr/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.acr-deploy.outputs.acrLoginServer }}/python-ocr:${{ steps.env-vars.outputs.IMAGE_TAG }}
+            ${{ steps.acr-deploy.outputs.acrLoginServer }}/python-ocr:latest
+
+      # Step 5: Deploy full Container Apps infrastructure referencing real images
+      - name: Deploy Azure Container Apps via main.bicep
+        id: bicep
+        uses: azure/arm-deploy@v2
+        with:
+          subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          resourceGroupName: rg-fairswap-moderation-${{ inputs.environment }}
+          template: infra/azure/moderation/main.bicep
+          parameters: >-
+            environment=${{ inputs.environment }}
+            location=centralindia
+            openAiApiKey=${{ secrets.OPENAI_API_KEY }}
+            moderationSecret=${{ secrets.AZURE_MODERATION_SECRET }}
+            allowedStorageHost=${{ steps.env-vars.outputs.STORAGE_HOST }}
+            imageTag=${{ steps.env-vars.outputs.IMAGE_TAG }}
+
+      # Step 6: Deploy Edge Function and configure required secrets in Supabase
+      - name: Deploy Supabase Edge Function & Secrets
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if [ "${{ inputs.environment }}" = "prod" ]; then
+            PROJECT_REF="kriuhwppxgxsyyrbjsau"
+          else
+            PROJECT_REF="wpppxlnbzqynvhpeuavd"
+          fi
+
+          # Install pinned Supabase CLI without running package scripts
+          curl -fsSL https://github.com/supabase/cli/releases/download/v2.117.0/supabase_linux_amd64.tar.gz -o supabase.tar.gz
+          tar -xzf supabase.tar.gz
+          chmod +x supabase
+
+          # Set Azure Moderation secrets (Controller endpoint and secret) in Edge runtime
+          ./supabase secrets set \
+            AZURE_MODERATION_ENDPOINT="https://${{ steps.bicep.outputs.controllerFqdn }}/v1/moderate" \
+            AZURE_MODERATION_SECRET="${{ secrets.AZURE_MODERATION_SECRET }}" \
+            --project-ref "$PROJECT_REF"
+
+          # Deploy Edge Function preserving Vault worker auth boundary (no --no-verify-jwt)
+          ./supabase functions deploy process-listing-moderation \
+            --project-ref "$PROJECT_REF"

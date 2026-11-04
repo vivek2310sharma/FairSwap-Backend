@@ -1,0 +1,3 @@
+allowBuilds:
+  '@tensorflow/tfjs-node': true
+  core-js: false
