@@ -64,6 +64,8 @@ jobs:
   verify:
     outputs:
       auto_promote: ${{ steps.plan.outputs.auto_promote }}
+      accessories_recovered_foundation_sha: ${{ steps.plan.outputs.accessories_recovered_foundation_sha }}
+      accessories_recheck_prod_foundation: ${{ steps.plan.outputs.accessories_recheck_prod_foundation }}
       foundation_ledger_sha: ${{ steps.plan.outputs.foundation_ledger_sha }}
       candidate_ledger_sha: ${{ steps.plan.outputs.candidate_ledger_sha }}
     if: >-
@@ -140,14 +142,22 @@ jobs:
           node --input-type=module - <<'NODE'
           import {appendFileSync} from 'node:fs';
           import {planDispatch} from './scripts/release/reusable-candidates.mjs';
-          import {requireStageEvidence} from './scripts/release/accessories-v1-release.mjs';
+          import {recoveredFoundationSha, requireStageEvidence} from './scripts/release/accessories-v1-release.mjs';
           const e = process.env;
           const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
             web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
             prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID
           }});
-          const receipts = await requireStageEvidence(plan.priorRuns, e);
+          const accessories = plan.candidate.id.startsWith('accessories-v1-');
+          const receipts = await requireStageEvidence(plan.priorRuns, e, fetch, {allowFoundationAncestors: accessories});
+          if (accessories) {
+            const previous = recoveredFoundationSha(plan, receipts, e.GITHUB_SHA);
+            appendFileSync(e.GITHUB_OUTPUT, `accessories_recovered_foundation_sha=${previous}\n`);
+            if (receipts.prod_foundation_run_id?.recoveredFoundationCommit) {
+              appendFileSync(e.GITHUB_OUTPUT, 'accessories_recheck_prod_foundation=true\n');
+            }
+          }
           if (plan.candidate.id.startsWith('tablets-v1-')) {
             const stage = plan.candidate.stage;
             const foundation = plan.target === 'production' ? receipts.prod_foundation_run_id : receipts.test_foundation_run_id;
@@ -214,6 +224,7 @@ jobs:
 
       - name: Execute Test release and automated read-only verification
         env:
+          ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
           TABLETS_FOUNDATION_LEDGER_SHA: ${{ needs.verify.outputs.foundation_ledger_sha }}
           TABLETS_CANDIDATE_LEDGER_SHA: ${{ needs.verify.outputs.candidate_ledger_sha }}
           CANDIDATE: ${{ inputs.candidate }}
@@ -340,6 +351,8 @@ jobs:
 
       - name: Execute Production release and automated read-only verification
         env:
+          ACCESSORIES_RECHECK_PROD_FOUNDATION: ${{ needs.verify.outputs.accessories_recheck_prod_foundation }}
+          ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
           TABLETS_FOUNDATION_LEDGER_SHA: ${{ needs.verify.outputs.foundation_ledger_sha }}
           TABLETS_CANDIDATE_LEDGER_SHA: ${{ needs.verify.outputs.candidate_ledger_sha }}
           CANDIDATE: ${{ inputs.candidate }}

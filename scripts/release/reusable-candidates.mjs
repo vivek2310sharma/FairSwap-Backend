@@ -120,7 +120,7 @@ function need(ok, code) {
 
 // Pure, offline plan of what a dispatch must prove before it may touch a hosted database.
 // Accessories stages are separate dispatches (target=test | production); evidence of the earlier
-// stage is a prior successful run of this same workflow on the same commit.
+// stage is a prior successful run of this workflow. Only Accessories foundation can use ancestor evidence.
 export function planDispatch({candidateId, target = 'test', inputs = {}}) {
   const candidate = getCandidate(candidateId);
   need(target === 'test' || target === 'production', 'INVALID_TARGET');
