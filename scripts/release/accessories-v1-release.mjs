@@ -35,6 +35,7 @@ export function parseLedgerVersions(output) {
     for (const [col, set] of [[cols[0], local], [cols[1], remote]]) {
       if (col === '') continue;
       if (!/^\d{14}$/.test(col)) fail('LEDGER_MALFORMED_ROW', 'version format');
+      if (set.has(col)) fail('LEDGER_MALFORMED_ROW', 'duplicate version');
       set.add(col);
     }
   }
@@ -49,6 +50,10 @@ export function assertLedgerOrdering(candidate, ledgerOutput) {
   }
   for (const v of candidate.incompatibleLedgerVersions ?? []) {
     if (local.has(v) || remote.has(v)) fail('INCOMPATIBLE_MIGRATION_ORDER', v);
+  }
+  if (candidate.id?.startsWith('tablets-v1-') &&
+      (local.size !== remote.size || [...local].some(version => !remote.has(version)))) {
+    fail('LEDGER_HISTORY_CHANGED');
   }
   const inLocal = local.has(candidate.version);
   const inRemote = remote.has(candidate.version);
@@ -149,7 +154,7 @@ const MOBILE_FUNCTIONS = [
   ['app_security.impl_posting_v2_session(uuid,text,uuid)', true, false, true]
 ];
 
-function functionAclSql(rows) {
+export function functionAclSql(rows) {
   const values = rows.map(([sig, def, anon, auth]) => `('${sig}', ${def}, ${anon}, ${auth})`).join(', ');
   return `(SELECT bool_and(
       to_regprocedure(v.sig) IS NOT NULL
@@ -304,7 +309,11 @@ const RECEIPT_CHAIN = {
   'accessories-v1-foundation|test': [],
   'accessories-v1-activation|test': ['test_foundation_run_id'],
   'accessories-v1-foundation|prod': ['test_foundation_run_id', 'test_activation_run_id'],
-  'accessories-v1-activation|prod': []
+  'accessories-v1-activation|prod': [],
+  'tablets-v1-foundation|test': [],
+  'tablets-v1-activation|test': ['test_foundation_run_id'],
+  'tablets-v1-foundation|prod': ['test_foundation_run_id', 'test_activation_run_id'],
+  'tablets-v1-activation|prod': []
 };
 
 // Minimal bounded ZIP reader for the single GitHub artifact archive (stored or deflate entries only).
@@ -365,7 +374,8 @@ export function validateReceipt(p, c, files) {
   const checks = {
     candidate: r.candidateId === candidate.id,
     version: r.migrationVersion === candidate.version && r.migrationFile === candidate.filename,
-    hash: r.migrationSha256 === candidate.sha256,
+    hash: r.migrationSha256 === candidate.sha256 &&
+      (!candidate.id.startsWith('tablets-v1-') || /^[a-f0-9]{64}$/.test(r.ledgerStatementsSha256 ?? '')),
     environment: r.environment === env && r.projectRef === PROJECT_REFS[env],
     commit: r.reviewedCommit === c.GITHUB_SHA,
     run: String(r.releaseWorkflowRun) === p.runId,
@@ -377,6 +387,7 @@ export function validateReceipt(p, c, files) {
   };
   const bad = Object.keys(checks).filter(k => !checks[k]);
   if (bad.length) fail('RECEIPT_CONTENT_INVALID', `${p.key}:${bad.join(',')}`);
+  return r;
 }
 
 async function downloadArtifact(url, token, fetcher) {
@@ -388,6 +399,7 @@ async function downloadArtifact(url, token, fetcher) {
 // Each required earlier stage must be a successful run of this workflow on the exact approved commit whose
 // receipt artifact contents match the expected candidate, hash, environment, commit, run and postflight result.
 export async function requireStageEvidence(priorRuns, c, fetcher = fetch) {
+  const receipts = {};
   for (const p of priorRuns) {
     getCandidate(p.candidateId);
     const base = `https://api.github.com/repos/${c.GITHUB_REPOSITORY}/actions/runs/${p.runId}`;
@@ -404,7 +416,12 @@ export async function requireStageEvidence(priorRuns, c, fetcher = fetch) {
       if (typeof a.archive_download_url !== 'string' || !a.archive_download_url.startsWith(`https://api.github.com/repos/${c.GITHUB_REPOSITORY}/actions/artifacts/`)) {
         fail('RECEIPT_CONTENT_INVALID', `${p.key}:url`);
       }
-      validateReceipt(p, c, readZipEntries(await downloadArtifact(a.archive_download_url, c.GITHUB_TOKEN, fetcher)));
+      const receipt = validateReceipt(p, c, readZipEntries(await downloadArtifact(a.archive_download_url, c.GITHUB_TOKEN, fetcher)));
+      if (receipts[p.key] && receipts[p.key].ledgerStatementsSha256 !== receipt.ledgerStatementsSha256) {
+        fail('RECEIPT_CONTENT_INVALID', `${p.key}:inconsistent ledger hashes`);
+      }
+      receipts[p.key] = receipt;
     }
   }
+  return receipts;
 }
