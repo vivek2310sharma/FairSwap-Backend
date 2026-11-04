@@ -24,8 +24,8 @@ const FILES={
  acc:'accessories-v1/foundation/supabase/migrations/20261102164135_accessories_v1.sql',
  tab:'tablets-v1/supabase/migrations/20261102165946_posting_v2_tablets.sql',
  tabOn:'tablets-v1/activation/supabase/migrations/20261102170611_activate_tablets_v1.sql',
- wear:'wearables-v1/supabase/migrations/20261103090000_posting_v2_wearables.sql',
- wearOn:'wearables-v1/activation/supabase/migrations/20261103090100_activate_wearables_v1.sql',
+ wear:'wearables-v1/supabase/migrations/20261104120000_posting_v2_wearables.sql',
+ wearOn:'wearables-v1/activation/supabase/migrations/20261104120100_activate_wearables_v1.sql',
  wearOff:'wearables-v1/rollback/disable_wearables_v1.sql',
  wearRestore:'wearables-v1/rollback/restore_accessories_session_baseline.sql'};
 const A='11111111-1111-4111-8111-111111111111',B='22222222-2222-4222-8222-222222222222',city='55555555-5555-4555-8555-555555555555',locality='66666666-6666-4666-8666-666666666666';
