@@ -77,7 +77,7 @@ export const PROJECT_REFS = Object.freeze({
 
 // Web commits the Accessories release is pinned to (verified GitHub baselines).
 export const ACCESSORIES_WEB = Object.freeze({
-  stagingSha: 'b5efb427b0cd5cb8acb0f8503593eebcaafce39e',
+  stagingSha: '1039873c2fa62845f19627d298cb9f3ba185d819',
   productionBaselineSha: 'd3e183dc204dcefc536494e73cf412a80e9836f0',
   repository: 'vivek2310sharma/FairSwap-Web',
   productionEnvironment: 'Production'

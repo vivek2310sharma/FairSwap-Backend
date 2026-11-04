@@ -862,6 +862,9 @@ test('Tablets Production requires the corresponding successful Test stages', () 
   assert.deepEqual(plan('activation').priorRuns.map(r => [r.candidateId, r.environment]), [
     ['tablets-v1-activation', 'test'], ['tablets-v1-foundation', 'prod']
   ]);
+  assert.equal(plan('foundation').webStagingSha, '1039873c2fa62845f19627d298cb9f3ba185d819');
+  assert.throws(() => plan('foundation', {...inputs, web_staging_sha: 'b5efb427b0cd5cb8acb0f8503593eebcaafce39e'}),
+    /WEB_STAGING_VERIFICATION_REQUIRED/);
   assert.throws(() => plan('foundation', {...inputs, test_activation_run_id: ''}), /EVIDENCE_RUN_REQUIRED/);
   assert.throws(() => plan('activation', {...inputs, prod_foundation_run_id: ''}), /EVIDENCE_RUN_REQUIRED/);
 });
