@@ -10,7 +10,7 @@ import {createHash} from 'node:crypto';
 import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
 import {CANDIDATES, getCandidate, verifyCandidateSha, PROJECT_REFS} from './reusable-candidates.mjs';
 import {
-  assertLedgerOrdering, assertStageInputs, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved
+  assertLedgerOrdering, assertStageInputs, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved, verifyAccessoriesLedger
 } from './accessories-v1-release.mjs';
 
 import {readTabletsLedger, runTabletsPostflight, runTabletsPreflight, verifyTabletsLedger} from './tablets-v1-release.mjs';
@@ -360,6 +360,20 @@ export async function releaseReusable({
   // Accessories evidence (Web SHAs, earlier stages) is re-derived here; no-op for non-strict candidates.
   const stagePlan = assertStageInputs(candidate, environment, context);
 
+  const recoveredCommit = context.ACCESSORIES_RECOVERED_FOUNDATION_SHA || '';
+  const recovering = recoveredCommit !== '';
+  const recheckProductionFoundation = context.ACCESSORIES_RECHECK_PROD_FOUNDATION === 'true';
+  const accessoriesActivation = candidateId === 'accessories-v1-activation';
+  const recoveryProductionFoundation = candidateId === 'accessories-v1-foundation' && environment === 'FairSwapProd';
+  if (recovering && (!/^[a-f0-9]{40}$/.test(recoveredCommit) || recoveredCommit === context.GITHUB_SHA
+      || !(accessoriesActivation || recoveryProductionFoundation))) {
+    throw new Error('REUSABLE_RELEASE_INVALID_ACCESSORIES_RECOVERY');
+  }
+
+  if (recheckProductionFoundation && (!accessoriesActivation || environment !== 'FairSwapProd')) {
+    throw new Error('REUSABLE_RELEASE_INVALID_ACCESSORIES_RECOVERY');
+  }
+
   // Validate candidate file and SHA-256
   const {fullPath, sha256: candidateSha} = verifyCandidateSha(candidateId, root);
 
@@ -485,6 +499,19 @@ export async function releaseReusable({
       }
     }
 
+    if (recovering || recheckProductionFoundation) {
+      const test = environment === 'FairSwapTest';
+      if (isAlreadyApplied !== (test || recoveryProductionFoundation)) {
+        throw new Error('REUSABLE_RELEASE_ACCESSORIES_RECOVERY_STATE_MISMATCH');
+      }
+      const exec = sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql');
+      verifyAccessoriesLedger(test, exec);
+      if (accessoriesActivation && !test) {
+        // Confirm the disabled foundation before considering the pending activation.
+        await verifyRemotePostflight(environment, 'accessories-v1-foundation', psqlUrl, env, runner);
+      }
+    }
+
     if ((environment === 'FairSwapTest' || candidate.strict) && isAlreadyApplied) {
       // Support resumption for FairSwapTest if already applied: verify ledger, exact SQL hash, and postflight
       phase = 'postflight';
@@ -541,6 +568,7 @@ export async function releaseReusable({
         throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
       }
 
+      if (recovering || recheckProductionFoundation) verifyAccessoriesLedger(true, sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
       status = 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED';
     }
 
@@ -557,6 +585,7 @@ export async function releaseReusable({
       dryRunPending,
       postflightVerified: true,
       ...(tablets ? {ledgerStatementsSha256} : {}),
+      ...(recovering ? {recoveredFoundationCommit: recoveredCommit} : {}),
       ...(candidate.strict ? {
         stage: candidate.stage,
         webStagingSha: stagePlan.webStagingSha,

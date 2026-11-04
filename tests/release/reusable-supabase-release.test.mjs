@@ -9,7 +9,7 @@ import {join} from 'node:path';
 import {rootCertificates} from 'node:tls';
 import {X509Certificate, createHash} from 'node:crypto';
 import {getCandidate, verifyCandidateSha, CANDIDATES, planDispatch, ACCESSORIES_WEB} from '../../scripts/release/reusable-candidates.mjs';
-import {assertLedgerOrdering, assertPreflight, parseLedgerVersions, postflightKeys, postflightQuery, preflightEnabledQuery, preflightQuery, readZipEntries, requireStageEvidence, runAccessoriesPostflight, runLivePreflight, validateReceipt, verifyHistoryPreserved, verifyWebDeployments} from '../../scripts/release/accessories-v1-release.mjs';
+import {assertLedgerOrdering, assertPreflight, parseLedgerVersions, postflightKeys, postflightQuery, preflightEnabledQuery, preflightQuery, readZipEntries, recoveredFoundationSha, requireStageEvidence, runAccessoriesPostflight, runLivePreflight, validateReceipt, verifyAccessoriesLedger, verifyHistoryPreserved, verifyWebDeployments} from '../../scripts/release/accessories-v1-release.mjs';
 import {parsePendingDryRun, verifyLedgerVersion, releaseReusable, subprocessFailure, REFS} from '../../scripts/release/reusable-supabase-release.mjs';
 
 test('candidate registry correctly registers moderation-analytics-v1', () => {
@@ -709,6 +709,167 @@ test('production foundation requires both Test receipts to chain to the same Tes
     fetcher({...zips, '11': receiptZip(ACTIVATION, 'test', '11', {priorRuns: [{key: 'test_foundation_run_id', runId: '5'}]})})), /RECEIPT_CONTENT_INVALID/);
 });
 
+// Golden token lengths from the pinned CLI's SplitAndTrim scanner, in JS code units.
+const tokenLengths = {
+  [FOUNDATION]: [100, 27, 33, 662, 204, 86, 480, 127, 371, 91, 112, 108, 71, 317, 292, 786, 117, 523, 528, 594,
+    527, 375, 383, 816, 833, 824, 818, 963, 531, 801, 1077, 633, 569, 425, 425, 369, 317, 373, 350, 100, 76,
+    6578, 108, 1512, 108, 159, 4920, 181, 145, 121, 7318, 7986, 8705, 192, 149, 130, 116, 6],
+  [ACTIVATION]: [93, 27, 33, 203, 106, 51, 6]
+};
+
+function accessoryLedgerRow(id) {
+  const c = getCandidate(id);
+  let remaining = readFileSync(c.path, 'utf8').trimStart();
+  const statements = tokenLengths[id].map(length => {
+    const statement = remaining.slice(0, length);
+    assert.equal(remaining[length], ';');
+    remaining = remaining.slice(length + 1).trimStart();
+    return statement;
+  });
+  assert.equal(remaining, '');
+  return {version: c.version, name: c.filename.slice(15, -4), statements};
+}
+
+const ancestor = 'b'.repeat(40);
+const ancestorOption = {allowFoundationAncestors: true};
+const testFoundation = {key: 'test_foundation_run_id', runId: '10', candidateId: FOUNDATION, environment: 'test'};
+const prodFoundation = {key: 'prod_foundation_run_id', runId: '12', candidateId: FOUNDATION, environment: 'prod'};
+
+function historicalEvidence(entries, over = {}) {
+  const candidate = getCandidate(FOUNDATION);
+  const source = readFileSync(candidate.path);
+  return async raw => {
+    const u = new URL(raw);
+    const ok = value => ({ok: true, json: async () => value});
+    if (u.pathname.includes('/compare/')) return ok(over.comparison ?? {
+      status: 'ahead', behind_by: 0, base_commit: {sha: ancestor}, merge_base_commit: {sha: ancestor}
+    });
+    if (u.pathname.includes('/contents/')) {
+      const bytes = over.source ?? source;
+      return ok({type: 'file', path: candidate.path, encoding: 'base64', content: bytes.toString('base64'), size: bytes.length});
+    }
+    const m = u.pathname.match(/\/(runs|artifacts)\/(\d+)(?:\/(artifacts|zip))?$/);
+    assert(m, raw);
+    const [, kind, id, suffix] = m;
+    const entry = entries[id];
+    if (!entry) return {ok: false, status: 404};
+    const {candidateId, environment, commit = ancestor, receipt = {}} = entry;
+    const zip = receiptZip(candidateId, environment, id, {reviewedCommit: commit, ...receipt}, {sums: over.sums});
+    if (kind === 'artifacts') return {ok: true, arrayBuffer: async () => zip};
+    if (!suffix) return ok({...goodRun, id: Number(id), head_sha: commit, run_attempt: 1, workflow_id: 404601811,
+      head_repository: {full_name: GH}, actor: {login: 'vivek2310sharma'}, triggering_actor: {login: 'vivek2310sharma'}, ...over.run});
+    const artifact = {id: Number(id), name: `reusable-${environment}-${candidateId}-${id}-1`, expired: false,
+      workflow_run: {id: Number(id), head_sha: commit}, archive_download_url: `https://api.github.com/repos/${GH}/actions/artifacts/${id}/zip`,
+      digest: `sha256:${createHash('sha256').update(zip).digest('hex')}`, ...over.artifact};
+    return ok({artifacts: over.missing ? [] : [artifact]});
+  };
+}
+
+test('ancestor evidence requires the original immutable run and matching source and receipt', async () => {
+  const entries = {'10': testFoundation};
+  const check = (over, p = testFoundation) => requireStageEvidence([p], ctx, historicalEvidence(entries, over), ancestorOption);
+  assert.equal((await check()).test_foundation_run_id.reviewedCommit, ancestor);
+  for (const [over, error] of [
+    [{run: {workflow_id: 5}}, /EVIDENCE_RUN_NOT_VERIFIED/],
+    [{run: {triggering_actor: {login: 'someone-else'}}}, /EVIDENCE_RUN_NOT_VERIFIED/],
+    [{run: {conclusion: 'failure'}}, /EVIDENCE_RUN_NOT_VERIFIED/],
+    [{run: {run_attempt: 2}}, /EVIDENCE_RECEIPT_MISSING/],
+    [{missing: true}, /EVIDENCE_RECEIPT_MISSING/],
+    [{artifact: {expired: true}}, /EVIDENCE_RECEIPT_MISSING/],
+    [{artifact: {digest: 'sha256:' + '0'.repeat(64)}}, /artifact digest/],
+    [{sums: '0'.repeat(64)}, /checksum/],
+    [{source: Buffer.from('select 1;')}, /EVIDENCE_SOURCE_MISMATCH/],
+    [{comparison: {status: 'diverged'}}, /EVIDENCE_ANCESTRY_NOT_VERIFIED/],
+    [{comparison: {status: 'ahead', behind_by: 0, base_commit: {sha: ancestor}, merge_base_commit: {sha: SHA_C}}}, /EVIDENCE_ANCESTRY_NOT_VERIFIED/]
+  ]) await assert.rejects(check(over), error);
+  await assert.rejects(check({}, {...testFoundation, candidateId: ACTIVATION}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  await assert.rejects(check({}, {...testFoundation, candidateId: 'tablets-v1-foundation'}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  await assert.rejects(requireStageEvidence([testFoundation], ctx, historicalEvidence({
+    '10': {...testFoundation, receipt: {reviewedCommit: SHA_C}}
+  }), ancestorOption), /RECEIPT_CONTENT_INVALID: .*commit/);
+});
+
+test('historical Production foundation verifies its own Test chain', async () => {
+  const entries = {'10': testFoundation, '11': prior[0], '12': prodFoundation};
+  const check = () => requireStageEvidence([prodFoundation], ctx, historicalEvidence(entries), ancestorOption);
+  assert.equal((await check()).prod_foundation_run_id.reviewedCommit, ancestor);
+  entries['11'] = {...prior[0], commit: SHA_C};
+  await assert.rejects(check(), /EVIDENCE_RUN_NOT_VERIFIED/);
+  entries['11'] = {...prior[0], receipt: {priorRuns: [{key: testFoundation.key, runId: '99'}]}};
+  await assert.rejects(check(), /RECEIPT_CONTENT_INVALID: .*chain/);
+  delete entries['11'];
+  await assert.rejects(check(), /EVIDENCE_LOOKUP_FAILED: 404/);
+});
+
+test('Production foundation can use current Test activation only when it records the same recovered foundation', () => {
+  const plan = planDispatch({candidateId: FOUNDATION, target: 'production', inputs: {
+    ...web, test_foundation_run_id: '10', test_activation_run_id: '11'
+  }});
+  const receipts = {test_foundation_run_id: {reviewedCommit: ancestor}, test_activation_run_id: {reviewedCommit: SHA_C}};
+  assert.throws(() => recoveredFoundationSha(plan, receipts, SHA_C), /EVIDENCE_RECOVERY_TEST_NOT_VERIFIED/);
+  receipts.test_activation_run_id.recoveredFoundationCommit = ancestor;
+  assert.equal(recoveredFoundationSha(plan, receipts, SHA_C), ancestor);
+});
+
+test('recovery verifies an applied Test activation and a disabled Production foundation without replay', async () => {
+  const foundation = accessoryLedgerRow(FOUNDATION);
+  const activation = accessoryLedgerRow(ACTIVATION);
+  const env = {GITHUB_SHA: SHA_C, ACCESSORIES_RECOVERED_FOUNDATION_SHA: ancestor,
+    WEB_STAGING_SHA: ACCESSORIES_WEB.stagingSha, TEST_FOUNDATION_RUN_ID: '10', TEST_ACTIVATION_RUN_ID: '11'};
+  for (const [candidate, environment, rows, stage] of [
+    [ACTIVATION, 'FairSwapTest', [foundation, activation], 'activation'],
+    [FOUNDATION, 'FairSwapProd', [foundation], 'foundation']
+  ]) {
+    const before = [...baseHistory, ...rows.map(r => r.version)];
+    const sql = q => q.includes('recovery-ledger') ? rows : goodPost(stage);
+    const res = await release(candidate, environment, {before, sql, env});
+    assert.equal(res.receipt.status, 'ALREADY_APPLIED_VERIFIED');
+    assert.equal(res.receipt.recoveredFoundationCommit, ancestor);
+    assert(res.calls.includes(`psql:-- accessories-postflight ${stage}`));
+    assert(!res.calls.some(c => c.startsWith('supabase db push')));
+    rmSync(res.dir, {recursive: true});
+    await assert.rejects(release(candidate, environment, {before: before.slice(0, -1), sql, env}), /RECOVERY_STATE_MISMATCH/);
+    await assert.rejects(release(candidate, environment, {before: [...before, TABLETS], sql, env}), /INCOMPATIBLE_MIGRATION_ORDER/);
+    await assert.rejects(release(candidate, environment, {before, env, sql: q => q.includes('recovery-ledger')
+      ? [{...foundation, statements: ['select 1']}, ...rows.slice(1)]
+      : goodPost(stage)}), /ACCESSORIES_LEDGER_MISMATCH/);
+    await assert.rejects(release(candidate, environment, {before, env, sql: q => q.includes('recovery-ledger')
+      ? rows : {...goodPost(stage), release_state: false}}), /POSTFLIGHT_VERIFICATION_FAILED: release_state/);
+  }
+});
+
+test('Production activation rechecks the recovered disabled foundation before the normal apply path', async () => {
+  const f = accessoryLedgerRow(FOUNDATION);
+  const a = accessoryLedgerRow(ACTIVATION);
+  const before = [...baseHistory, f.version];
+  const after = [...before, a.version];
+  const env = {GITHUB_SHA: SHA_C, ACCESSORIES_RECHECK_PROD_FOUNDATION: 'true',
+    WEB_STAGING_SHA: ACCESSORIES_WEB.stagingSha, WEB_PRODUCTION_SHA: SHA_PROD_WEB,
+    TEST_ACTIVATION_RUN_ID: '11', PROD_FOUNDATION_RUN_ID: '12'};
+  let ledgerReads = 0;
+  const sql = q => q.includes('recovery-ledger') ? (ledgerReads++ === 0 ? [f] : [f, a])
+    : q.includes('postflight foundation') ? goodPost('foundation')
+    : q.includes('postflight activation') ? goodPost('activation') : installedPre;
+  const {receipt, calls, dir} = await release(ACTIVATION, 'FairSwapProd', {before, after, env, sql});
+  assert.equal(receipt.status, 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED');
+  assert.equal(ledgerReads, 2);
+  assert(calls.indexOf('psql:-- accessories-postflight foundation') < calls.findIndex(c => c.startsWith('supabase db push')));
+  rmSync(dir, {recursive: true});
+  await assert.rejects(release(ACTIVATION, 'FairSwapProd', {before: after, after, env, sql}), /RECOVERY_STATE_MISMATCH/);
+  await assert.rejects(release(ACTIVATION, 'FairSwapProd', {before, after, env, sql: q => q.includes('recovery-ledger') ? [f]
+    : {...goodPost('foundation'), category_state: false}}), /POSTFLIGHT_VERIFICATION_FAILED: category_state/);
+});
+
+test('ledger verification rejects changed boundaries, order, names, NULLs, and unexpected versions', () => {
+  const f = accessoryLedgerRow(FOUNDATION);
+  const a = accessoryLedgerRow(ACTIVATION);
+  assert.doesNotThrow(() => verifyAccessoriesLedger(true, () => JSON.stringify([f, a])));
+  for (const rows of [[a, f], [f], [f, a, a], [{...f, name: 'wrong'}, a], [{...f, statements: null}, a],
+    [{...f, statements: [f.statements.join(';')]}, a], [{...f, statements: [...f.statements].reverse()}, a]]) {
+    assert.throws(() => verifyAccessoriesLedger(true, () => JSON.stringify(rows)), /ACCESSORIES_LEDGER_MISMATCH/);
+  }
+});
+
 // ---- Web deployment evidence -----------------------------------------------------------------
 
 const WEB = ACCESSORIES_WEB.repository;
@@ -803,6 +964,24 @@ const pgBin = findPgBin();
 if (!pgBin && process.env.REQUIRE_REAL_PG === '1') {
   test('real PostgreSQL is required for the preflight tests in release CI', () => assert.fail('no PostgreSQL server binaries found'));
 }
+
+test('real PostgreSQL: recovery reads the exact statement arrays and rejects a changed entry',
+  {skip: pgBin ? false : 'no local PostgreSQL binaries'}, () => {
+    const pg = startPg(pgBin);
+    try {
+      const rows = [accessoryLedgerRow(FOUNDATION), accessoryLedgerRow(ACTIVATION)];
+      const json = JSON.stringify(rows).replaceAll("'", "''");
+      pg.run(`CREATE SCHEMA supabase_migrations;
+        CREATE TABLE supabase_migrations.schema_migrations(version text PRIMARY KEY, name text, statements text[]);
+        INSERT INTO supabase_migrations.schema_migrations
+        SELECT * FROM jsonb_to_recordset('${json}'::jsonb) AS r(version text, name text, statements text[]);`);
+      verifyAccessoriesLedger(true, pg.run);
+      pg.run(`UPDATE supabase_migrations.schema_migrations SET statements[1] = 'select 1' WHERE version = '${rows[0].version}'`);
+      assert.throws(() => verifyAccessoriesLedger(true, pg.run), /ACCESSORIES_LEDGER_MISMATCH/);
+    } finally {
+      pg.stop();
+    }
+  });
 
 test('real PostgreSQL: preflight SQL runs on an uninstalled foundation and gates stages correctly', {skip: pgBin ? false : 'no local PostgreSQL binaries (set FSW_TEST_PG_BIN); enforced when REQUIRE_REAL_PG=1'}, () => {
   const foundationSql = readFileSync(join(process.cwd(), CANDIDATES[FOUNDATION].path), 'utf8');

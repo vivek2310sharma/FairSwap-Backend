@@ -1,8 +1,14 @@
 // Accessories V1 release gates: ledger ordering, live preflight, strict read-only postflight, stage evidence.
 import {inflateRawSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
-import {ACCESSORIES_WEB, PROJECT_REFS, getCandidate, planDispatch} from './reusable-candidates.mjs';
+import {ACCESSORIES_WEB, PROJECT_REFS, getCandidate, planDispatch, verifyCandidateSha} from './reusable-candidates.mjs';
 
+const BACKEND = 'vivek2310sharma/FairSwap-Backend';
+const WORKFLOW_ID = 404601811;
+const FOUNDATION = 'accessories-v1-foundation';
+const ACTIVATION = 'accessories-v1-activation';
+const SHA40 = /^[a-f0-9]{40}$/;
+const ID = /^[1-9][0-9]*$/;
 const WORKFLOW_PATH = '.github/workflows/reusable-supabase-release.yml';
 const TABLES = ['accessory_release_v1', 'accessory_types_v1', 'listing_accessory_contexts'];
 const TYPE_IDS = [
@@ -66,6 +72,39 @@ export function verifyHistoryPreserved(beforeRemote, ledgerAfter, version) {
   const expected = new Set([...beforeRemote, version]);
   const same = after.size === expected.size && [...expected].every(v => after.has(v));
   if (!same) fail('LEDGER_HISTORY_CHANGED');
+}
+
+// SHA-256 of JSON.stringify(SplitAndTrim(source)) from Supabase CLI v2.117.0.
+// Bind each statement array to the candidate's independently verified source hash.
+const ACCESSORIES_LEDGER = {
+  [FOUNDATION]: ['790f6e2e06fb049d84903b42fad9bf8efd359a248ac0ecfcdd69f1e897142e9a',
+    '0e512477703c1ed9fec061149245f91e82b312e4be58849f97294c198fe5456d'],
+  [ACTIVATION]: ['3fe0647b33ad914efca86b5a9aa91590be1d2d42ac20eb42cdc5d38ee3baabcd',
+    'f4ba4a6dde36fdd3bacaaf153d2d586f3c1e9906bf03c55b35fcee95efadaaa7']
+};
+
+export function verifyAccessoriesLedger(activated, exec) {
+  const expected = (activated ? [FOUNDATION, ACTIVATION] : [FOUNDATION]).map(id => {
+    const {candidate, sha256} = verifyCandidateSha(id);
+    const [source, statements] = ACCESSORIES_LEDGER[id];
+    if (sha256 !== source) fail('ACCESSORIES_LEDGER_SOURCE_MISMATCH');
+    return {version: candidate.version, name: candidate.filename.slice(15, -4), statements};
+  });
+  const raw = exec(`-- accessories-recovery-ledger
+BEGIN READ ONLY;
+SET LOCAL statement_timeout = '15s';
+SELECT coalesce(jsonb_agg(jsonb_build_object('version', version, 'name', name, 'statements', statements)
+  ORDER BY version), '[]'::jsonb)::text
+FROM supabase_migrations.schema_migrations
+WHERE version IN ('20261102164135', '20261102164137', '20261102165946', '20261102170611');
+COMMIT;`);
+  let rows;
+  try { rows = JSON.parse(raw); } catch { fail('ACCESSORIES_LEDGER_MISMATCH'); }
+  if (!Array.isArray(rows) || rows.length !== expected.length || expected.some((want, i) => {
+    const row = rows[i];
+    return row?.version !== want.version || row.name !== want.name || !Array.isArray(row.statements)
+      || createHash('sha256').update(JSON.stringify(row.statements)).digest('hex') !== want.statements;
+  })) fail('ACCESSORIES_LEDGER_MISMATCH');
 }
 
 // ---- Live read-only SQL ----------------------------------------------------------------------
@@ -250,7 +289,12 @@ const GITHUB_HEADERS = token => ({Authorization: `Bearer ${token}`, Accept: 'app
 
 async function getJson(url, token, fetcher, code = 'EVIDENCE_LOOKUP_FAILED') {
   const res = await fetcher(url, {headers: GITHUB_HEADERS(token)});
-  if (!res.ok) fail(code, String(res.status));
+  if (!res.ok) {
+    const hint = code === 'WEB_DEPLOYMENT_LOOKUP_FAILED' && res.status === 404
+      ? ' (check FairSwap-Web access and Deployments/Contents read permissions on CHAT_RELEASE_AUDIT_TOKEN)'
+      : '';
+    fail(code, `${res.status}${hint}`);
+  }
   return res.json();
 }
 
@@ -357,7 +401,7 @@ export function readZipEntries(buf) {
 }
 
 // Pure check of a receipt's contents against everything the earlier stage must have proved.
-export function validateReceipt(p, c, files) {
+export function validateReceipt(p, c, files, {originalChain = false} = {}) {
   const candidate = getCandidate(p.candidateId);
   const env = ENVIRONMENT_NAMES[p.environment];
   const lower = env.toLowerCase();
@@ -370,6 +414,8 @@ export function validateReceipt(p, c, files) {
   if (sums.toString('utf8') !== `${digest}  ${jsonName}\n`) fail('RECEIPT_CONTENT_INVALID', `${p.key}:checksum`);
   let r;
   try { r = JSON.parse(body.toString('utf8')); } catch { fail('RECEIPT_CONTENT_INVALID', `${p.key}:json`); }
+  if (!r || typeof r !== 'object' || Array.isArray(r)) fail('RECEIPT_CONTENT_INVALID', `${p.key}:json`);
+  const chain = RECEIPT_CHAIN[`${candidate.id}|${p.environment}`];
   const stagingWeb = candidate.stage === 'activation' || p.environment === 'prod' ? ACCESSORIES_WEB.stagingSha : null;
   const checks = {
     candidate: r.candidateId === candidate.id,
@@ -382,8 +428,12 @@ export function validateReceipt(p, c, files) {
     postflight: r.postflightVerified === true && RECEIPT_STATUSES.includes(r.status),
     stage: r.stage === candidate.stage,
     web: (r.webStagingSha ?? null) === stagingWeb,
-    chain: Array.isArray(r.priorRuns) && JSON.stringify(r.priorRuns.map(x => [x.key, x.runId]))
-      === JSON.stringify(RECEIPT_CHAIN[`${candidate.id}|${p.environment}`].map(k => [k, String(c[k.toUpperCase()] ?? '')]))
+    chain: Array.isArray(r.priorRuns) && r.priorRuns.length === chain.length && chain.every((key, i) => {
+      const entry = r.priorRuns[i];
+      return entry?.key === key && (originalChain
+        ? typeof entry.runId === 'string' && ID.test(entry.runId)
+        : entry.runId === String(c[key.toUpperCase()] ?? ''));
+    })
   };
   const bad = Object.keys(checks).filter(k => !checks[k]);
   if (bad.length) fail('RECEIPT_CONTENT_INVALID', `${p.key}:${bad.join(',')}`);
@@ -396,32 +446,110 @@ async function downloadArtifact(url, token, fetcher) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-// Each required earlier stage must be a successful run of this workflow on the exact approved commit whose
-// receipt artifact contents match the expected candidate, hash, environment, commit, run and postflight result.
-export async function requireStageEvidence(priorRuns, c, fetcher = fetch) {
+async function verifyFoundationSource(previous, current, token, fetcher) {
+  const {candidate, sha256} = verifyCandidateSha(FOUNDATION);
+  const base = `https://api.github.com/repos/${BACKEND}`;
+  const comparison = await getJson(`${base}/compare/${previous}...${current}?per_page=1`, token, fetcher);
+  if (comparison.status !== 'ahead' || comparison.merge_base_commit?.sha !== previous
+      || comparison.base_commit?.sha !== previous || comparison.behind_by !== 0) {
+    fail('EVIDENCE_ANCESTRY_NOT_VERIFIED');
+  }
+  const blob = await getJson(`${base}/contents/${candidate.path}?ref=${previous}`, token, fetcher);
+  if (blob.type !== 'file' || blob.path !== candidate.path || blob.encoding !== 'base64'
+      || typeof blob.content !== 'string' || blob.content.length > 256 * 1024) {
+    fail('EVIDENCE_SOURCE_MISMATCH');
+  }
+  const bytes = Buffer.from(blob.content, 'base64');
+  if (blob.size !== bytes.length || createHash('sha256').update(bytes).digest('hex') !== sha256) {
+    fail('EVIDENCE_SOURCE_MISMATCH');
+  }
+}
+
+// Ancestor eligibility is opt-in for the Accessories workflow. The protected target
+// must still verify the live ledger and state before using the recovered evidence.
+export async function requireStageEvidence(priorRuns, c, fetcher = fetch, {allowFoundationAncestors = false} = {}) {
   const receipts = {};
   for (const p of priorRuns) {
-    getCandidate(p.candidateId);
+    const candidate = getCandidate(p.candidateId);
     const base = `https://api.github.com/repos/${c.GITHUB_REPOSITORY}/actions/runs/${p.runId}`;
     const run = await getJson(base, c.GITHUB_TOKEN, fetcher);
-    if (run.path !== WORKFLOW_PATH || run.head_sha !== c.GITHUB_SHA || run.head_branch !== 'main' || run.event !== 'workflow_dispatch'
-      || run.status !== 'completed' || run.conclusion !== 'success') {
+    const historical = run.head_sha !== c.GITHUB_SHA;
+    if (run.path !== WORKFLOW_PATH || run.head_branch !== 'main' || run.event !== 'workflow_dispatch'
+      || run.status !== 'completed' || run.conclusion !== 'success'
+      || (historical && !(allowFoundationAncestors && candidate.id === FOUNDATION
+        && p.key === `${p.environment}_foundation_run_id` && ['test', 'prod'].includes(p.environment)))) {
       fail('EVIDENCE_RUN_NOT_VERIFIED', p.key);
     }
+    const immutable = allowFoundationAncestors;
+    if (immutable && (c.GITHUB_REPOSITORY !== BACKEND || !c.GITHUB_TOKEN || !ID.test(p.runId)
+        || !SHA40.test(run.head_sha) || !SHA40.test(c.GITHUB_SHA)
+        || String(run.id) !== p.runId || run.workflow_id !== WORKFLOW_ID
+        || run.head_repository?.full_name !== BACKEND || run.actor?.login !== 'vivek2310sharma'
+        || run.triggering_actor?.login !== 'vivek2310sharma'
+        || !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1)) {
+      fail('EVIDENCE_RUN_NOT_VERIFIED', p.key);
+    }
+    if (historical) await verifyFoundationSource(run.head_sha, c.GITHUB_SHA, c.GITHUB_TOKEN, fetcher);
+
     const data = await getJson(`${base}/artifacts?per_page=100`, c.GITHUB_TOKEN, fetcher);
     const prefix = `reusable-${p.environment}-${p.candidateId}-${p.runId}-`;
-    const found = (data.artifacts ?? []).filter(a => a.name.startsWith(prefix) && a.expired === false && String(a.workflow_run?.id) === p.runId);
-    if (!found.length) fail('EVIDENCE_RECEIPT_MISSING', p.key);
+    const found = (data.artifacts ?? []).filter(a => a.expired === false && String(a.workflow_run?.id) === p.runId
+      && (immutable ? a.name === prefix + run.run_attempt : a.name.startsWith(prefix)));
+    if (!found.length || (immutable && found.length !== 1)) fail('EVIDENCE_RECEIPT_MISSING', p.key);
     for (const a of found) {
-      if (typeof a.archive_download_url !== 'string' || !a.archive_download_url.startsWith(`https://api.github.com/repos/${c.GITHUB_REPOSITORY}/actions/artifacts/`)) {
+      const artifactBase = `https://api.github.com/repos/${c.GITHUB_REPOSITORY}/actions/artifacts/`;
+      if (typeof a.archive_download_url !== 'string' || !a.archive_download_url.startsWith(artifactBase)
+        || (immutable && (!ID.test(String(a.id)) || a.archive_download_url !== `${artifactBase}${a.id}/zip`
+          || a.workflow_run?.head_sha !== run.head_sha))) {
         fail('RECEIPT_CONTENT_INVALID', `${p.key}:url`);
       }
-      const receipt = validateReceipt(p, c, readZipEntries(await downloadArtifact(a.archive_download_url, c.GITHUB_TOKEN, fetcher)));
+      const zip = await downloadArtifact(a.archive_download_url, c.GITHUB_TOKEN, fetcher);
+      if (immutable && a.digest !== `sha256:${createHash('sha256').update(zip).digest('hex')}`) {
+        fail('RECEIPT_CONTENT_INVALID', `${p.key}:artifact digest`);
+      }
+      const receipt = validateReceipt(p, {...c, GITHUB_SHA: run.head_sha}, readZipEntries(zip), {originalChain: historical});
+      if (immutable && (receipt.webProductionSha !== null
+        || (receipt.recoveredFoundationCommit !== undefined &&
+          (!SHA40.test(receipt.recoveredFoundationCommit) || receipt.recoveredFoundationCommit === run.head_sha
+            || receipt.status !== 'ALREADY_APPLIED_VERIFIED' || (candidate.id === FOUNDATION ? p.environment !== 'prod' : p.environment !== 'test')))
+        || JSON.stringify(receipt.dryRunPending) !== JSON.stringify(
+        receipt.status === 'ALREADY_APPLIED_VERIFIED' ? [] : [candidate.filename]))) {
+        fail('RECEIPT_CONTENT_INVALID', `${p.key}:release result`);
+      }
       if (receipts[p.key] && receipts[p.key].ledgerStatementsSha256 !== receipt.ledgerStatementsSha256) {
         fail('RECEIPT_CONTENT_INVALID', `${p.key}:inconsistent ledger hashes`);
+      }
+      if (historical && p.environment === 'prod') {
+        const [foundation, activation] = receipt.priorRuns;
+        const testReceipts = await requireStageEvidence([
+          {...foundation, candidateId: FOUNDATION, environment: 'test'},
+          {...activation, candidateId: ACTIVATION, environment: 'test'}
+        ], {...c, GITHUB_SHA: run.head_sha, TEST_FOUNDATION_RUN_ID: foundation.runId,
+          TEST_ACTIVATION_RUN_ID: activation.runId}, fetcher, {allowFoundationAncestors: true});
+        const testCommit = testReceipts.test_foundation_run_id.reviewedCommit;
+        if (testCommit !== run.head_sha &&
+            (testReceipts.test_activation_run_id.recoveredFoundationCommit !== testCommit
+              || receipt.recoveredFoundationCommit !== testCommit)) {
+          fail('EVIDENCE_RECOVERY_TEST_NOT_VERIFIED');
+        }
       }
       receipts[p.key] = receipt;
     }
   }
   return receipts;
+}
+
+// Production foundation may rely on Test's ancestor foundation only through a
+// current Test activation receipt that records its successful live verification.
+export function recoveredFoundationSha(plan, receipts, current) {
+  const entry = plan.priorRuns.find(p => p.candidateId === FOUNDATION);
+  if (!entry) return '';
+  const previous = receipts[entry.key].reviewedCommit;
+  if (previous === current) return '';
+  if (!SHA40.test(previous)) fail('EVIDENCE_RUN_NOT_VERIFIED', entry.key);
+  if (plan.candidate.id === FOUNDATION &&
+      receipts.test_activation_run_id?.recoveredFoundationCommit !== previous) {
+    fail('EVIDENCE_RECOVERY_TEST_NOT_VERIFIED');
+  }
+  return previous;
 }
