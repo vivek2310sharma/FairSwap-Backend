@@ -3,6 +3,7 @@ begin;
 set local lock_timeout='5s';
 set local statement_timeout='30s';
 do $$ begin
+ if not exists(select 1 from pg_catalog.pg_proc where oid=pg_catalog.to_regprocedure('app_security.impl_submit_mobile_v2(jsonb)') and md5(prosrc)='0fdb04c63a19dc4207fdcfe054c021ae' and prosecdef and proconfig @> array['search_path=""']) then raise exception 'ACCESSORIES_PHONE_IMPLEMENTATION_DRIFT: review installed phone function before release';end if;
  if to_regprocedure('public.submit_mobile_v2(jsonb)') is null or not exists(select 1 from information_schema.columns where table_schema='public' and table_name='posting_upload_sessions' and column_name='draft_protected') then raise exception 'Posting V2.1.2 prerequisite missing'; end if;
 end $$;
 create table public.accessory_release_v1 (singleton boolean primary key default true check(singleton), category_id uuid not null unique references public.categories,enabled boolean not null default false);

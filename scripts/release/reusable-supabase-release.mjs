@@ -8,12 +8,12 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
-import {getCandidate, verifyCandidateSha} from './reusable-candidates.mjs';
+import {getCandidate, verifyCandidateSha, PROJECT_REFS} from './reusable-candidates.mjs';
+import {
+  assertLedgerOrdering, assertStageInputs, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved
+} from './accessories-v1-release.mjs';
 
-export const REFS = Object.freeze({
-  FairSwapTest: 'wpppxlnbzqynvhpeuavd',
-  FairSwapProd: 'kriuhwppxgxsyyrbjsau'
-});
+export const REFS = PROJECT_REFS;
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -323,7 +323,20 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
     }
     return check;
   }
-  return {status: 'NO_SPECIFIC_POSTFLIGHT'};
+  if (candidate.strict) {
+    const rawOutput = psqlQuery(postflightQuery(candidate.stage), psqlUrl, env, runner, 'postflight_sql');
+    return runAccessoriesPostflight(candidate, rawOutput);
+  }
+  // Fail closed: an unrecognized candidate must never be accepted without a real postflight.
+  throw new Error(`REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED: ${candidateId}`);
+}
+
+function psqlQuery(query, psqlUrl, env, runner, phase) {
+  const args = ['-XqAt', '-v', 'ON_ERROR_STOP=1', '-d', psqlUrl, '-c', query];
+  if (runner) return runner('psql', args, env);
+  const res = spawnSync('psql', args, {env, encoding: 'utf8', timeout: 60000});
+  if (res.error || res.status !== 0) throw subprocessFailure(res, phase);
+  return res.stdout;
 }
 
 export async function releaseReusable({
@@ -338,6 +351,8 @@ export async function releaseReusable({
   }
   const candidate = getCandidate(candidateId);
   const projectRef = REFS[environment];
+  // Accessories evidence (Web SHAs, earlier stages) is re-derived here; no-op for non-strict candidates.
+  const stagePlan = assertStageInputs(candidate, environment, context);
 
   // Validate candidate file and SHA-256
   const {fullPath, sha256: candidateSha} = verifyCandidateSha(candidateId, root);
@@ -421,18 +436,26 @@ export async function releaseReusable({
     phase = 'initial_ledger_check';
     const initialLedger = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
     let isAlreadyApplied = false;
-    try {
-      verifyLedgerVersion(initialLedger, candidate.version);
-      isAlreadyApplied = true;
-    } catch {
-      isAlreadyApplied = false;
+    let beforeRemote = null;
+    if (candidate.strict) {
+      // Prerequisites, ordering and partial state fail closed; resumption of a verified release is allowed in both environments.
+      const ordering = assertLedgerOrdering(candidate, initialLedger);
+      isAlreadyApplied = ordering.state === 'applied';
+      beforeRemote = ordering.remote;
+    } else {
+      try {
+        verifyLedgerVersion(initialLedger, candidate.version);
+        isAlreadyApplied = true;
+      } catch {
+        isAlreadyApplied = false;
+      }
     }
 
-    if (environment === 'FairSwapTest' && isAlreadyApplied) {
+    if ((environment === 'FairSwapTest' || candidate.strict) && isAlreadyApplied) {
       // Support resumption for FairSwapTest if already applied: verify ledger, exact SQL hash, and postflight
       phase = 'postflight';
       const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner);
-      if (!postflightResult || typeof postflightResult !== 'object') {
+      if (!postflightResult || typeof postflightResult !== 'object' || postflightResult.status === 'NO_SPECIFIC_POSTFLIGHT') {
         throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
       }
 
@@ -440,6 +463,10 @@ export async function releaseReusable({
       dryRunPending = [];
     } else {
       // Standard path: candidate-only dry run, migration apply, ledger verification and postflight
+      if (candidate.strict) {
+        phase = 'preflight';
+        runLivePreflight(candidate, sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
+      }
         // 4. Copy candidate migration into workspace
       const destMigration = join(workspace, 'supabase/migrations', candidate.filename);
       copyFileSync(fullPath, destMigration);
@@ -461,11 +488,12 @@ export async function releaseReusable({
       phase = 'ledger';
       const ledgerOutput = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
       verifyLedgerVersion(ledgerOutput, candidate.version);
+      if (candidate.strict) verifyHistoryPreserved(beforeRemote, ledgerOutput, candidate.version);
 
       // 8. Automated Read-only Postflight Verification (awaited and validated before receipt)
       phase = 'postflight';
       const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner);
-      if (!postflightResult || typeof postflightResult !== 'object') {
+      if (!postflightResult || typeof postflightResult !== 'object' || postflightResult.status === 'NO_SPECIFIC_POSTFLIGHT') {
         throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
       }
 
@@ -484,6 +512,12 @@ export async function releaseReusable({
       status,
       dryRunPending,
       postflightVerified: true,
+      ...(candidate.strict ? {
+        stage: candidate.stage,
+        webStagingSha: stagePlan.webStagingSha,
+        webProductionSha: stagePlan.webProductionSha,
+        priorRuns: stagePlan.priorRuns.map(r => ({key: r.key, runId: r.runId}))
+      } : {}),
       timestamp: new Date().toISOString()
     };
 
