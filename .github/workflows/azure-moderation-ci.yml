@@ -155,11 +155,19 @@ jobs:
             -e POSTGRES_PASSWORD=postgres \
             -v "$GITHUB_WORKSPACE:/workspace:ro" \
             -p 5432:5432 \
-            postgres:17-alpine
+            postgres:17-trixie
           sleep 5
 
-          # Install pgtap in disposable container
-          docker exec test-postgres apk add --no-cache pgtap
+          # Install pgtap extension and pg_prove in disposable container
+          docker exec test-postgres apt-get update
+          docker exec test-postgres apt-get install -y --no-install-recommends \
+            postgresql-17-pgtap \
+            libtap-parser-sourcehandler-pgtap-perl
+
+          # Verify PostgreSQL 17 server and pg_prove availability before applying fixtures
+          docker exec test-postgres pg_isready -U postgres
+          docker exec test-postgres psql -U postgres -c "SELECT version();"
+          docker exec test-postgres pg_prove --version
 
           # Setup base extensions, schemas, roles, and schema fixture
           docker exec -i test-postgres psql -U postgres -v ON_ERROR_STOP=1 < supabase/forward-migrations/moderation-azure-v1/tests/test_schema_fixture.sql
