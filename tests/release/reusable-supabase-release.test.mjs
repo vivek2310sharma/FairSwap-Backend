@@ -26,8 +26,8 @@ test('candidate SHA matches actual file on disk', () => {
 
 test('candidate registry correctly registers moderation-azure-v1', () => {
   const c = getCandidate('moderation-azure-v1');
-  assert.equal(c.version, '20261102120000');
-  assert.equal(c.filename, '20261102120000_azure_moderation_finalizer.sql');
+  assert.equal(c.version, '20261104113705');
+  assert.equal(c.filename, '20261104113705_azure_moderation_finalizer.sql');
   assert.equal(c.sha256, '8a87ad04f7516737d8248eb4cbd4dcf644428300e67d5dd1190b74ec25090fa8');
   assert.equal(c.autoPromote, true);
 });
@@ -377,6 +377,24 @@ test('moderation candidate is unchanged and still auto-promotes', () => {
   assert.deepEqual(plan.priorRuns, []);
   assert.throws(() => planDispatch({candidateId: 'moderation-analytics-v1', target: 'production'}), /TARGET_NOT_SUPPORTED/);
   assert.equal(getCandidate(FOUNDATION).autoPromote, false);
+});
+
+test('Azure moderation candidate is correctly sequenced after all installed Test migrations', () => {
+  const azure = getCandidate('moderation-azure-v1');
+  const accessoriesFoundation = getCandidate('accessories-v1-foundation');
+  const accessoriesActivation = getCandidate('accessories-v1-activation');
+  const analytics = getCandidate('moderation-analytics-v1');
+
+  // Verify version ordering: Azure V1 must be strictly newer than analytics and accessories
+  assert(BigInt(azure.version) > BigInt('20261102164135'), 'Azure V1 version must be later than Test-installed accessories foundation 20261102164135');
+  assert(BigInt(azure.version) > BigInt(accessoriesFoundation.version), 'Azure V1 must be sequenced after accessories foundation');
+  assert(BigInt(azure.version) > BigInt(accessoriesActivation.version), 'Azure V1 must be sequenced after accessories activation');
+  assert(BigInt(azure.version) > BigInt(analytics.version), 'Azure V1 must be sequenced after analytics');
+
+  // Verify candidate properties
+  assert.equal(azure.filename, `${azure.version}_azure_moderation_finalizer.sql`);
+  assert.equal(azure.path, `supabase/forward-migrations/moderation-azure-v1/${azure.filename}`);
+  assert.equal(azure.autoPromote, true);
 });
 
 test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC_POSTFLIGHT fallback', () => {
