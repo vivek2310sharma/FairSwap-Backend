@@ -11,6 +11,7 @@ on:
         options:
           - moderation-analytics-v1
           - moderation-azure-v1
+          - moderation-switching-v1
           - accessories-v1-foundation
           - accessories-v1-activation
           - tablets-v1-foundation

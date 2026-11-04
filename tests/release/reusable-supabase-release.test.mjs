@@ -41,6 +41,19 @@ test('Azure candidate SHA matches the verified forward migration', () => {
   assert.equal(c.sha256, '8a87ad04f7516737d8248eb4cbd4dcf644428300e67d5dd1190b74ec25090fa8');
 });
 
+test('candidate registry correctly registers moderation-switching-v1', () => {
+  const c = getCandidate('moderation-switching-v1');
+  assert.equal(c.version, '20261104223000');
+  assert.equal(c.filename, '20261104223000_moderation_provider_switching.sql');
+  assert.equal(c.sha256, '1e75154d50333e94aa80894f0c59a507d0ab3ebad34e99f2e909506d64b94a7d');
+  assert.equal(c.autoPromote, true);
+});
+
+test('moderation switching candidate SHA matches the verified forward migration', () => {
+  const c = verifyCandidateSha('moderation-switching-v1');
+  assert.equal(c.sha256, '1e75154d50333e94aa80894f0c59a507d0ab3ebad34e99f2e909506d64b94a7d');
+});
+
 test('candidate validation rejects unknown candidate', () => {
   assert.throws(() => {
     getCandidate('unknown-candidate-xyz');
@@ -405,7 +418,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'moderation-analytics-v1', 'moderation-azure-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'wearables-v1-activation', 'wearables-v1-foundation']);
+  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'wearables-v1-activation', 'wearables-v1-foundation']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
