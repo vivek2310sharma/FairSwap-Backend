@@ -134,7 +134,6 @@ jobs:
             imageTag=${{ steps.env-vars.outputs.IMAGE_TAG }}
 
       - name: Verify Azure controller health
-        if: ${{ inputs.environment == 'test' }}
         shell: bash
         timeout-minutes: 3
         env:
