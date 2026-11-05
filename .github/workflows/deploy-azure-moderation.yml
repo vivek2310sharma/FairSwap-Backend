@@ -19,7 +19,7 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment == 'test' && 'FairSwapTest' || inputs.environment }}
+    environment: ${{ inputs.environment == 'test' && 'FairSwapTest' || inputs.environment == 'prod' && 'FairSwapProd' || inputs.environment }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
