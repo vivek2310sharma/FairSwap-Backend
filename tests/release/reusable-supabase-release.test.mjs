@@ -1789,16 +1789,17 @@ test('W-AZ-1: only the activation stage requires the pinned Azure finalizer (pre
   assert.equal(verifyCandidateSha('moderation-azure-v1', process.cwd()).sha256, getCandidate('moderation-azure-v1').sha256);
 });
 
-function wearablesMock(environment, candidateId, {extraBefore = [], tabletsSha, failKey, ledgerSha = 'a'.repeat(64), accessoriesSha, activationSha, noActivationRow = false, switchingSha, switchingCount, omit = []} = {}) {
+function wearablesMock(environment, candidateId, {extraBefore = [], extraLedgerRows = [], tabletsSha, failKey, ledgerSha = 'a'.repeat(64), accessoriesSha, activationSha, noActivationRow = false, switchingSha, switchingCount, omit = []} = {}) {
   const candidate = getCandidate(candidateId);
   const names = {'20261102164135': 'accessories_v1', '20261102164137': 'activate_accessories_v1', '20261104120000': 'posting_v2_wearables', '20261104113705': 'azure_moderation_finalizer', '20261104215253': 'tablets_v2_india_catalogue', '20261104223000': 'moderation_provider_switching', [candidate.version]: candidate.filename.slice(15, -4)};
   for (const h of MOBILE_PHONES_HISTORY[environment]) names[h.version] = h.name;
   const required = candidate.requiredLedgerVersions;
   // both hosted environments have Accessories foundation AND activation installed (activated)
   const accessoriesActivation = noActivationRow ? [] : ['20261102164137'];
-  const before = [...new Set([...baseHistory, ...MOBILE_PHONES_HISTORY[environment].map(h => h.version), ...required, ...accessoriesActivation, ...extraBefore])].filter(v => !omit.includes(v)).sort();
+  const before = [...new Set([...baseHistory, ...MOBILE_PHONES_HISTORY[environment].map(h => h.version), ...required, ...accessoriesActivation,
+    ...extraBefore, ...extraLedgerRows.map(row => row.version)])].filter(v => !omit.includes(v)).sort();
   const after = [...before, candidate.version].sort();
-  const entry = version => ({version, name: names[version] ?? 'historical', hasStatements: true,
+  const entry = version => extraLedgerRows.find(row => row.version === version) ?? ({version, name: names[version] ?? 'historical', hasStatements: true,
     statementCount: version === '20261104215253' ? TABLETS_V2_LEDGER.statementCount : version === '20261104223000' ? (switchingCount ?? MODERATION_SWITCHING_LEDGER.statementCount) : 1,
     statementsSha256: version === '20261104215253' ? (tabletsSha ?? TABLETS_V2_LEDGER.statementsSha256)
       : version === '20261104223000' ? (switchingSha ?? MODERATION_SWITCHING_LEDGER.statementsSha256)
@@ -2776,7 +2777,7 @@ test('assertLedgerTail admits only the two approved newer rows, only for the Pro
   assert.doesNotThrow(() => assertCliSupportsIncludeAll('Flags:\n      --dry-run   x\n      --include-all   y'));
 });
 
-async function wProdFoundationRun(o = {}, {help = '--dry-run --include-all', dryOutput} = {}, candidateId = WF, environment = 'FairSwapProd') {
+async function wOutOfOrderRun(o = {}, {help = '--dry-run --include-all', dryOutput} = {}, candidateId = WF, environment = 'FairSwapProd') {
   const mock = wearablesMock(environment, candidateId, o);
   const calls = [];
   const full = [];
@@ -2797,7 +2798,7 @@ async function wProdFoundationRun(o = {}, {help = '--dry-run --include-all', dry
 const pushes = full => full.filter(c => c[1] === 'db' && c[2] === 'push' && !c.includes('--help'));
 
 test('Production Wearables foundation installs out of order with --include-all on dry run and apply only, after the CLI check', async () => {
-  const {result, full, dir} = await wProdFoundationRun({extraBefore: [TV2_ROW, SW_ROW]});
+  const {result, full, dir} = await wOutOfOrderRun({extraBefore: [TV2_ROW, SW_ROW]});
   try {
     const {receipt} = await result;
     assert.equal(receipt.status, 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED');
@@ -2813,7 +2814,7 @@ test('Production Wearables foundation installs out of order with --include-all o
     assert.ok(apply.includes('--yes') && apply.includes('--include-all') && !apply.includes('--dry-run'));
   } finally { rmSync(dir, {recursive: true, force: true}); }
   // the ordinary ledger (no newer row) never uses the flag or the CLI probe
-  const normal = await wProdFoundationRun({});
+  const normal = await wOutOfOrderRun({});
   try {
     await normal.result;
     assert.ok(normal.full.every(c => !c.includes('--include-all') && !c.includes('--help')));
@@ -2822,7 +2823,7 @@ test('Production Wearables foundation installs out of order with --include-all o
 
 test('out-of-order Production foundation fails closed before any push on every deviation', async () => {
   const attempt = async (o, opts, re, env = 'FairSwapProd') => {
-    const run = await wProdFoundationRun(o, opts, WF, env);
+    const run = await wOutOfOrderRun(o, opts, WF, env);
     try { await assert.rejects(run.result, re); assert.equal(pushes(run.full).filter(c => !c.includes('--dry-run')).length, 0); return run.full; }
     finally { rmSync(run.dir, {recursive: true, force: true}); }
   };
@@ -2839,8 +2840,65 @@ test('out-of-order Production foundation fails closed before any push on every d
   await attempt({extraBefore: [TV2_ROW, SW_ROW]}, {dryOutput: two}, /DRY_RUN_MISMATCH/);                             // unexpected pending SQL
   await attempt({extraBefore: [TV2_ROW, SW_ROW]}, {dryOutput: 'Would push: 20261104215253_tablets_v2_india_catalogue.sql'}, /DRY_RUN_MISMATCH/);
   // the original postflight still decides: a failed RLS/ACL/moderation check after the push yields no receipt
-  const post = await wProdFoundationRun({extraBefore: [TV2_ROW, SW_ROW], failKey: Object.keys(wearablesPostflightChecks('foundation'))[0]});
+  const post = await wOutOfOrderRun({extraBefore: [TV2_ROW, SW_ROW], failKey: Object.keys(wearablesPostflightChecks('foundation'))[0]});
   try { await assert.rejects(post.result, /POSTFLIGHT/); } finally { rmSync(post.dir, {recursive: true, force: true}); }
+});
+
+const mobileCatalogueRow = Object.freeze({
+  version: '20261105213015',
+  name: 'posting_v2_mobile_catalogue_india',
+  hasStatements: true,
+  statementCount: 23,
+  statementsSha256: '088443b1e15c6b302b52e84f75a5b8547a9c46c21477fe65228e64a6754363b4'
+});
+
+test('Production Wearables activation uses --include-all for the exact Mobile Catalogue tail', async () => {
+  const {result, full, dir} = await wOutOfOrderRun({extraLedgerRows: [mobileCatalogueRow]}, {}, WA);
+  try {
+    const {receipt} = await result;
+    assert.equal(receipt.status, 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED');
+    assert.deepEqual(receipt.outOfOrderInstall, {includeAll: true, aheadVersions: [mobileCatalogueRow.version]});
+    assert.deepEqual(receipt.dryRunPending, [getCandidate(WA).filename]);
+    const help = full.findIndex(c => c.includes('--help'));
+    const commands = pushes(full);
+    assert.equal(commands.length, 2);
+    const [dry, apply] = commands;
+    assert.ok(help >= 0 && help < full.indexOf(dry) && full.indexOf(dry) < full.indexOf(apply));
+    assert.ok(dry.includes('--dry-run') && dry.includes('--include-all'));
+    assert.ok(apply.includes('--yes') && apply.includes('--include-all') && !apply.includes('--dry-run'));
+  } finally { rmSync(dir, {recursive: true, force: true}); }
+});
+
+test('Wearables activation tail exception refuses any other candidate, environment or newer ledger', () => {
+  const a = getCandidate(WA);
+  const rejected = /WEARABLES_LEDGER_TAIL_AHEAD/;
+  assert.deepEqual(assertLedgerTail(a, [], 'FairSwapProd'), {includeAll: false, ahead: []});
+  assert.throws(() => assertLedgerTail(a, [mobileCatalogueRow], 'FairSwapTest'), rejected);
+  assert.throws(() => assertLedgerTail(getCandidate(WF), [mobileCatalogueRow], 'FairSwapProd'), rejected);
+  assert.throws(() => assertLedgerTail(a, [mobileCatalogueRow, {version: '20261105213016'}], 'FairSwapProd'), rejected);
+  assert.throws(() => assertLedgerTail(a, [mobileCatalogueRow, mobileCatalogueRow], 'FairSwapProd'), rejected);
+  for (const change of [
+    {version: '20261105213016'}, {name: 'renamed'}, {hasStatements: false},
+    {statementCount: 22}, {statementCount: undefined}, {statementsSha256: 'f'.repeat(64)}, {statementsSha256: undefined}
+  ]) {
+    assert.throws(() => assertLedgerTail(a, [{...mobileCatalogueRow, ...change}], 'FairSwapProd'), rejected);
+  }
+});
+
+test('the exact Mobile Catalogue tail cannot bypass activation prerequisites or CLI checks', async () => {
+  const extraLedgerRows = [mobileCatalogueRow];
+  for (const [options, cli, error] of [
+    ...getCandidate(WA).requiredLedgerVersions.map(version =>
+      [{omit: [version]}, {}, new RegExp(`PREREQUISITE_MIGRATION_MISSING.*${version}`)]),
+    [{switchingSha: 'f'.repeat(64)}, {}, /WEARABLES_SWITCHING_PREREQUISITE_MISMATCH/],
+    [{}, {help: '--dry-run'}, /WEARABLES_CLI_INCLUDE_ALL_UNSUPPORTED/]
+  ]) {
+    const {result, full, dir} = await wOutOfOrderRun({extraLedgerRows, ...options}, cli, WA);
+    try {
+      await assert.rejects(result, error);
+      assert.deepEqual(pushes(full), []);
+    } finally { rmSync(dir, {recursive: true, force: true}); }
+  }
 });
 
 // Disposable PostgreSQL (PGlite): the real foundation SQL installed after Tablets V2 with the ledger row inserted out of order.
@@ -3118,7 +3176,20 @@ test('real PostgreSQL: Mobile Catalogue verifies IDs, listing references, fallba
       `;
       pg.run(addListing);
       const before = readMobileCatalogueSnapshot(pg.run, 'before');
-      pg.run(readFileSync(getCandidate(MOBILE_CATALOGUE_CANDIDATE).path, 'utf8'));
+      const catalogueSql = readFileSync(getCandidate(MOBILE_CATALOGUE_CANDIDATE).path, 'utf8');
+      pg.run(catalogueSql);
+      const statements = JSON.stringify(splitStatements(catalogueSql)).replaceAll("'", "''");
+      pg.run(`CREATE SCHEMA supabase_migrations;
+        CREATE TABLE supabase_migrations.schema_migrations(version text PRIMARY KEY, name text, statements text[]);
+        INSERT INTO supabase_migrations.schema_migrations VALUES (
+          '${mobileCatalogueRow.version}', '${mobileCatalogueRow.name}',
+          ARRAY(SELECT json_array_elements_text('${statements}'::json))); `);
+      const readLedger = () => readTabletsLedger(pg.run);
+      assert.deepEqual(readLedger(), [mobileCatalogueRow]);
+      assert.deepEqual(assertLedgerTail(getCandidate(WA), readLedger(), 'FairSwapProd'),
+        {includeAll: true, ahead: [mobileCatalogueRow.version]});
+      pg.run("UPDATE supabase_migrations.schema_migrations SET statements[1] = 'select 1'");
+      assert.throws(() => assertLedgerTail(getCandidate(WA), readLedger(), 'FairSwapProd'), /WEARABLES_LEDGER_TAIL_AHEAD/);
       assert.deepEqual(verifyMobileCataloguePostflight(before, pg.run), {verified: true});
       pg.run(addListing);
       assert.deepEqual(verifyMobileCataloguePostflight(before, pg.run), {verified: true});

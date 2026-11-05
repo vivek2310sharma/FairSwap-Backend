@@ -2,7 +2,7 @@
 // (a catalogue/ACL/ownership/moderation integrity check, NOT an E2E), narrowly scoped cross-commit Accessories evidence
 // and independent Test E2E evidence. Read-only against hosted databases; nothing here applies SQL.
 import {createHash} from 'node:crypto';
-import {PROJECT_REFS, adoptionAttestation, getAdoption, getCandidate, webPin} from './reusable-candidates.mjs';
+import {MOBILE_CATALOGUE_CANDIDATE, PROJECT_REFS, adoptionAttestation, getAdoption, getCandidate, webPin} from './reusable-candidates.mjs';
 import {
   ENVIRONMENT_NAMES, RECEIPT_STATUSES, WORKFLOW_PATH, deploymentReady, downloadArtifact, fail, functionAclSql, getJson, readZipEntries
 } from './accessories-v1-release.mjs';
@@ -43,12 +43,9 @@ export function assertMobilePhonesProvenance(environment, ledgerRows) {
   return mine.map(entry => entry.version);
 }
 
-// The CLI refuses to insert a migration older than the remote tail; fail closed with a clear code instead.
-// One reviewed exception: the Wearables foundation (installed in Test before Tablets V2 and moderation switching, version
-// unchanged) is installed out of order in Production, and only while the newer ledger rows are EXACTLY the two approved
-// migrations, in this order, each with its exact name, statement count and CLI statement digest (SHA-256 of the stored
-// statements JSON, as for the Accessories pins). Any additional, missing, renamed or altered row, or any other candidate or
-// environment, stays refused.
+// The CLI refuses to insert a migration older than the remote tail without --include-all.
+// Each reviewed Production exception requires the complete newer tail in order, with exact migration identities and
+// SHA-256 digests of the stored statement arrays.
 export const TABLETS_V2_LEDGER = Object.freeze({candidateId: 'tablets-v2-catalogue', statementCount: 15,
   statementsSha256: '5a4e5e07d4469d41bbf423ac9bf552917c8d71ff93efbe3eb61c0e19a6001525'});
 export const MODERATION_SWITCHING_LEDGER = Object.freeze({candidateId: 'moderation-switching-v1', statementCount: 9,
@@ -57,6 +54,15 @@ export const WEARABLES_OUT_OF_ORDER = Object.freeze({
   candidateId: 'wearables-v1-foundation',
   environment: 'FairSwapProd',
   ahead: Object.freeze([TABLETS_V2_LEDGER, MODERATION_SWITCHING_LEDGER])
+});
+const WEARABLES_ACTIVATION_OUT_OF_ORDER = Object.freeze({
+  candidateId: 'wearables-v1-activation',
+  environment: 'FairSwapProd',
+  ahead: Object.freeze([Object.freeze({
+    candidateId: MOBILE_CATALOGUE_CANDIDATE,
+    statementCount: 23,
+    statementsSha256: '088443b1e15c6b302b52e84f75a5b8547a9c46c21477fe65228e64a6754363b4'
+  })])
 });
 
 const matchesPin = (row, pin) => {
@@ -75,13 +81,13 @@ export function assertSwitchingPrerequisite(candidate, ledgerRows) {
   }
 }
 
-// Returns {includeAll}; true only for the approved out-of-order case, which must then use `supabase db push --include-all`.
+// Returns {includeAll}; true only for a reviewed out-of-order case, which must then use `supabase db push --include-all`.
 export function assertLedgerTail(candidate, ledgerRows, environment) {
   const ahead = ledgerRows.filter(row => row.version >= candidate.version);
   if (!ahead.length) return {includeAll: false, ahead: []};
-  const rule = WEARABLES_OUT_OF_ORDER;
-  if (candidate.id === rule.candidateId && environment === rule.environment && ahead.length === rule.ahead.length
-      && rule.ahead.every((pin, i) => matchesPin(ahead[i], pin))) {
+  const rule = [WEARABLES_OUT_OF_ORDER, WEARABLES_ACTIVATION_OUT_OF_ORDER]
+    .find(rule => candidate.id === rule.candidateId && environment === rule.environment);
+  if (rule && ahead.length === rule.ahead.length && rule.ahead.every((pin, i) => matchesPin(ahead[i], pin))) {
     return {includeAll: true, ahead: ahead.map(row => row.version)};
   }
   fail('WEARABLES_LEDGER_TAIL_AHEAD', ahead.map(r => r.version).join(','));
