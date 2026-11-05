@@ -46,7 +46,14 @@ const test=async(label,fn)=>{
 const code=c=>e=>e.code===c||String(e.message).includes(c);
 const fixtureSql=`
  create schema if not exists extensions;create schema if not exists vault;
- create function extensions.digest(data text,type text) returns bytea language sql immutable as $$select sha256(convert_to(data,'UTF8'))$$;
+ -- Test-only pgcrypto stand-ins. Hosted databases have pgcrypto 1.3 in schema extensions with digest(text,text) and digest(bytea,text); the source-built
+ -- fixture has no pgcrypto, so BOTH overloads are shimmed over PostgreSQL's sha256() and any other algorithm fails closed instead of being accepted.
+ create function extensions.digest(data text,type text) returns bytea language plpgsql immutable as $$begin
+  if lower(type) is distinct from 'sha256' then raise exception 'FIXTURE_DIGEST_UNSUPPORTED_ALGORITHM: %',type using errcode='0A000';end if;
+  return sha256(convert_to(data,'UTF8'));end$$;
+ create function extensions.digest(data bytea,type text) returns bytea language plpgsql immutable as $$begin
+  if lower(type) is distinct from 'sha256' then raise exception 'FIXTURE_DIGEST_UNSUPPORTED_ALGORITHM: %',type using errcode='0A000';end if;
+  return sha256(data);end$$;
  create table vault._secrets(name text primary key,decrypted_secret text);
  create view vault.decrypted_secrets as select name,decrypted_secret from vault._secrets;
  grant usage on schema vault,extensions,app_security,public to service_role;grant select on vault.decrypted_secrets to service_role;
@@ -330,5 +337,5 @@ try{
   await assert.rejects(()=>finalize(c),code('requires staff review'));assert.equal(await status(s.listing),'pending_review');
  });
  console.log(JSON.stringify({status:'PASS',postgres_version_num:version,checks,order:'Accessories(foundation+activation) -> Azure 20261104113705 -> Wearables foundation 20261104120000 -> moderation switching 20261104223000 -> Wearables activation 20261104230000 (wraps the switching finalizer)',resolved_findings:['W-AZ-1'],known_findings:[],
-  fixture_limitations:['pgcrypto: extensions.digest is a sha256() shim (no pgcrypto extension in the source build)','vault: vault.decrypted_secrets is a plain table-backed view; no real Vault','moderation identities: is_active_staff_aal2 is the posting fixture stub keyed on the request.staff GUC, so moderator/AAL2 identity is mocked (no Auth/JWT/AAL, no real moderate_listing_reviewed)','scan receipts use synthetic manifest hashes (sha256 of media id), not content hashes','auth.users, cities/localities, storage.objects and categories are minimal fixtures; roles authenticated/anon/service_role are fixture roles','PG 17.6 source build without openssl/icu/readline/zlib; not a Supabase-hosted instance']}));
+  fixture_limitations:['pgcrypto: extensions.digest(text,text) and digest(bytea,text) are sha256()-only shims that reject other algorithms (no pgcrypto extension in the source build)','vault: vault.decrypted_secrets is a plain table-backed view; no real Vault','moderation identities: is_active_staff_aal2 is the posting fixture stub keyed on the request.staff GUC, so moderator/AAL2 identity is mocked (no Auth/JWT/AAL, no real moderate_listing_reviewed)','scan receipts use synthetic manifest hashes (sha256 of media id), not content hashes','auth.users, cities/localities, storage.objects and categories are minimal fixtures; roles authenticated/anon/service_role are fixture roles','PG 17.6 source build without openssl/icu/readline/zlib; not a Supabase-hosted instance']}));
 }finally{db.close();}
