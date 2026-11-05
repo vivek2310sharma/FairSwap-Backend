@@ -68,7 +68,7 @@ async function viaNative(run){
 const checkOut=x=>JSON.parse(x.split('\n').filter(Boolean).pop());
 const RULES="array['check_india_fraud_rules','check_openai_moderation','check_vision_nsfw','check_vision_category','check_ocr_qr']::text[]";
 const sha=s=>createHash('sha256').update(s).digest('hex');
-const activationSql=readFileSync(resolve('supabase/forward-migrations/wearables-v1/activation/supabase/migrations/20261104120100_activate_wearables_v1.sql'),'utf8');
+const activationSql=readFileSync(resolve('supabase/forward-migrations/wearables-v1/activation/supabase/migrations/20261104220000_activate_wearables_v1.sql'),'utf8');
 async function submit(over={}){const s=await stage(u,over);await db.start(submitSql(s.payload),ctx(u,'az_submit')).done;return s;}
 async function claim(listing,{mutate=false}={}){
  const l=(await db.query('select revision,title,description from public.listings where id=$1',[listing])).rows[0];
@@ -118,7 +118,7 @@ try{
  await test('Wearables foundation preflight passes on the hosted-order baseline (Accessories activated, Azure installed)',async()=>{
   const r=await viaNative(run=>runWearablesPreflight(foundation,sql=>run(sql)));assert.ok(Object.values(r).every(v=>v===true));
  });
- for(const [candidate,p] of [[foundation,'wearables-v1/supabase/migrations/20261104120000_posting_v2_wearables.sql'],[activation,'wearables-v1/activation/supabase/migrations/20261104120100_activate_wearables_v1.sql']]){
+ for(const [candidate,p] of [[foundation,'wearables-v1/supabase/migrations/20261104120000_posting_v2_wearables.sql'],[activation,'wearables-v1/activation/supabase/migrations/20261104220000_activate_wearables_v1.sql']]){
   if(candidate===activation)await test('Wearables activation preflight passes with Azure installed and foundation disabled',async()=>{const r=await viaNative(run=>runWearablesPreflight(activation,sql=>run(sql)));assert.ok(Object.values(r).every(v=>v===true));});
   if(candidate===activation){
    const compatSql=activationSql.slice(activationSql.indexOf('do $$\ndeclare'),activationSql.indexOf('\nupdate public.categories'));assert.ok(compatSql.startsWith('do $$')&&compatSql.includes('WEARABLES_AZURE_BASELINE_DRIFT'));
@@ -316,6 +316,6 @@ try{
   const s=await submit({pairing_status:'unknown'});const c=await claim(s.listing);
   await assert.rejects(()=>finalize(c),code('requires staff review'));assert.equal(await status(s.listing),'pending_review');
  });
- console.log(JSON.stringify({status:'PASS',postgres_version_num:version,checks,order:'Accessories(foundation+activation) -> Azure 20261104113705 -> Wearables foundation 20261104120000 -> Wearables activation 20261104120100 (wraps the Azure finalizer)',resolved_findings:['W-AZ-1'],known_findings:[],
+ console.log(JSON.stringify({status:'PASS',postgres_version_num:version,checks,order:'Accessories(foundation+activation) -> Azure 20261104113705 -> Wearables foundation 20261104120000 -> Wearables activation 20261104220000 (wraps the Azure finalizer)',resolved_findings:['W-AZ-1'],known_findings:[],
   fixture_limitations:['pgcrypto: extensions.digest is a sha256() shim (no pgcrypto extension in the source build)','vault: vault.decrypted_secrets is a plain table-backed view; no real Vault','moderation identities: is_active_staff_aal2 is the posting fixture stub keyed on the request.staff GUC, so moderator/AAL2 identity is mocked (no Auth/JWT/AAL, no real moderate_listing_reviewed)','scan receipts use synthetic manifest hashes (sha256 of media id), not content hashes','auth.users, cities/localities, storage.objects and categories are minimal fixtures; roles authenticated/anon/service_role are fixture roles','PG 17.6 source build without openssl/icu/readline/zlib; not a Supabase-hosted instance']}));
 }finally{db.close();}

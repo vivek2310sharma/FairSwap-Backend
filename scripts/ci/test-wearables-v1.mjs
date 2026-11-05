@@ -19,7 +19,7 @@ const {nameKey,baseKey}=await import(pathToFileURL(resolve(web,'scripts/wearable
 const catalogue=JSON.parse(readFileSync(resolve(web,'src/lib/listings/wearables/catalogue.generated.json'),'utf8'));
 const fm=resolve(root,'supabase/forward-migrations');
 const sql=p=>readFileSync(resolve(fm,p),'utf8');
-const FILES={recovery:'posting-v2/session-recovery/supabase/migrations/20261101234604_posting_v212_session_recovery.sql',phoneOn:'posting-v2/activation/supabase/migrations/20261025135152_activate_posting_v2_mobiles.sql',acc:'accessories-v1/foundation/supabase/migrations/20261102164135_accessories_v1.sql',wear:'wearables-v1/supabase/migrations/20261104120000_posting_v2_wearables.sql',wearOn:'wearables-v1/activation/supabase/migrations/20261104120100_activate_wearables_v1.sql'};
+const FILES={recovery:'posting-v2/session-recovery/supabase/migrations/20261101234604_posting_v212_session_recovery.sql',phoneOn:'posting-v2/activation/supabase/migrations/20261025135152_activate_posting_v2_mobiles.sql',acc:'accessories-v1/foundation/supabase/migrations/20261102164135_accessories_v1.sql',wear:'wearables-v1/supabase/migrations/20261104120000_posting_v2_wearables.sql',wearOn:'wearables-v1/activation/supabase/migrations/20261104220000_activate_wearables_v1.sql'};
 const A='11111111-1111-4111-8111-111111111111',B='22222222-2222-4222-8222-222222222222',city='55555555-5555-4555-8555-555555555555',locality='66666666-6666-4666-8666-666666666666';
 let checks=0;const results=[];
 async function base(upTo='acc'){

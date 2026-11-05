@@ -5,14 +5,16 @@ import {tmpdir} from 'node:os';
 import {rmSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {deflateRawSync, crc32 as zlibCrc32} from 'node:zlib';
-import {join} from 'node:path';
+import {join, resolve as resolvePath} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {rootCertificates} from 'node:tls';
 import {X509Certificate, createHash} from 'node:crypto';
 import {getCandidate, verifyCandidateSha, CANDIDATES, planDispatch, ACCESSORIES_WEB, WEARABLES_WEB, WEB_PINS, EXISTING_INSTALLATIONS, adoptionAttestation, getAdoption} from '../../scripts/release/reusable-candidates.mjs';
 import {
   ADOPTED_STATUS, MOBILE_PHONES_HISTORY, WEARABLES_E2E, assertLedgerTail, assertMobilePhonesProvenance, requirePriorCommitEvidence, runWearablesPostflight,
-  runWearablesPreflight, validateCrossCommitReceipt, verifyE2eEvidence, wearablesPostflightChecks, AZURE_FINALIZER_BODY_SHA256
+  WEARABLES_ANCESTOR_EVIDENCE, WEARABLES_OUT_OF_ORDER, assertCliSupportsIncludeAll, runWearablesPreflight, validateCrossCommitReceipt, verifyE2eEvidence, wearablesPostflightChecks, AZURE_FINALIZER_BODY_SHA256
 } from '../../scripts/release/wearables-v1-release.mjs';
+import {readTabletsLedger, verifyTabletsLedger} from '../../scripts/release/tablets-v1-release.mjs';
 import {assertLedgerOrdering, assertPreflight, parseLedgerVersions, postflightKeys, postflightQuery, preflightEnabledQuery, preflightQuery, readZipEntries, recoveredFoundationSha, requireStageEvidence, runAccessoriesPostflight, runLivePreflight, validateReceipt, verifyAccessoriesLedger, verifyHistoryPreserved, verifyWebDeployments} from '../../scripts/release/accessories-v1-release.mjs';
 import {adoptExistingInstallation, parsePendingDryRun, verifyLedgerVersion, releaseReusable, subprocessFailure, REFS} from '../../scripts/release/reusable-supabase-release.mjs';
 
@@ -1207,7 +1209,7 @@ test('Wearables candidates register exact SQL, SHA256SUMS hashes and leave the 5
     const [hash, file] = line.split('  ');
     return [file.split('/').pop(), hash];
   }));
-  for (const [id, version, filename] of [[WF, '20261104120000', '20261104120000_posting_v2_wearables.sql'], [WA, '20261104120100', '20261104120100_activate_wearables_v1.sql']]) {
+  for (const [id, version, filename] of [[WF, '20261104120000', '20261104120000_posting_v2_wearables.sql'], [WA, '20261104220000', '20261104220000_activate_wearables_v1.sql']]) {
     const c = getCandidate(id);
     assert.equal(c.version, version);
     assert.equal(c.filename, filename);
@@ -1661,9 +1663,9 @@ test('W-AZ-1: only the activation stage requires the pinned Azure finalizer (pre
   assert.equal(verifyCandidateSha('moderation-azure-v1', process.cwd()).sha256, getCandidate('moderation-azure-v1').sha256);
 });
 
-function wearablesMock(environment, candidateId, {extraBefore = [], failKey, ledgerSha = 'a'.repeat(64), accessoriesSha, activationSha, noActivationRow = false} = {}) {
+function wearablesMock(environment, candidateId, {extraBefore = [], tabletsSha, failKey, ledgerSha = 'a'.repeat(64), accessoriesSha, activationSha, noActivationRow = false} = {}) {
   const candidate = getCandidate(candidateId);
-  const names = {'20261102164135': 'accessories_v1', '20261102164137': 'activate_accessories_v1', '20261104120000': 'posting_v2_wearables', '20261104113705': 'azure_moderation_finalizer', [candidate.version]: candidate.filename.slice(15, -4)};
+  const names = {'20261102164135': 'accessories_v1', '20261102164137': 'activate_accessories_v1', '20261104120000': 'posting_v2_wearables', '20261104113705': 'azure_moderation_finalizer', '20261104215253': 'tablets_v2_india_catalogue', [candidate.version]: candidate.filename.slice(15, -4)};
   for (const h of MOBILE_PHONES_HISTORY[environment]) names[h.version] = h.name;
   const required = candidate.requiredLedgerVersions;
   // both hosted environments have Accessories foundation AND activation installed (activated)
@@ -1671,7 +1673,8 @@ function wearablesMock(environment, candidateId, {extraBefore = [], failKey, led
   const before = [...new Set([...baseHistory, ...MOBILE_PHONES_HISTORY[environment].map(h => h.version), ...required, ...accessoriesActivation, ...extraBefore])].sort();
   const after = [...before, candidate.version].sort();
   const entry = version => ({version, name: names[version] ?? 'historical', hasStatements: true,
-    statementsSha256: environment === 'FairSwapProd' && version === '20261102164135' ? (accessoriesSha ?? ADOPTED_SHA)
+    statementsSha256: version === '20261104215253' ? (tabletsSha ?? WEARABLES_OUT_OF_ORDER.ahead.statementsSha256)
+      : environment === 'FairSwapProd' && version === '20261102164135' ? (accessoriesSha ?? ADOPTED_SHA)
       : environment === 'FairSwapProd' && version === '20261102164137' ? (activationSha ?? OBSERVED.activation) : ledgerSha});
   let reads = 0;
   return {
@@ -1765,7 +1768,7 @@ test('Wearables release fails closed on history, drift, ledger and postflight pr
   calls = await attempt('FairSwapTest', WF, {extraBefore: ['20261104130000']}, {}, /WEARABLES_LEDGER_TAIL_AHEAD/);
   assert.equal(pushes(calls), 0);
   // a pre-existing candidate row has no trusted receipt
-  calls = await attempt('FairSwapTest', WA, {extraBefore: ['20261104120100']}, {}, /WEARABLES_ALREADY_RECORDED/);
+  calls = await attempt('FairSwapTest', WA, {extraBefore: ['20261104220000']}, {}, /WEARABLES_ALREADY_RECORDED/);
   assert.equal(pushes(calls), 0);
   // Production must carry the Test statements hash; a different installed hash is rejected
   calls = await attempt('FairSwapProd', WF, {ledgerSha: 'b'.repeat(64)}, {}, /WEARABLES_TEST_LEDGER_MISMATCH/);
@@ -1902,7 +1905,7 @@ test('adoption registry pins the observed digests; the activation row is ONE sto
   assert.equal(activation.storedSqlSha256, getCandidate(AA).sha256);
   assert.equal(activation.reviewedSourceStatementsSha256, null, 'the CLI-split digest of the file is not what the hosted ledger holds and is no longer attested');
   assert.equal('matchesReviewedSource' in activation, false, 'provenance is computed, never a registry boolean');
-  assert.deepEqual(record.forbiddenLedgerVersions, ['20261104120000', '20261104120100']);
+  assert.deepEqual(record.forbiddenLedgerVersions, ['20261104120000', '20261104220000']);
   assert.deepEqual(record.postTabletsLedger.map(e => [e.ledgerVersion, e.ledgerName]), [['20261102165946', 'posting_v2_tablets'], ['20261102170611', 'activate_tablets_v1']]);
   for (const e of record.postTabletsLedger) assert.equal(getCandidate(e.candidateId).filename.slice(15, -4), e.ledgerName);
   assert.deepEqual(record.postTabletsExemptKeys, EXEMPT);
@@ -1984,7 +1987,7 @@ test('adoption rejects disabled, foundation-only, partial, missing, tampered and
   await adoptFailing({storedSql: {'20261102164137': ''}}, /ADOPTION_STORED_SQL_HASH_MISMATCH/);
   await adoptFailing({storedSql: {'20261102164137': STORED_SQL.toUpperCase()}}, /ADOPTION_STORED_SQL_HASH_MISMATCH/);
   // later chain stages recorded
-  for (const version of ['20261104120000', '20261104120100']) {
+  for (const version of ['20261104120000', '20261104220000']) {
     await adoptFailing({ledger: withRow({version, name: 'later', ...hist('a'.repeat(64))})}, /ADOPTION_LATER_STAGE_RECORDED/);
   }
   // installed-state drift in every class the active postflight covers
@@ -2303,7 +2306,7 @@ test('post-Tablets adoption stays strict: partial/renamed Tablets rows, Tablets 
     await adoptFailing({ledger: tl(), post: ok, tabletsPost: {...TABLETS_GOOD, [key]: false}}, /TABLETS_POSTFLIGHT_FAILED/);
   }
   // already-installed Wearables migrations are still rejected, with or without Tablets
-  for (const version of ['20261104120000', '20261104120100']) {
+  for (const version of ['20261104120000', '20261104220000']) {
     await adoptFailing({ledger: [...tl(), {version, name: 'w', ...hist('a'.repeat(64))}], post: ok}, /ADOPTION_LATER_STAGE_RECORDED/);
   }
   // every non-exempt Accessories assertion is still enforced in the post-Tablets path
@@ -2326,3 +2329,404 @@ test('the wrapper exemption is limited to the two named keys and is unavailable 
   assert.throws(() => runAccessoriesPostflight(f, JSON.stringify({...post, rls_forced: false}), {exemptKeys: EXEMPT}), /rls_forced/);
   assert.throws(() => runAccessoriesPostflight(f, JSON.stringify(post), {exemptKeys: ['rls_forced']}), /EXEMPTION_NOT_ALLOWED/);
 });
+
+// ---- Wearables ancestral stage evidence ---------------------------------------------------------
+const WPOLICY = {ancestorPolicy: WEARABLES_ANCESTOR_EVIDENCE};
+const WLEDGER = 'e'.repeat(64);
+const COMMIT_A = 'a'.repeat(40);
+const COMMIT_B = 'b'.repeat(40);
+const WCHAIN = {
+  'wearables-v1-activation|test': [['test_foundation_run_id', '10']],
+  'wearables-v1-foundation|prod': [['test_foundation_run_id', '10'], ['test_activation_run_id', '11']]
+};
+const wTestFoundation = {key: 'test_foundation_run_id', runId: '10', candidateId: WF, environment: 'test', commit: COMMIT_A};
+const wTestActivation = {key: 'test_activation_run_id', runId: '11', candidateId: WA, environment: 'test', commit: COMMIT_B};
+const wProdFoundation = {key: 'prod_foundation_run_id', runId: '12', candidateId: WF, environment: 'prod', commit: COMMIT_B};
+const wEntries = () => ({'10': wTestFoundation, '11': wTestActivation, '12': wProdFoundation});
+
+function wearablesReceipt(candidateId, environment, runId, commit, over = {}) {
+  const cand = getCandidate(candidateId);
+  const full = environment === 'test' ? 'FairSwapTest' : 'FairSwapProd';
+  return {
+    environment: full, projectRef: REFS[full], candidateId, migrationVersion: cand.version, migrationFile: cand.filename,
+    migrationSha256: cand.sha256, ledgerStatementsSha256: WLEDGER, reviewedCommit: commit, releaseWorkflowRun: runId,
+    status: 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED', dryRunPending: [cand.filename], postflightVerified: true, stage: cand.stage,
+    webStagingSha: cand.stage === 'activation' || environment === 'prod' ? WEARABLES_WEB.stagingSha : null, webProductionSha: null,
+    priorRuns: (WCHAIN[`${candidateId}|${environment}`] ?? []).map(([key, id]) => ({key, runId: id})),
+    timestamp: '2026-11-05T00:00:00.000Z', ...over
+  };
+}
+
+function wearablesFetcher(entries, over = {}) {
+  const ok = value => ({ok: true, json: async () => value});
+  return async raw => {
+    const u = new URL(raw);
+    const compare = u.pathname.match(/\/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})$/);
+    if (compare) {
+      const [, previous] = compare;
+      return ok(over.comparison?.(previous) ?? {status: 'ahead', behind_by: 0, base_commit: {sha: previous}, merge_base_commit: {sha: previous}});
+    }
+    if (u.pathname.includes('/contents/')) {
+      const candidate = Object.values(CANDIDATES).find(x => u.pathname.endsWith('/' + x.path));
+      const bytes = over.source ?? readFileSync(candidate.path);
+      return ok({type: 'file', path: candidate.path, encoding: 'base64', content: bytes.toString('base64'), size: bytes.length});
+    }
+    const m = u.pathname.match(/\/(runs|artifacts)\/(\d+)(?:\/(artifacts|zip))?$/);
+    assert(m, raw);
+    const [, kind, id, suffix] = m;
+    const entry = entries[id];
+    if (!entry) return {ok: false, status: 404};
+    const {candidateId, environment, commit, receipt = {}} = entry;
+    const full = (environment === 'test' ? 'fairswaptest' : 'fairswapprod');
+    const body = JSON.stringify(wearablesReceipt(candidateId, environment, id, commit, receipt), null, 2) + '\n';
+    const digest = over.sums ?? createHash('sha256').update(body).digest('hex');
+    const zip = makeZip({[`${candidateId}-${full}.json`]: body, [`SHA256SUMS_${full}`]: `${digest}  ${candidateId}-${full}.json\n`});
+    if (kind === 'artifacts') return {ok: true, arrayBuffer: async () => zip};
+    if (!suffix) return ok({...goodRun, id: Number(id), head_sha: commit, run_attempt: 1, workflow_id: 404601811,
+      head_repository: {full_name: GH}, actor: {login: 'vivek2310sharma'}, triggering_actor: {login: 'vivek2310sharma'}, ...over.run});
+    const artifact = {id: Number(id), name: `reusable-${environment}-${candidateId}-${id}-1`, expired: false,
+      workflow_run: {id: Number(id), head_sha: commit}, archive_download_url: `https://api.github.com/repos/${GH}/actions/artifacts/${id}/zip`,
+      digest: `sha256:${createHash('sha256').update(zip).digest('hex')}`, ...over.artifact};
+    return ok({artifacts: over.missing ? [] : [artifact]});
+  };
+}
+
+const wRequire = (priors, over, entries = wEntries(), options = WPOLICY) =>
+  requireStageEvidence(priors, ctx, wearablesFetcher(entries, over), options);
+
+test('Wearables Test activation accepts the verified ancestor Test foundation run', async () => {
+  assert(WEARABLES_ANCESTOR_EVIDENCE.size === 3);
+  const plan = planDispatch({candidateId: WA, target: 'test', inputs: {web_staging_sha: WEARABLES_WEB.stagingSha, test_foundation_run_id: '10'}});
+  const receipts = await wRequire(plan.priorRuns);
+  assert.equal(receipts.test_foundation_run_id.reviewedCommit, COMMIT_A);
+  assert.equal(receipts.test_foundation_run_id.ledgerStatementsSha256, WLEDGER);
+});
+
+test('Wearables Production foundation and activation verify historical Test and Production chains across commits', async () => {
+  const foundation = planDispatch({candidateId: WF, target: 'production', inputs: {
+    web_staging_sha: WEARABLES_WEB.stagingSha, test_foundation_run_id: '10', test_activation_run_id: '11',
+    accessories_prod_foundation_run_id: '90', test_e2e_run_id: '91'}});
+  const f = await wRequire(foundation.priorRuns);
+  assert.deepEqual([f.test_foundation_run_id.reviewedCommit, f.test_activation_run_id.reviewedCommit], [COMMIT_A, COMMIT_B]);
+  const activation = planDispatch({candidateId: WA, target: 'production', inputs: {
+    web_staging_sha: WEARABLES_WEB.stagingSha, web_production_sha: 'f'.repeat(40), test_activation_run_id: '11', prod_foundation_run_id: '12',
+    accessories_prod_foundation_run_id: '90', test_e2e_run_id: '91'}});
+  const a = await wRequire(activation.priorRuns);
+  assert.deepEqual([a.test_activation_run_id.reviewedCommit, a.prod_foundation_run_id.reviewedCommit], [COMMIT_B, COMMIT_B]);
+});
+
+test('Wearables ancestral evidence rejects tampered, divergent, changed-SQL, expired, wrong-actor and wrong-stage evidence', async () => {
+  const check = (over, p = wTestFoundation, entries) => wRequire([p], over, entries);
+  for (const [over, error] of [
+    [{run: {workflow_id: 5}}, /EVIDENCE_RUN_NOT_VERIFIED/],
+    [{run: {actor: {login: 'someone-else'}}}, /EVIDENCE_RUN_NOT_VERIFIED/],
+    [{run: {triggering_actor: {login: 'someone-else'}}}, /EVIDENCE_RUN_NOT_VERIFIED/],
+    [{run: {head_repository: {full_name: 'someone/else'}}}, /EVIDENCE_RUN_NOT_VERIFIED/],
+    [{run: {head_branch: 'feature'}}, /EVIDENCE_RUN_NOT_VERIFIED/],
+    [{run: {event: 'push'}}, /EVIDENCE_RUN_NOT_VERIFIED/],
+    [{run: {conclusion: 'failure'}}, /EVIDENCE_RUN_NOT_VERIFIED/],
+    [{run: {run_attempt: 2}}, /EVIDENCE_RECEIPT_MISSING/],
+    [{missing: true}, /EVIDENCE_RECEIPT_MISSING/],
+    [{artifact: {expired: true}}, /EVIDENCE_RECEIPT_MISSING/],
+    [{artifact: {digest: 'sha256:' + '0'.repeat(64)}}, /artifact digest/],
+    [{artifact: {workflow_run: {id: 10, head_sha: SHA_C}}}, /RECEIPT_CONTENT_INVALID: .*url/],
+    [{sums: '0'.repeat(64)}, /checksum/],
+    [{source: Buffer.from('select 1;')}, /EVIDENCE_SOURCE_MISMATCH/],
+    [{comparison: () => ({status: 'diverged'})}, /EVIDENCE_ANCESTRY_NOT_VERIFIED/],
+    [{comparison: () => ({status: 'behind', behind_by: 1})}, /EVIDENCE_ANCESTRY_NOT_VERIFIED/],
+    [{comparison: p => ({status: 'ahead', behind_by: 0, base_commit: {sha: p}, merge_base_commit: {sha: SHA_C}})}, /EVIDENCE_ANCESTRY_NOT_VERIFIED/]
+  ]) await assert.rejects(check(over), error);
+  const withReceipt = receipt => ({'10': {...wTestFoundation, receipt}});
+  for (const [receipt, error] of [
+    [{reviewedCommit: SHA_C}, /RECEIPT_CONTENT_INVALID: .*commit/],
+    [{migrationSha256: '0'.repeat(64)}, /RECEIPT_CONTENT_INVALID: .*hash/],
+    [{ledgerStatementsSha256: 'nothex'}, /RECEIPT_CONTENT_INVALID: .*hash/],
+    [{environment: 'FairSwapProd'}, /RECEIPT_CONTENT_INVALID: .*environment/],
+    [{stage: 'activation'}, /RECEIPT_CONTENT_INVALID: .*stage/],
+    [{webStagingSha: 'f'.repeat(40)}, /RECEIPT_CONTENT_INVALID: .*web/],
+    [{postflightVerified: false}, /RECEIPT_CONTENT_INVALID: .*postflight/],
+    [{releaseWorkflowRun: '99'}, /RECEIPT_CONTENT_INVALID: .*run/],
+    [{recoveredFoundationCommit: COMMIT_B}, /RECEIPT_CONTENT_INVALID: .*release result/],
+    [{webProductionSha: 'f'.repeat(40)}, /RECEIPT_CONTENT_INVALID: .*release result/]
+  ]) await assert.rejects(check({}, wTestFoundation, withReceipt(receipt)), error);
+  // wrong stage / environment evidence under a Wearables key
+  await assert.rejects(check({}, {...wTestFoundation, candidateId: WA}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  await assert.rejects(check({}, {...wTestFoundation, environment: 'prod'}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  await assert.rejects(check({}, {...wTestFoundation, key: 'prod_foundation_run_id'}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  await assert.rejects(check({}, {...wTestActivation, key: 'test_foundation_run_id'}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  await assert.rejects(check({}, {...wTestFoundation, runId: '11'}, {'11': {...wTestFoundation, candidateId: WA, environment: 'test', commit: COMMIT_A}}),
+    /EVIDENCE_RECEIPT_MISSING|EVIDENCE_RUN_NOT_VERIFIED/);
+});
+
+test('Wearables chain recursion verifies each recorded prior run and its ledger identity', async () => {
+  const prodFoundation = () => requireStageEvidence([wProdFoundation], ctx, wearablesFetcher(entries), WPOLICY);
+  let entries = wEntries();
+  assert.equal((await prodFoundation()).prod_foundation_run_id.reviewedCommit, COMMIT_B);
+  entries = {...wEntries(), '10': {...wTestFoundation, commit: SHA_C}};      // prior not an ancestor of the Production commit
+  await assert.rejects(requireStageEvidence([wProdFoundation], ctx, wearablesFetcher(entries, {comparison: p => p === SHA_C ? {status: 'diverged'} : undefined}), WPOLICY), /EVIDENCE_ANCESTRY_NOT_VERIFIED|EVIDENCE_RUN_NOT_VERIFIED/);
+  entries = {...wEntries(), '11': {...wTestActivation, receipt: {priorRuns: [{key: 'test_foundation_run_id', runId: '99'}]}}};
+  await assert.rejects(prodFoundation(), /EVIDENCE_LOOKUP_FAILED: 404/);
+  entries = {...wEntries(), '12': {...wProdFoundation, receipt: {priorRuns: [{key: 'test_foundation_run_id', runId: '10'}, {key: 'test_foundation_run_id', runId: '11'}]}}};
+  await assert.rejects(prodFoundation(), /RECEIPT_CONTENT_INVALID: .*chain/);
+  entries = {...wEntries(), '12': {...wProdFoundation, receipt: {priorRuns: [{key: 'test_foundation_run_id', runId: '10'}, {key: 'test_activation_run_id', runId: '12'}]}}};
+  await assert.rejects(prodFoundation(), /EVIDENCE_RUN_NOT_VERIFIED/);                // recorded run repeats the Production run
+  entries = {...wEntries(), '12': {...wProdFoundation, receipt: {ledgerStatementsSha256: 'd'.repeat(64)}}};
+  await assert.rejects(prodFoundation(), /RECEIPT_CONTENT_INVALID: .*ledger hash/);
+  entries = {...wEntries(), '10': {...wTestFoundation, receipt: {stage: 'activation'}}};   // wrong-stage evidence in the chain
+  await assert.rejects(prodFoundation(), /RECEIPT_CONTENT_INVALID: .*stage/);
+  entries = wEntries();
+  delete entries['10'];
+  await assert.rejects(prodFoundation(), /EVIDENCE_LOOKUP_FAILED: 404/);
+});
+
+test('ancestor evidence stays closed for Wearables without the policy and for Accessories and Tablets with it', async () => {
+  // upstream (#106) keeps the Test foundation link open by default; every other Wearables link needs the policy
+  await assert.rejects(wRequire([wTestActivation], {}, wEntries(), {}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  await assert.rejects(wRequire([wProdFoundation], {}, wEntries(), {}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  await assert.rejects(wRequire([wProdFoundation], {}, wEntries(), {allowFoundationAncestors: true}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  const accessories = {key: 'test_foundation_run_id', runId: '10', candidateId: FOUNDATION, environment: 'test', commit: COMMIT_A};
+  await assert.rejects(wRequire([accessories], {}, {'10': accessories}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  const tablets = {...accessories, candidateId: 'tablets-v1-foundation'};
+  await assert.rejects(wRequire([tablets], {}, {'10': tablets}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  for (const key of WEARABLES_ANCESTOR_EVIDENCE) assert.match(key, /^wearables-v1-(foundation|activation)\|(test|prod)\|(test|prod)_(foundation|activation)_run_id$/);
+});
+
+test('workflow grants the Wearables ancestor policy only to wearables-v1 candidates', () => {
+  const yaml = readFileSync(join(process.cwd(), '.github/workflows/reusable-supabase-release.yml'), 'utf8');
+  assert(yaml.includes("const wearables = plan.candidate.id.startsWith('wearables-v1-');"));
+  assert(yaml.includes('ancestorPolicy: wearables ? WEARABLES_ANCESTOR_EVIDENCE : null'));
+  assert(yaml.includes('allowFoundationAncestors: accessories,'));
+});
+
+// ---- Wearables activation resequenced after Tablets V2 ------------------------------------------
+const TABLETS_V2_VERSION = '20261104215253';
+const SWITCHING_VERSION = '20261104223000';
+
+test('Wearables activation is resequenced after Tablets V2 and before pending moderation switching, with unchanged bytes', () => {
+  const f = getCandidate(WF);
+  const a = getCandidate(WA);
+  assert.equal(getCandidate('tablets-v2-catalogue').version, TABLETS_V2_VERSION);
+  assert.equal(getCandidate('moderation-switching-v1').version, SWITCHING_VERSION);
+  assert.equal(a.version, '20261104220000');
+  assert.ok(a.version > TABLETS_V2_VERSION && a.version < SWITCHING_VERSION);
+  assert.equal(a.filename, '20261104220000_activate_wearables_v1.sql');
+  assert.equal(a.sha256, 'c5a50f11df325a9743f39b13d7aa536a1b7b12cca9467fc318da8f659527b10b');
+  assert.equal(verifyCandidateSha(WA).sha256, a.sha256);
+  // the installed foundation is untouched
+  assert.deepEqual([f.version, f.filename, f.sha256], ['20261104120000', '20261104120000_posting_v2_wearables.sql', '41122396afe11952126eaf474d272e88e81444863e97d0b2e646ee4cbac48b06']);
+  const versions = Object.values(CANDIDATES).map(c => c.version);
+  assert.equal(new Set(versions).size, versions.length, 'candidate versions are collision-free');
+  assert.ok(!existsSync(join(process.cwd(), 'supabase/forward-migrations/wearables-v1/activation/supabase/migrations/20261104120100_activate_wearables_v1.sql')));
+  const sums = readFileSync(join(process.cwd(), 'supabase/forward-migrations/wearables-v1/SHA256SUMS'), 'utf8');
+  assert.ok(sums.includes(`${a.sha256}  activation/supabase/migrations/${a.filename}\n`));
+  assert.ok(!sums.includes('20261104120100'));
+  assert.deepEqual([...f.incompatibleLedgerVersions], [a.version]);
+});
+
+test('ledger with Tablets V2 and the installed Wearables foundation admits only the resequenced activation', () => {
+  const f = getCandidate(WF);
+  const a = getCandidate(WA);
+  const rows = (...v) => ledger(v);
+  const installed = ['20261102164135', '20261102164137', '20261102165946', '20261102170611', '20261104113705', f.version, TABLETS_V2_VERSION];
+  assert.doesNotThrow(() => assertLedgerTail(a, installed.map(version => ({version}))));
+  assert.equal(assertLedgerOrdering(a, rows(...installed)).state, 'absent');
+  // Azure finalizer prerequisite: activation wraps it, so it must be installed even when Tablets V2 is present
+  assert.throws(() => assertLedgerOrdering(a, rows(...installed.filter(v => v !== '20261104113705'))), /PREREQUISITE_MIGRATION_MISSING.*20261104113705/);
+  assert.throws(() => assertLedgerOrdering(a, rows(...installed.filter(v => v !== f.version))), /PREREQUISITE_MIGRATION_MISSING/);
+  // switching stays pending: once it (or the retired original version) is on the ledger the activation is refused
+  assert.throws(() => assertLedgerTail(a, [...installed, SWITCHING_VERSION].map(version => ({version}))), /WEARABLES_LEDGER_TAIL_AHEAD/);
+  assert.throws(() => assertLedgerTail(a, [...installed, a.version].map(version => ({version}))), /WEARABLES_LEDGER_TAIL_AHEAD/);
+  // an unapplied foundation could not be inserted behind Tablets V2: still refused, never reordered or renamed
+  assert.throws(() => assertLedgerTail(f, installed.filter(v => v !== f.version).map(version => ({version}))), /WEARABLES_LEDGER_TAIL_AHEAD/);
+});
+
+test('Wearables activation releases through Test and Production with Tablets V2 on the ledger', async () => {
+  for (const [environment, ctxEnv] of [['FairSwapTest', {}], ['FairSwapProd', {}]]) {
+    const {receipt, calls, dir} = await wRelease(environment, WA, {extraBefore: [TABLETS_V2_VERSION]}, ctxEnv);
+    try {
+      assert.equal(receipt.migrationVersion, '20261104220000');
+      assert.equal(receipt.migrationSha256, getCandidate(WA).sha256);
+      assert.equal(receipt.postflightVerified, true);
+      assert.equal(calls.filter(c => c.startsWith('supabase db push ')).length, 2);
+    } finally { rmSync(dir, {recursive: true, force: true}); }
+  }
+});
+
+// ---- Production Wearables foundation installed out of order (Tablets V2 already on the ledger) --------------------
+const TV2_ROW = '20261104215253';
+
+test('assertLedgerTail admits only the approved Tablets V2 row, only for the Production Wearables foundation', () => {
+  const f = getCandidate(WF);
+  const a = getCandidate(WA);
+  const t = getCandidate('tablets-v2-catalogue');
+  const row = (over = {}) => ({version: TV2_ROW, name: 'tablets_v2_india_catalogue', hasStatements: true, statementsSha256: WEARABLES_OUT_OF_ORDER.ahead.statementsSha256, ...over});
+  const base = [{version: '20261104113705'}];
+  assert.equal(t.version, TV2_ROW);
+  assert.deepEqual(assertLedgerTail(f, [...base, row()], 'FairSwapProd'), {includeAll: true, ahead: [TV2_ROW]});
+  assert.deepEqual(assertLedgerTail(f, base, 'FairSwapProd'), {includeAll: false, ahead: []});
+  const refused = (candidate, rows, env) => assert.throws(() => assertLedgerTail(candidate, rows, env), /WEARABLES_LEDGER_TAIL_AHEAD/);
+  refused(f, [...base, row()], 'FairSwapTest');                       // Test is never exempt
+  refused(f, [...base, row()]);                                       // environment is mandatory
+  refused(a, [...base, row({version: '20261104230000'})], 'FairSwapProd');
+  refused(f, [...base, row({statementsSha256: 'f'.repeat(64)})], 'FairSwapProd');   // changed Tablets V2 statements
+  refused(f, [...base, row({name: 'renamed'})], 'FairSwapProd');
+  refused(f, [...base, row({hasStatements: false})], 'FairSwapProd');
+  refused(f, [...base, row({version: '20261104215254'})], 'FairSwapProd');           // not the approved version
+  refused(f, [...base, row(), {version: '20261104223000'}], 'FairSwapProd');         // unexpected newer migration
+  refused(f, [...base, row(), {version: '20261104220000'}], 'FairSwapProd');         // activation recorded before foundation
+  assert.throws(() => assertCliSupportsIncludeAll('Flags: --dry-run'), /WEARABLES_CLI_INCLUDE_ALL_UNSUPPORTED/);
+  assert.throws(() => assertCliSupportsIncludeAll('Flags: --include-all'), /WEARABLES_CLI_INCLUDE_ALL_UNSUPPORTED/);
+  assert.doesNotThrow(() => assertCliSupportsIncludeAll('Flags:\n      --dry-run   x\n      --include-all   y'));
+});
+
+async function wProdFoundationRun(o = {}, {help = '--dry-run --include-all', dryOutput} = {}, candidateId = WF, environment = 'FairSwapProd') {
+  const mock = wearablesMock(environment, candidateId, o);
+  const calls = [];
+  const full = [];
+  const base = makeRunner({...mock, filename: getCandidate(candidateId).filename, calls});
+  const runner = (cmd, args, ...rest) => {
+    full.push([cmd, ...args]);
+    if (cmd === 'supabase' && args.includes('--help')) return help;
+    if (cmd === 'supabase' && args.includes('--dry-run') && dryOutput) return dryOutput;
+    return base(cmd, args, ...rest);
+  };
+  const dir = mkdtempSync(join(tmpdir(), 'fs-test-receipts-'));
+  const context = {...baseEnv, ...wInputs, WEB_STAGING_SHA: wInputs.web_staging_sha, WEB_PRODUCTION_SHA: wInputs.web_production_sha, TEST_FOUNDATION_RUN_ID: '10',
+    TEST_ACTIVATION_RUN_ID: '11', PROD_FOUNDATION_RUN_ID: '12', ACCESSORIES_PROD_FOUNDATION_RUN_ID: '50', TEST_E2E_RUN_ID: '60',
+    TABLETS_FOUNDATION_LEDGER_SHA: 'a'.repeat(64), TABLETS_CANDIDATE_LEDGER_SHA: 'a'.repeat(64)};
+  const result = releaseReusable({environment, candidateId, context, runner, receiptDir: dir}).then(receipt => ({receipt, full, dir}));
+  return {result, full, dir};
+}
+const pushes = full => full.filter(c => c[1] === 'db' && c[2] === 'push' && !c.includes('--help'));
+
+test('Production Wearables foundation installs out of order with --include-all on dry run and apply only, after the CLI check', async () => {
+  const {result, full, dir} = await wProdFoundationRun({extraBefore: [TV2_ROW]});
+  try {
+    const {receipt} = await result;
+    assert.equal(receipt.status, 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED');
+    assert.equal(receipt.migrationVersion, '20261104120000');
+    assert.equal(receipt.migrationSha256, getCandidate(WF).sha256);
+    assert.deepEqual(receipt.dryRunPending, [getCandidate(WF).filename]);
+    assert.deepEqual(receipt.outOfOrderInstall, {includeAll: true, aheadVersions: [TV2_ROW]});
+    assert.equal(receipt.ledgerStatementsSha256, 'a'.repeat(64));
+    const help = full.findIndex(c => c.includes('--help'));
+    const [dry, apply] = pushes(full);
+    assert.ok(help >= 0 && help < full.indexOf(dry) && full.indexOf(dry) < full.indexOf(apply));
+    assert.ok(dry.includes('--dry-run') && dry.includes('--include-all'));
+    assert.ok(apply.includes('--yes') && apply.includes('--include-all') && !apply.includes('--dry-run'));
+  } finally { rmSync(dir, {recursive: true, force: true}); }
+  // the ordinary ledger (no newer row) never uses the flag or the CLI probe
+  const normal = await wProdFoundationRun({});
+  try {
+    await normal.result;
+    assert.ok(normal.full.every(c => !c.includes('--include-all') && !c.includes('--help')));
+  } finally { rmSync(normal.dir, {recursive: true, force: true}); }
+});
+
+test('out-of-order Production foundation fails closed before any push on every deviation', async () => {
+  const attempt = async (o, opts, re, env = 'FairSwapProd') => {
+    const run = await wProdFoundationRun(o, opts, WF, env);
+    try { await assert.rejects(run.result, re); assert.equal(pushes(run.full).filter(c => !c.includes('--dry-run')).length, 0); return run.full; }
+    finally { rmSync(run.dir, {recursive: true, force: true}); }
+  };
+  await attempt({extraBefore: [TV2_ROW], tabletsSha: 'f'.repeat(64)}, {}, /WEARABLES_LEDGER_TAIL_AHEAD/);   // changed Tablets V2 history
+  await attempt({extraBefore: [TV2_ROW, '20261104223000']}, {}, /WEARABLES_LEDGER_TAIL_AHEAD/);              // unexpected newer migration
+  await attempt({extraBefore: [TV2_ROW]}, {}, /WEARABLES_LEDGER_TAIL_AHEAD/, 'FairSwapTest');                 // Test never uses the exception
+  const unsupported = await attempt({extraBefore: [TV2_ROW]}, {help: 'Flags: --dry-run'}, /WEARABLES_CLI_INCLUDE_ALL_UNSUPPORTED/);
+  assert.equal(pushes(unsupported).length, 0);                                                                // not even a dry run
+  const two = `Would push: ${getCandidate(WF).filename} and 20261104215253_tablets_v2_india_catalogue.sql`;
+  await attempt({extraBefore: [TV2_ROW]}, {dryOutput: two}, /DRY_RUN_MISMATCH/);                             // unexpected pending SQL
+  await attempt({extraBefore: [TV2_ROW]}, {dryOutput: 'Would push: 20261104215253_tablets_v2_india_catalogue.sql'}, /DRY_RUN_MISMATCH/);
+  // the original postflight still decides: a failed RLS/ACL/moderation check after the push yields no receipt
+  const post = await wProdFoundationRun({extraBefore: [TV2_ROW], failKey: Object.keys(wearablesPostflightChecks('foundation'))[0]});
+  try { await assert.rejects(post.result, /POSTFLIGHT/); } finally { rmSync(post.dir, {recursive: true, force: true}); }
+});
+
+// Disposable PostgreSQL (PGlite): the real foundation SQL installed after Tablets V2 with the ledger row inserted out of order.
+async function loadPglite() {
+  for (const p of [process.env.FSW_PGLITE_MODULE, 'tests/ratings/node_modules/@electric-sql/pglite/dist/index.js', '../FairSwap-Web/node_modules/@electric-sql/pglite/dist/index.js']) {
+    if (p && existsSync(resolvePath(p))) return (await import(pathToFileURL(resolvePath(p)).href)).PGlite;
+  }
+  return null;
+}
+const PGlite = await loadPglite();
+if (!PGlite && process.env.REQUIRE_REAL_PG === '1') {
+  test('PGlite is required for the out-of-order install test in release CI', () => assert.fail('no PGlite module found'));
+}
+
+test('disposable PostgreSQL: Wearables foundation installs after Tablets V2 out of order and rolls back cleanly on failure',
+  {skip: PGlite ? false : 'no PGlite module', timeout: 240000}, async () => {
+    const {installPostingFixture} = await import(pathToFileURL(resolvePath('scripts/ci/posting-v2-fixture.mjs')).href);
+    const src = path => readFileSync(join(process.cwd(), path), 'utf8');
+    const fm = 'supabase/forward-migrations/';
+    const db = new PGlite();
+    await installPostingFixture(db);
+    await db.exec(`alter table public.listings add column if not exists slug text,add column if not exists created_at timestamptz default now(),add column if not exists published_at timestamptz,add column if not exists expires_at timestamptz,add column if not exists search_vector tsvector;
+      alter table public.categories add column if not exists icon text;
+      alter table public.cities add column if not exists name text default 'Bengaluru',add column if not exists state text default 'Karnataka';
+      alter table public.localities add column if not exists name text default 'Koramangala';
+      create table if not exists public.user_accounts(user_id uuid primary key,account_status text);
+      create or replace function app_security.is_listing_publicly_visible(target uuid) returns boolean language sql stable security definer set search_path='' as $f$select exists(select 1 from public.listings l join public.user_accounts ua on ua.user_id=l.seller_id where l.id=target and l.status='active' and ua.account_status='active')$f$;
+      create schema supabase_migrations;
+      create table supabase_migrations.schema_migrations(version text primary key, name text, statements text[]);`);
+    const record = async (candidateOrNull, version, name, text) => db.query('insert into supabase_migrations.schema_migrations values($1,$2,$3)', [version, name, splitStatements(text)]);
+    const install = async (path, version, name) => { const text = src(path); await db.exec(text); await record(null, version, name, text); };
+    await install(`${fm}posting-v2/session-recovery/supabase/migrations/20261101234604_posting_v212_session_recovery.sql`, '20261101234604', 'posting_v212_session_recovery');
+    await install(getCandidate('accessories-v1-foundation').path, '20261102164135', 'accessories_v1');
+    await install(`${fm}posting-v2/activation/supabase/migrations/20261025135152_activate_posting_v2_mobiles.sql`, '20261025135152', 'activate_posting_v2_mobiles');
+    await install(`${fm}tablets-v1/supabase/migrations/20261102165946_posting_v2_tablets.sql`, '20261102165946', 'posting_v2_tablets');
+    await install(getCandidate('tablets-v2-catalogue').path, TV2_ROW, 'tablets_v2_india_catalogue');
+
+    const rows = async sql => (await db.query(sql)).rows;
+    const snapshot = async () => {
+      const tables = (await rows("select tablename from pg_tables where schemaname='public' and tablename like 'tablet%' order by 1")).map(r => r.tablename);
+      const data = {};
+      for (const t of tables) data[t] = (await rows(`select md5(coalesce(string_agg(x::text, '|' order by x::text), '')) h, count(*)::int n from public.${t} x`))[0];
+      const columns = (await rows("select md5(string_agg(table_name||'.'||column_name||':'||data_type||':'||is_nullable, ',' order by table_name, ordinal_position)) h from information_schema.columns where table_schema='public' and table_name like 'tablet%'"))[0].h;
+      const functions = (await rows("select md5(string_agg(p.oid::regprocedure::text||md5(p.prosrc)||p.proacl::text, '|' order by p.oid::regprocedure::text)) h from pg_proc p join pg_namespace n on n.oid=p.pronamespace where p.proname like '%tablet%' and n.nspname in ('public','app_security')"))[0].h;
+      const policies = (await rows("select md5(coalesce(string_agg(tablename||policyname||cmd||coalesce(qual,''), '|' order by tablename, policyname), '')) h from pg_policies where tablename like 'tablet%'"))[0].h;
+      return {tables, data, columns, functions, policies};
+    };
+    const readLedger = async () => {
+      let query;
+      try { readTabletsLedger(sql => { query = sql; throw new Error('capture'); }); } catch (e) { assert.equal(e.message, 'capture'); }
+      const results = await db.exec(query);
+      return JSON.parse(results.find(r => r.rows?.length)?.rows[0] && Object.values(results.find(r => r.rows?.length).rows[0])[0]);
+    };
+    assert.ok((await snapshot()).tables.length > 0);
+    const ledgerBefore = await readLedger();
+    // the registry's Tablets V2 identity is the real stored-statements digest of the installed row
+    assert.equal(ledgerBefore.find(r => r.version === TV2_ROW).statementsSha256, WEARABLES_OUT_OF_ORDER.ahead.statementsSha256);
+    assert.equal(ledgerBefore.find(r => r.version === TV2_ROW).hasStatements, true);
+    assert.deepEqual(assertLedgerTail(getCandidate(WF), ledgerBefore, 'FairSwapProd'), {includeAll: true, ahead: [TV2_ROW]});
+    assert.throws(() => assertLedgerTail(getCandidate(WF), ledgerBefore, 'FairSwapTest'), /WEARABLES_LEDGER_TAIL_AHEAD/);
+    const before = await snapshot();
+    const sessionBody = async () => (await rows("select md5(prosrc) h from pg_proc where oid='app_security.impl_posting_v2_session(uuid,text,uuid)'::regprocedure"))[0].h;
+    const sessionBefore = await sessionBody();
+
+    // failure inside the foundation transaction: nothing of it survives and no ledger row is written
+    const foundationSql = src(getCandidate(WF).path);
+    const lastCommit = foundationSql.lastIndexOf('commit;');
+    assert.ok(lastCommit > 0);
+    await assert.rejects(db.exec(foundationSql.slice(0, lastCommit) + 'select 1/0;\ncommit;'), /division by zero/);
+    await db.exec('rollback');
+    assert.equal((await rows("select to_regclass('public.wearable_release_v1') is null as gone"))[0].gone, true);
+    assert.equal(await sessionBody(), sessionBefore);
+    assert.deepEqual(await readLedger(), ledgerBefore);
+    assert.deepEqual(await snapshot(), before);
+
+    // out-of-order install of the unchanged foundation, ledger row recorded behind Tablets V2
+    assert.equal(createHash('sha256').update(foundationSql).digest('hex'), getCandidate(WF).sha256);
+    await db.exec(foundationSql);
+    await record(null, '20261104120000', 'posting_v2_wearables', foundationSql);
+    const ledgerAfter = await readLedger();
+    assert.deepEqual(ledgerAfter.map(r => r.version), [...ledgerAfter.map(r => r.version)].sort());
+    assert.ok(ledgerAfter.findIndex(r => r.version === '20261104120000') < ledgerAfter.findIndex(r => r.version === TV2_ROW));
+    assert.equal(verifyTabletsLedger(ledgerBefore, ledgerAfter, getCandidate(WF)), ledgerAfter.find(r => r.version === '20261104120000').statementsSha256);
+    // Tablets V2 data, columns, RLS policies and tablet function bodies/ACLs are untouched
+    assert.deepEqual(await snapshot(), before);
+    assert.equal((await rows("select to_regclass('public.wearable_release_v1') is not null as present"))[0].present, true);
+    assert.equal((await rows('select enabled from public.wearable_release_v1'))[0].enabled, false);   // installed disabled
+    assert.notEqual(await sessionBody(), sessionBefore);                                             // reviewed session-core wrapper only
+    await db.close();
+  });

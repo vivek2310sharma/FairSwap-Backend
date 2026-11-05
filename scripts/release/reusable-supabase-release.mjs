@@ -15,7 +15,7 @@ import {
 
 import {runTabletsV2Preflight, runTabletsV2Postflight, verifyTabletsV2Web} from './tablets-v2-release.mjs';
 import {readTabletsLedger, runTabletsPostflight, runTabletsPreflight, verifyTabletsLedger} from './tablets-v1-release.mjs';
-import {ADOPTED_STATUS, assertLedgerTail, assertMobilePhonesProvenance, runWearablesPostflight, runWearablesPreflight} from './wearables-v1-release.mjs';
+import {ADOPTED_STATUS, assertCliSupportsIncludeAll, assertLedgerTail, assertMobilePhonesProvenance, runWearablesPostflight, runWearablesPreflight} from './wearables-v1-release.mjs';
 
 export const REFS = PROJECT_REFS;
 
@@ -567,6 +567,7 @@ export async function releaseReusable({
     let catalogueBefore;
     let ledgerBefore;
     let ledgerStatementsSha256;
+    let outOfOrder = {includeAll: false, ahead: []};
     if (candidate.strict) {
       // Prerequisites, ordering and partial state fail closed; resumption of a verified release is allowed in both environments.
       const ordering = assertLedgerOrdering(candidate, initialLedger);
@@ -587,7 +588,7 @@ export async function releaseReusable({
       ledgerBefore = readLedger();
       if (wearables) {
         assertMobilePhonesProvenance(environment, ledgerBefore);
-        assertLedgerTail(candidate, ledgerBefore);
+        outOfOrder = assertLedgerTail(candidate, ledgerBefore, environment);
       }
       for (const version of candidate.requiredLedgerVersions) {
         const prerequisite = Object.values(CANDIDATES).find(entry => entry.version === version);
@@ -615,7 +616,7 @@ export async function releaseReusable({
         throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_EVIDENCE_REQUIRED`);
       }
       if (ledgerBefore.length !== beforeRemote.size || ledgerBefore.some(row =>
-        !beforeRemote.has(row.version) || row.version >= candidate.version)) {
+        !beforeRemote.has(row.version) || (row.version >= candidate.version && !outOfOrder.ahead.includes(row.version)))) {
         throw new Error(`REUSABLE_RELEASE_${label}_LEDGER_MISMATCH`);
       }
     }
@@ -661,7 +662,12 @@ export async function releaseReusable({
 
       // 5. Dry run push to verify EXACTLY only this candidate is pending (capturing stdout + stderr)
       phase = 'dry_run';
-      const dryRunOutput = run('supabase', ['db', 'push', '--db-url', psqlUrl, '--dry-run', '--workdir', workspace], env, undefined, true);
+      // Out-of-order flag only for the approved Production Wearables foundation case, after the pinned CLI advertises it.
+      if (outOfOrder.includeAll) {
+        assertCliSupportsIncludeAll(run('supabase', ['db', 'push', '--help'], env, undefined, true));
+      }
+      const pushFlags = outOfOrder.includeAll ? ['--include-all'] : [];
+      const dryRunOutput = run('supabase', ['db', 'push', '--db-url', psqlUrl, '--dry-run', ...pushFlags, '--workdir', workspace], env, undefined, true);
       dryRunPending = parsePendingDryRun(dryRunOutput, candidate.filename);
 
       // 6. Apply candidate migration
@@ -669,7 +675,7 @@ export async function releaseReusable({
         throw new Error(`REUSABLE_RELEASE_${label}_LEDGER_CHANGED`);
       }
       phase = 'apply';
-      run('supabase', ['db', 'push', '--db-url', psqlUrl, '--yes', '--workdir', workspace], env);
+      run('supabase', ['db', 'push', '--db-url', psqlUrl, '--yes', ...pushFlags, '--workdir', workspace], env);
 
       // 7. Re-check migration ledger with exact match
       phase = 'ledger';
@@ -709,6 +715,7 @@ export async function releaseReusable({
       ...(pinned ? {ledgerStatementsSha256} : {}),
       ...(catalogue ? {webStagingEvidence: catalogueWebEvidence ?? null} : {}),
       ...(recovering ? {recoveredFoundationCommit: recoveredCommit} : {}),
+      ...(outOfOrder.includeAll ? {outOfOrderInstall: {includeAll: true, aheadVersions: outOfOrder.ahead}} : {}),
       ...(wearables ? {
         // SQL postflight is a catalogue/ACL/ownership/moderation integrity check, never E2E evidence.
         postflightScope: 'sql-integrity-smoke-not-e2e',

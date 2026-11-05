@@ -113,13 +113,13 @@ export const CANDIDATES = Object.freeze({
     stage: 'foundation',
     autoPromote: false,
     requiredLedgerVersions: Object.freeze(['20261102164135']),
-    incompatibleLedgerVersions: Object.freeze(['20261104120100'])
+    incompatibleLedgerVersions: Object.freeze(['20261104220000'])
   }),
   'wearables-v1-activation': Object.freeze({
     id: 'wearables-v1-activation',
-    version: '20261104120100',
-    filename: '20261104120100_activate_wearables_v1.sql',
-    path: 'supabase/forward-migrations/wearables-v1/activation/supabase/migrations/20261104120100_activate_wearables_v1.sql',
+    version: '20261104220000',
+    filename: '20261104220000_activate_wearables_v1.sql',
+    path: 'supabase/forward-migrations/wearables-v1/activation/supabase/migrations/20261104220000_activate_wearables_v1.sql',
     sha256: 'c5a50f11df325a9743f39b13d7aa536a1b7b12cca9467fc318da8f659527b10b',
     description: 'Wearables V1 activation (enables typed category)',
     strict: true,
@@ -210,7 +210,7 @@ export const EXISTING_INSTALLATIONS = Object.freeze({
       })
     ]),
     // Later chain stages must be absent: Wearables must never be recorded.
-    forbiddenLedgerVersions: Object.freeze(['20261104120000', '20261104120100']),
+    forbiddenLedgerVersions: Object.freeze(['20261104120000', '20261104220000']),
     // Tablets foundation + activation may be recorded ONLY as a complete, verified pair (the known post-Tablets state). Either
     // one alone is rejected. In that state the obsolete Accessories wrapper assertions are exempt (see postTabletsExemptKeys).
     postTabletsLedger: Object.freeze([

@@ -5,7 +5,7 @@ Forward-only package, **default OFF**. Never part of the immutable `supabase/mig
 | File | Purpose |
 |---|---|
 | `supabase/migrations/20261104120000_posting_v2_wearables.sql` | Foundation: release row (`enabled=false`), catalogue tables + seed, session binding, context + risk-flag tables, session core, wearable session/submit/search RPCs, listings guard |
-| `activation/supabase/migrations/20261104120100_activate_wearables_v1.sql` | Separate activation (category active + release enabled). Apply only after Web has `POST_AD_WEARABLES_V1_ENABLED` and Test verification passed |
+| `activation/supabase/migrations/20261104220000_activate_wearables_v1.sql` | Separate activation (category active + release enabled). Apply only after Web has `POST_AD_WEARABLES_V1_ENABLED` and Test verification passed |
 | `rollback/disable_wearables_v1.sql` | Review-only forward fix: disables the feature (always safe) |
 | `rollback/restore_azure_finalizer.sql` | Review-only: undoes the W-AZ-1 finalizer wrapper (run only after `disable_wearables_v1.sql`) |
 | `rollback/restore_accessories_session_baseline.sql` | Review-only: restores the Accessories V1 session function body (only after wearable sessions have expired/been cleaned) |
@@ -40,9 +40,13 @@ Native checks cover concurrent session creation, ownership, cross-category isola
 * Web CI pins Backend `b3d7eae6…` and materializes only the 58 immutable migrations, so it never sees this package; no pin change is needed for the Web unit tests.
 
 ## Release through the reusable Supabase workflow
-Candidates `wearables-v1-foundation` (`20261104120000`) and `wearables-v1-activation` (`20261104120100`) are registered in `scripts/release/reusable-candidates.mjs` with the hashes in `SHA256SUMS`. They run only through `.github/workflows/reusable-supabase-release.yml` (`workflow_dispatch` on `main`, same environments and secrets). There is no Wearables-specific workflow. The 58 immutable migrations are untouched.
+Candidates `wearables-v1-foundation` (`20261104120000`) and `wearables-v1-activation` (`20261104220000`) are registered in `scripts/release/reusable-candidates.mjs` with the hashes in `SHA256SUMS`. They run only through `.github/workflows/reusable-supabase-release.yml` (`workflow_dispatch` on `main`, same environments and secrets). There is no Wearables-specific workflow. The 58 immutable migrations are untouched.
 
 **Resequenced.** Both hosted ledgers end at Azure moderation `20261104113705`, so the two unapplied files were renamed from `20261103090000` / `20261103090100` to the versions above (collision-free, strictly later). The SQL bytes are unchanged, so the SHA-256 values are the same as before the rename. The release refuses to run (`WEARABLES_LEDGER_TAIL_AHEAD`) if a hosted ledger already holds any version at or after the candidate.
+
+**Resequenced again.** Tablets V2 `20261104215253` is installed in both hosted ledgers, so the unapplied activation was renamed from `20261104120100` to `20261104220000` (after Tablets V2, before pending moderation switching `20261104223000`). The activation SQL bytes and SHA-256 are unchanged. The installed foundation `20261104120000` is not renamed or reapplied.
+
+**Production foundation out of order.** Production already holds Tablets V2 `20261104215253`, newer than the foundation. `scripts/release/wearables-v1-release.mjs` (`WEARABLES_OUT_OF_ORDER`) allows exactly that one newer row (exact name and statement digest) for the Production foundation only; the reusable release then runs `supabase db push --include-all` for the dry run and the apply, after the pinned CLI advertises the flag, and the dry run must list only the foundation. Any other newer row, other candidate or Test is still refused with `WEARABLES_LEDGER_TAIL_AHEAD`.
 
 Gates enforced before any `supabase db push` (all fail closed, every database query is read-only):
 * **Ledger**: Accessories foundation `20261102164135` must be in the hosted ledger (Accessories may be enabled or disabled; both hosted environments currently have it activated). Mobile Phones is reconciled per environment, not by the original filename versions (`MOBILE_PHONES_HISTORY`): Test `20261025195136` `posting_v2_mobiles_foundation_20261025131116` / `20261025195824` `activate_posting_v2_mobiles_20261025135152`; Production `20261025200401` / `20261025201712` with the same names. A missing, mixed or renamed history aborts. In Production both Accessories ledger rows (`20261102164135`, `20261102164137`) must carry the adopted digests (below).

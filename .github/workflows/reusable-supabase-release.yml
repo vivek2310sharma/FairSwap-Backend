@@ -49,15 +49,15 @@ on:
         required: false
         type: string
       test_foundation_run_id:
-        description: 'Accessories and Tablets: successful Test foundation run ID'
+        description: 'Accessories and Tablets: successful Test foundation run ID (Wearables: verified ancestor commit allowed)'
         required: false
         type: string
       test_activation_run_id:
-        description: 'Accessories and Tablets: successful Test activation run ID'
+        description: 'Accessories and Tablets: successful Test activation run ID (Wearables: verified ancestor commit allowed)'
         required: false
         type: string
       prod_foundation_run_id:
-        description: 'Production activation: successful Production foundation run ID'
+        description: 'Production activation: successful Production foundation run ID (Wearables: verified ancestor commit allowed)'
         required: false
         type: string
       accessories_prod_foundation_run_id:
@@ -163,7 +163,7 @@ jobs:
           import {appendFileSync} from 'node:fs';
           import {planDispatch} from './scripts/release/reusable-candidates.mjs';
           import {recoveredFoundationSha, requireStageEvidence, usesLedgerHash} from './scripts/release/accessories-v1-release.mjs';
-          import {requirePriorCommitEvidence} from './scripts/release/wearables-v1-release.mjs';
+          import {WEARABLES_ANCESTOR_EVIDENCE, requirePriorCommitEvidence} from './scripts/release/wearables-v1-release.mjs';
           const e = process.env;
           const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
             web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
@@ -173,7 +173,11 @@ jobs:
             accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID
           }});
           const accessories = plan.candidate.id.startsWith('accessories-v1-');
-          const receipts = await requireStageEvidence(plan.priorRuns, e, fetch, {allowFoundationAncestors: accessories});
+          const wearables = plan.candidate.id.startsWith('wearables-v1-');
+          const receipts = await requireStageEvidence(plan.priorRuns, e, fetch, {
+            allowFoundationAncestors: accessories,
+            ancestorPolicy: wearables ? WEARABLES_ANCESTOR_EVIDENCE : null
+          });
           if (accessories) {
             const previous = recoveredFoundationSha(plan, receipts, e.GITHUB_SHA);
             appendFileSync(e.GITHUB_OUTPUT, `accessories_recovered_foundation_sha=${previous}\n`);

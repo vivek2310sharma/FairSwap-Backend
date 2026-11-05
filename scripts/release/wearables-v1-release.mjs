@@ -44,9 +44,37 @@ export function assertMobilePhonesProvenance(environment, ledgerRows) {
 }
 
 // The CLI refuses to insert a migration older than the remote tail; fail closed with a clear code instead.
-export function assertLedgerTail(candidate, ledgerRows) {
-  const ahead = ledgerRows.filter(row => row.version >= candidate.version).map(row => row.version);
-  if (ahead.length) fail('WEARABLES_LEDGER_TAIL_AHEAD', ahead.join(','));
+// One reviewed exception: the Wearables foundation (installed in Test before Tablets V2, version unchanged) is installed
+// out of order in Production, and only while the sole newer ledger row is the approved Tablets V2 migration with its exact
+// name and CLI statement digest (SHA-256 of the source split with the pinned CLI's SplitAndTrim, as for the Accessories pins).
+// Any other newer row, a missing/renamed/altered Tablets V2 row, or any other candidate or environment stays refused.
+export const WEARABLES_OUT_OF_ORDER = Object.freeze({
+  candidateId: 'wearables-v1-foundation',
+  environment: 'FairSwapProd',
+  ahead: Object.freeze({candidateId: 'tablets-v2-catalogue', statementCount: 15,
+    statementsSha256: '5a4e5e07d4469d41bbf423ac9bf552917c8d71ff93efbe3eb61c0e19a6001525'})
+});
+
+// Returns {includeAll}; true only for the approved out-of-order case, which must then use `supabase db push --include-all`.
+export function assertLedgerTail(candidate, ledgerRows, environment) {
+  const ahead = ledgerRows.filter(row => row.version >= candidate.version);
+  if (!ahead.length) return {includeAll: false, ahead: []};
+  const rule = WEARABLES_OUT_OF_ORDER;
+  const tablets = getCandidate(rule.ahead.candidateId);
+  const [row] = ahead;
+  if (candidate.id === rule.candidateId && environment === rule.environment && ahead.length === 1
+      && row.version === tablets.version && row.name === tablets.filename.slice(15, -4)
+      && row.hasStatements === true && row.statementsSha256 === rule.ahead.statementsSha256) {
+    return {includeAll: true, ahead: [row.version]};
+  }
+  fail('WEARABLES_LEDGER_TAIL_AHEAD', ahead.map(r => r.version).join(','));
+}
+
+// The pinned CLI (2.117.0) must advertise both flags before any out-of-order dry run or push.
+export function assertCliSupportsIncludeAll(helpOutput) {
+  if (typeof helpOutput !== 'string' || !/--include-all\b/.test(helpOutput) || !/--dry-run\b/.test(helpOutput)) {
+    fail('WEARABLES_CLI_INCLUDE_ALL_UNSUPPORTED');
+  }
 }
 
 // ---- Live read-only SQL ------------------------------------------------------------------------
@@ -242,6 +270,16 @@ export function wearablesPostflightChecks(stage) {
 export function runWearablesPostflight(candidate, exec) {
   return requireChecks(exec, wearablesPostflightChecks(candidate.stage), 'POSTFLIGHT');
 }
+
+// ---- Wearables ancestral stage evidence ---------------------------------------------------------
+// Exactly the earlier-stage runs planDispatch asks Wearables for. requireStageEvidence accepts an earlier commit for these
+// tuples only (verified GitHub ancestry, candidate SQL SHA-256 at that commit, this workflow's identity, immutable artifact
+// digest, stage/environment, ledger hash and recorded previous-stage chain). Accessories and Tablets are never listed.
+export const WEARABLES_ANCESTOR_EVIDENCE = Object.freeze(new Set([
+  'wearables-v1-foundation|test|test_foundation_run_id',
+  'wearables-v1-activation|test|test_activation_run_id',
+  'wearables-v1-foundation|prod|prod_foundation_run_id'
+]));
 
 // ---- Cross-commit Accessories Production evidence ---------------------------------------------
 // Scope: exactly one candidate (accessories-v1-foundation) in exactly one environment (FairSwapProd). Normal stage
