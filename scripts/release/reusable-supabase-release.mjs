@@ -10,9 +10,10 @@ import {createHash} from 'node:crypto';
 import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
 import {CANDIDATES, adoptionAttestation, getAdoption, getCandidate, planDispatch, verifyCandidateSha, PROJECT_REFS} from './reusable-candidates.mjs';
 import {
-  assertLedgerOrdering, assertStageInputs, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved, verifyAccessoriesLedger
+  assertLedgerOrdering, assertStageInputs, requireStageEvidence, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved, verifyAccessoriesLedger
 } from './accessories-v1-release.mjs';
 
+import {runTabletsV2Preflight, runTabletsV2Postflight, verifyTabletsV2Web} from './tablets-v2-release.mjs';
 import {readTabletsLedger, runTabletsPostflight, runTabletsPreflight, verifyTabletsLedger} from './tablets-v1-release.mjs';
 import {ADOPTED_STATUS, assertLedgerTail, assertMobilePhonesProvenance, runWearablesPostflight, runWearablesPreflight} from './wearables-v1-release.mjs';
 
@@ -131,7 +132,7 @@ export function verifyLedgerVersion(ledgerOutput, expectedVersion) {
   }
 }
 
-export async function verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner) {
+export async function verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore) {
   const candidate = getCandidate(candidateId);
   if (candidate.id === 'moderation-analytics-v1') {
     // Read-only SQL query to verify exact function attributes, empty search_path, volatility, definer/invoker, and permissions.
@@ -405,6 +406,10 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
     }
     return check;
   }
+  if (candidate.id === 'tablets-v2-catalogue') {
+    return runTabletsV2Postflight(catalogueBefore,
+      sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+  }
   if (candidate.id.startsWith('tablets-v1-')) {
     return runTabletsPostflight(candidate.stage === 'activation',
       sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
@@ -433,6 +438,7 @@ export async function releaseReusable({
   candidateId,
   context = process.env,
   runner,
+  fetcher = fetch,
   receiptDir = resolve('release-receipts')
 }) {
   if (!REFS[environment]) {
@@ -442,6 +448,15 @@ export async function releaseReusable({
   const projectRef = REFS[environment];
   // Accessories evidence (Web SHAs, earlier stages) is re-derived here; no-op for non-strict candidates.
   const stagePlan = assertStageInputs(candidate, environment, context);
+
+  let catalogueWebEvidence;
+  if (candidate.id === 'tablets-v2-catalogue' && environment === 'FairSwapProd') {
+    const receipts = await requireStageEvidence(stagePlan.priorRuns, context, fetcher);
+    if (receipts.test_catalogue_run_id.ledgerStatementsSha256 !== context.TABLETS_CANDIDATE_LEDGER_SHA) {
+      throw new Error('REUSABLE_RELEASE_TABLETS_TEST_LEDGER_EVIDENCE_REQUIRED');
+    }
+    catalogueWebEvidence = await verifyTabletsV2Web(stagePlan, context, fetcher, receipts.test_catalogue_run_id);
+  }
 
   const recoveredCommit = context.ACCESSORIES_RECOVERED_FOUNDATION_SHA || '';
   const recovering = recoveredCommit !== '';
@@ -540,7 +555,8 @@ export async function releaseReusable({
     const initialLedger = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
     let isAlreadyApplied = false;
     let beforeRemote = null;
-    const tablets = candidate.id.startsWith('tablets-v1-');
+    const catalogue = candidate.id === 'tablets-v2-catalogue';
+    const tablets = catalogue || candidate.id.startsWith('tablets-v1-');
     const wearables = candidate.id.startsWith('wearables-v1-');
     // Tablets and Wearables pin the ledger: history is read before apply, must not change, and the installed
     // statements hash is carried Test -> Production through the receipts.
@@ -548,6 +564,7 @@ export async function releaseReusable({
     const label = wearables ? 'WEARABLES' : 'TABLETS';
     const foundationVersion = wearables ? '20261104120000' : '20261102165946';
     const readLedger = () => readTabletsLedger(sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
+    let catalogueBefore;
     let ledgerBefore;
     let ledgerStatementsSha256;
     if (candidate.strict) {
@@ -619,7 +636,7 @@ export async function releaseReusable({
     if ((environment === 'FairSwapTest' || candidate.strict) && isAlreadyApplied) {
       // Support resumption for FairSwapTest if already applied: verify ledger, exact SQL hash, and postflight
       phase = 'postflight';
-      const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner);
+      const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore);
       if (!postflightResult || typeof postflightResult !== 'object' || postflightResult.status === 'NO_SPECIFIC_POSTFLIGHT') {
         throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
       }
@@ -630,8 +647,9 @@ export async function releaseReusable({
       // Standard path: candidate-only dry run, migration apply, ledger verification and postflight
       if (candidate.strict) {
         phase = 'preflight';
-        const preflight = tablets ? runTabletsPreflight : wearables ? runWearablesPreflight : runLivePreflight;
-        preflight(candidate, sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
+        if (catalogue) catalogueBefore = runTabletsV2Preflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
+        const preflight = catalogue ? null : tablets ? runTabletsPreflight : wearables ? runWearablesPreflight : runLivePreflight;
+        if (preflight) preflight(candidate, sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
       }
         // 4. Copy candidate migration into workspace
       const destMigration = join(workspace, 'supabase/migrations', candidate.filename);
@@ -667,7 +685,7 @@ export async function releaseReusable({
 
       // 8. Automated Read-only Postflight Verification (awaited and validated before receipt)
       phase = 'postflight';
-      const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner);
+      const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore);
       if (!postflightResult || typeof postflightResult !== 'object' || postflightResult.status === 'NO_SPECIFIC_POSTFLIGHT') {
         throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
       }
@@ -689,6 +707,7 @@ export async function releaseReusable({
       dryRunPending,
       postflightVerified: true,
       ...(pinned ? {ledgerStatementsSha256} : {}),
+      ...(catalogue ? {webStagingEvidence: catalogueWebEvidence ?? null} : {}),
       ...(recovering ? {recoveredFoundationCommit: recoveredCommit} : {}),
       ...(wearables ? {
         // SQL postflight is a catalogue/ACL/ownership/moderation integrity check, never E2E evidence.

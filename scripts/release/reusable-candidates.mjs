@@ -86,6 +86,19 @@ export const CANDIDATES = Object.freeze({
     requiredLedgerVersions: Object.freeze(['20261102164135', '20261102164137', '20261102165946']),
     incompatibleLedgerVersions: Object.freeze([])
   }),
+  'tablets-v2-catalogue': Object.freeze({
+    id: 'tablets-v2-catalogue',
+    version: '20261104215253',
+    filename: '20261104215253_tablets_v2_india_catalogue.sql',
+    path: 'supabase/forward-migrations/tablets-v2/supabase/migrations/20261104215253_tablets_v2_india_catalogue.sql',
+    sha256: '42bcab058e68e5cb4352a92212f4bbe836cf2ae28626950cf54574c57508ed95',
+    description: 'Tablets V2 India catalogue and seller-declared specifications',
+    strict: true,
+    stage: 'catalogue',
+    autoPromote: false,
+    requiredLedgerVersions: Object.freeze(['20261102164135', '20261102164137', '20261102165946', '20261102170611']),
+    incompatibleLedgerVersions: Object.freeze([])
+  }),
   // Wearables V1: separate foundation (installed disabled) and activation. Only the Accessories foundation is a
   // fixed ledger prerequisite; the Mobile Phones history uses environment-specific hosted versions and is reconciled
   // by wearables-v1-release.mjs (MOBILE_PHONES_HISTORY). Tablets is a coexistence target in either order.
@@ -148,6 +161,8 @@ export const WEARABLES_WEB = Object.freeze({
 export const WEB_PINS = Object.freeze({
   'accessories-v1': ACCESSORIES_WEB,
   'tablets-v1': ACCESSORIES_WEB,
+  // V2 staging SHA is supplied by the dispatch and verified against successful staging CI and deployment.
+  'tablets-v2': Object.freeze({...ACCESSORIES_WEB, stagingSha: null}),
   'wearables-v1': WEARABLES_WEB
 });
 
@@ -290,6 +305,12 @@ export function planDispatch({candidateId, target = 'test', inputs = {}}) {
     need(RUN_ID.test(id), `EVIDENCE_RUN_REQUIRED_${key.toUpperCase()}`);
     return {key, runId: id, candidateId: candidateOfRun, environment};
   };
+  if (candidate.id === 'tablets-v2-catalogue') {
+    const priorRuns = target === 'production' ? [run('test_catalogue_run_id', candidate.id, 'test')] : [];
+    const webStagingSha = target === 'production' ? String(inputs.web_staging_sha ?? '') : null;
+    need(target !== 'production' || SHA40.test(webStagingSha), 'WEB_STAGING_VERIFICATION_REQUIRED');
+    return {candidate, target, priorRuns, webStagingSha, webProductionSha: null};
+  }
   const pin = webPin(candidate);
   const stagingWeb = () => {
     const sha = String(inputs.web_staging_sha ?? '');

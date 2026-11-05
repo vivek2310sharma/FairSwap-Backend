@@ -418,7 +418,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'wearables-v1-activation', 'wearables-v1-foundation']);
+  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'wearables-v1-activation', 'wearables-v1-foundation']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -1073,7 +1073,7 @@ test('workflow verifies the deployed Web release before any database step and us
   }
   assert(yaml.includes("REQUIRE_REAL_PG: '1'"));
   // the Web token must never reach the step that holds database credentials
-  for (const m of yaml.matchAll(/- name: Execute [^\n]*\n[\s\S]*?(?=\n      - |\n  \w|$)/g)) assert(!m[0].includes('WEB_EVIDENCE_TOKEN'));
+  for (const m of yaml.matchAll(/- name: Execute [^\n]*\n[\s\S]*?(?=\n      - |\n  \w|$)/g)) assert(!m[0].includes('WEB_EVIDENCE_TOKEN') || m[0].includes("WEB_EVIDENCE_TOKEN: ${{ inputs.candidate == 'tablets-v2-catalogue' && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}"));
 });
 
 test('workflow gates Production behind verified evidence and keeps moderation auto-promotion', () => {
@@ -1976,6 +1976,203 @@ test('workflow exposes adoption only as a protected, Accessories-foundation-only
   const test = yaml.slice(yaml.indexOf('\n  test:'), yaml.indexOf('\n  verify_test:'));
   assert.ok(!test.includes('adopt'));
   assert.ok(/test:\n    needs: verify\n    if: .*inputs\.target == 'test'/.test(yaml));
+});
+
+// ---- Tablets V2 catalogue --------------------------------------------------------------------
+const TV2 = 'tablets-v2-catalogue';
+const TV2_WEB = '2'.repeat(40);
+const tv2Inputs = {test_catalogue_run_id:'90', web_staging_sha:TV2_WEB};
+const tv2Plan = () => planDispatch({candidateId:TV2,target:'production',inputs:tv2Inputs});
+
+test('Tablets V2 registers the reviewed catalogue and requires all installed V1 stages', () => {
+  const candidate = verifyCandidateSha(TV2).candidate;
+  assert.equal(candidate.version,'20261104215253');
+  assert.equal(candidate.sha256,'42bcab058e68e5cb4352a92212f4bbe836cf2ae28626950cf54574c57508ed95');
+  assert.equal(candidate.autoPromote,false);
+  assert.equal(candidate.stage,'catalogue');
+  assert.equal(candidate.strict,true);
+  for(const version of candidate.requiredLedgerVersions) {
+    assert.throws(()=>assertLedgerOrdering(candidate,ledger(candidate.requiredLedgerVersions.filter(v=>v!==version))),/PREREQUISITE_MIGRATION_MISSING/);
+  }
+  assert.equal(assertLedgerOrdering(candidate,ledger(candidate.requiredLedgerVersions)).state,'absent');
+  assert.throws(()=>planDispatch({candidateId:TV2,target:'adopt'}),/ADOPTION_NOT_REGISTERED/);
+});
+
+test('Tablets V2 Production cannot be planned without a Test catalogue run and reviewed staging SHA', () => {
+  const plan=tv2Plan();
+  assert.deepEqual(plan.priorRuns,[{key:'test_catalogue_run_id',runId:'90',candidateId:TV2,environment:'test'}]);
+  assert.equal(plan.webStagingSha,TV2_WEB);
+  assert.equal(plan.webProductionSha,null);
+  const testPlan=planDispatch({candidateId:TV2,target:'test'});
+  assert.deepEqual(testPlan.priorRuns,[]);
+  assert.equal(testPlan.webStagingSha,null);
+  for(const inputs of [{},{...tv2Inputs,test_catalogue_run_id:''},{...tv2Inputs,web_staging_sha:''},{...tv2Inputs,web_staging_sha:'unreviewed'}]) {
+    assert.throws(()=>planDispatch({candidateId:TV2,target:'production',inputs}),/EVIDENCE_RUN_REQUIRED|WEB_STAGING_VERIFICATION_REQUIRED/);
+  }
+});
+
+const tv2Before={active:true,intact:true,v1_catalogue:true,references:{brands:[{id:'old-brand',name:'Apple'}],models:[{id:'old-model',brand_id:'old-brand',name:'iPad'}]},metadata:{functions:'stable',tables:'stable'}};
+const tv2Post=()=>({...tv2Before,catalogue:true,fallbacks:true,indexes:true,functions:true,v1_catalogue:undefined});
+const tv2Response=sql=>sql.includes("'v1_catalogue', (") ? tv2Before : tv2Post();
+
+test('Tablets V2 preflight and postflight fail closed on catalogue, reference and security drift', async () => {
+  const {runTabletsV2Preflight,runTabletsV2Postflight}=await import('../../scripts/release/tablets-v2-release.mjs');
+  const execute=state=>sql=>{
+    assert.match(sql,/^BEGIN READ ONLY;/);
+    return JSON.stringify(Object.fromEntries(Object.keys(tv2Response(sql)).filter(key=>tv2Response(sql)[key]!==undefined).map(key=>[key,state[key]])));
+  };
+  assert.deepEqual(runTabletsV2Preflight(execute(tv2Before)),tv2Before);
+  assert.deepEqual(runTabletsV2Postflight(tv2Before,execute(tv2Post())),{verified:true});
+  for(const key of ['active','intact','v1_catalogue'])assert.throws(()=>runTabletsV2Preflight(execute({...tv2Before,[key]:false})),/PREFLIGHT_FAILED/);
+  for(const key of ['active','intact','catalogue','fallbacks','indexes','functions'])assert.throws(()=>runTabletsV2Postflight(tv2Before,execute({...tv2Post(),[key]:false})),/POSTFLIGHT_FAILED/);
+  for(const state of [{...tv2Post(),metadata:{changed:true}},{...tv2Post(),references:{brands:[],models:[]}}]) {
+    assert.throws(()=>runTabletsV2Postflight(tv2Before,execute(state)),/EXISTING_CONTRACT_CHANGED/);
+  }
+  assert.throws(()=>runTabletsV2Postflight(undefined,execute(tv2Post())),/PREFLIGHT_REQUIRED/);
+  assert.throws(()=>runTabletsV2Preflight(()=>'{}'),/INVALID_RESPONSE/);
+});
+
+function tv2WebFetcher(over={}) {
+  const sha=TV2_WEB,repository=ACCESSORIES_WEB.repository;
+  return async url=>{
+    let data;
+    if(url.includes('/deployments?'))data=[{id:100,sha,environment:'Preview',created_at:'2026-11-05T01:00:00Z',...over.deployment}];
+    else if(url.includes('/statuses?'))data=[{state:over.state??'success'}];
+    else if(url.includes('/actions/runs?'))data={workflow_runs:[{id:110,head_sha:sha,head_branch:'staging',head_repository:{full_name:repository},path:'.github/workflows/ci.yml',event:'push',status:'completed',conclusion:'success',...over.run}]};
+    else throw Error('Unexpected Web evidence query');
+    return {ok:true,status:200,json:async()=>data};
+  };
+}
+
+test('Tablets V2 Production requires successful staging CI and a READY deployment after Test', async()=>{
+  const {verifyTabletsV2Web}=await import('../../scripts/release/tablets-v2-release.mjs');
+  const context={WEB_EVIDENCE_TOKEN:'mock'},receipt={timestamp:'2026-11-05T00:00:00Z'};
+  assert.deepEqual(await verifyTabletsV2Web(tv2Plan(),context,tv2WebFetcher(),receipt),{stagingDeploymentId:100,stagingCiRunId:110});
+  for(const over of [{state:'failure'},{deployment:{environment:'Production'}},{deployment:{sha:'3'.repeat(40)}},{run:{conclusion:'failure'}},{run:{head_branch:'main'}},{run:{path:'.github/workflows/other.yml'}},{run:{head_sha:'3'.repeat(40)}},{run:{head_repository:{full_name:'fork/Web'}}},{deployment:{created_at:'2026-11-04T00:00:00Z'}}]) {
+    await assert.rejects(verifyTabletsV2Web(tv2Plan(),context,tv2WebFetcher(over),receipt),/STAGING/);
+  }
+  await assert.rejects(verifyTabletsV2Web(tv2Plan(),{},tv2WebFetcher(),receipt),/WEB_EVIDENCE_UNAVAILABLE/);
+  await assert.rejects(verifyTabletsV2Web(tv2Plan(),context,tv2WebFetcher(),{}),/STAGING_MUST_FOLLOW_TEST/);
+});
+
+const tv2Ledger=candidate=>{
+  const names=Object.fromEntries(Object.values(CANDIDATES).map(c=>[c.version,c.filename.slice(15,-4)]));
+  return version=>({version,name:names[version]??'historical',hasStatements:true,statementsSha256:'a'.repeat(64)});
+};
+function tv2Mock(change) {
+  const candidate=getCandidate(TV2),before=[...baseHistory,...candidate.requiredLedgerVersions],after=[...before,candidate.version];
+  let reads=0;
+  return {before,after,sql:sql=>{
+    if(sql.includes('supabase_migrations.schema_migrations')) {
+      const rows=(++reads<3?before:after).map(tv2Ledger(candidate));
+      if(change==='history'&&reads===2)rows[0].statementsSha256='b'.repeat(64);
+      return rows;
+    }
+    const state=tv2Response(sql);
+    if(change==='postflight'&&sql.includes("'catalogue', ("))state.catalogue=false;
+    return state;
+  }};
+}
+
+test('Tablets V2 Test release requires automated postflight before producing a hashed receipt',async()=>{
+  const {receipt,dir}=await release(TV2,'FairSwapTest',{...tv2Mock(),env:{GITHUB_RUN_ID:'90',GITHUB_SHA:'a'.repeat(40)}});
+  try{
+    assert.equal(receipt.postflightVerified,true);
+    assert.equal(receipt.stage,'catalogue');
+    assert.equal(receipt.ledgerStatementsSha256,'a'.repeat(64));
+    assert.equal(receipt.webStagingSha,null);
+    assert.deepEqual(receipt.dryRunPending,[getCandidate(TV2).filename]);
+    const name=`${TV2}-fairswaptest.json`;
+    const files=new Map([[name,readFileSync(join(dir,name))],['SHA256SUMS_fairswaptest',readFileSync(join(dir,'SHA256SUMS_fairswaptest'))]]);
+    const proof=tv2Plan().priorRuns[0];
+    assert.equal(validateReceipt(proof,{...baseEnv,GITHUB_SHA:receipt.reviewedCommit},files).candidateId,TV2);
+  }finally{rmSync(dir,{recursive:true,force:true});}
+  for(const change of ['history','postflight']){
+    const dir=mkdtempSync(join(tmpdir(),'tv2-fail-'));
+    try{
+      const runner=makeRunner({...tv2Mock(change),filename:getCandidate(TV2).filename});
+      await assert.rejects(releaseReusable({environment:'FairSwapTest',candidateId:TV2,context:baseEnv,runner,receiptDir:dir}),/TABLETS_LEDGER_CHANGED|POSTFLIGHT_FAILED/);
+      assert.deepEqual(readdirSync(dir),[]);
+    }finally{rmSync(dir,{recursive:true,force:true});}
+  }
+});
+
+test('Tablets V2 executable Production boundary rejects unverified Test evidence before tools run',async()=>{
+  const calls=[];
+  const context={...baseEnv,TEST_CATALOGUE_RUN_ID:'90',WEB_STAGING_SHA:TV2_WEB,TABLETS_CANDIDATE_LEDGER_SHA:'a'.repeat(64),GITHUB_TOKEN:'mock',WEB_EVIDENCE_TOKEN:'mock'};
+  await assert.rejects(releaseReusable({environment:'FairSwapProd',candidateId:TV2,context,runner:()=>calls.push('tool'),fetcher:async()=>({ok:true,json:async()=>({status:'completed',conclusion:'failure'})})}),/EVIDENCE_RUN_NOT_VERIFIED/);
+  assert.deepEqual(calls,[]);
+});
+
+test('Tablets V2 workflow exposes a separate Test run, carries its ledger hash, and preserves automatic postflight',()=>{
+  const yaml=readFileSync('.github/workflows/reusable-supabase-release.yml','utf8');
+  assert.match(yaml,/\n          - tablets-v2-catalogue\n/);
+  assert.match(yaml,/test_catalogue_run_id:/);
+  assert.equal((yaml.match(/test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID/g)??[]).length,3);
+  assert.equal((yaml.match(/await verifyTabletsV2Web\(plan, e\)/g)??[]).length,2);
+  assert.ok(yaml.includes('receipts[`test_${stage}_run_id`]'));
+  assert.ok(yaml.includes('candidate_ledger_sha=${testCandidate.ledgerStatementsSha256}'));
+});
+
+test('real PostgreSQL: Tablets V2 migration passes the release postflight and preserves its V1 contracts',
+ {skip:pgBin?false:'no local PostgreSQL binaries; enforced when REQUIRE_REAL_PG=1'},async()=>{
+  const {runTabletsV2Preflight,runTabletsV2Postflight}=await import('../../scripts/release/tablets-v2-release.mjs');
+  const {installPostingFixture}=await import('../../scripts/ci/posting-v2-fixture.mjs');
+  const pg=startPg(pgBin);
+  try{
+    await installPostingFixture({exec:async sql=>pg.run(sql)});
+    for(const path of [
+      'posting-v2/session-recovery/supabase/migrations/20261101234604_posting_v212_session_recovery.sql',
+      'posting-v2/activation/supabase/migrations/20261025135152_activate_posting_v2_mobiles.sql',
+      getCandidate('accessories-v1-foundation').path.replace('supabase/forward-migrations/',''),
+      getCandidate('accessories-v1-activation').path.replace('supabase/forward-migrations/',''),
+      getCandidate('tablets-v1-foundation').path.replace('supabase/forward-migrations/',''),
+      getCandidate('tablets-v1-activation').path.replace('supabase/forward-migrations/','')
+    ])pg.run(readFileSync(join('supabase/forward-migrations',path),'utf8'));
+    const before=runTabletsV2Preflight(pg.run);
+    pg.run(readFileSync(getCandidate(TV2).path,'utf8'));
+    assert.deepEqual(runTabletsV2Postflight(before,pg.run),{verified:true});
+    pg.run("update public.tablet_brands_v1 set name='Wrong' where name='Apple'");
+    assert.throws(()=>runTabletsV2Postflight(before,pg.run),/EXISTING_CONTRACT_CHANGED/);
+  }finally{pg.stop();}
+ });
+
+function tv2ProductionEvidence(over={}) {
+  const runId='90';
+  const record=receiptFor(TV2,'test',runId,{ledgerStatementsSha256:'a'.repeat(64),priorRuns:[],webStagingSha:null,...over.receipt});
+  const name=`${TV2}-fairswaptest.json`,body=JSON.stringify(record,null,2)+'\n';
+  const zip=makeZip({[name]:body,SHA256SUMS_fairswaptest:`${createHash('sha256').update(body).digest('hex')}  ${name}\n`});
+  const url=`https://api.github.com/repos/${GH}/actions/artifacts/9/zip`;
+  const run={...goodRun,id:90,workflow_id:404601811,head_repository:{full_name:GH},actor:{login:'vivek2310sharma'},triggering_actor:{login:'vivek2310sharma'},run_attempt:1,...over.run};
+  const art=[{id:9,name:`reusable-test-${TV2}-90-1`,expired:false,workflow_run:{id:90,head_sha:SHA_C},digest:`sha256:${createHash('sha256').update(zip).digest('hex')}`,archive_download_url:url,...over.artifact}];
+  const fetchEvidence=evidenceFetcher({run,runId,candidateId:TV2,env:'test',zip,art});
+  const fetchWeb=tv2WebFetcher(over.web);
+  return url=>url.includes(`/repos/${ACCESSORIES_WEB.repository}/`)?fetchWeb(url):fetchEvidence(url);
+}
+
+test('Tablets V2 Production rechecks immutable Test and staging evidence before applying and binds the ledger digest',async()=>{
+  const candidate=getCandidate(TV2),dir=mkdtempSync(join(tmpdir(),'tv2-prod-'));
+  const context={...baseEnv,...ctx,TEST_CATALOGUE_RUN_ID:'90',WEB_STAGING_SHA:TV2_WEB,TABLETS_CANDIDATE_LEDGER_SHA:'a'.repeat(64),WEB_EVIDENCE_TOKEN:'mock'};
+  try{
+    const runner=makeRunner({...tv2Mock(),filename:candidate.filename});
+    const receipt=await releaseReusable({environment:'FairSwapProd',candidateId:TV2,context,runner,receiptDir:dir,fetcher:tv2ProductionEvidence()});
+    assert.equal(receipt.postflightVerified,true);
+    assert.equal(receipt.ledgerStatementsSha256,'a'.repeat(64));
+    assert.equal(receipt.webStagingSha,TV2_WEB);
+    assert.deepEqual(receipt.webStagingEvidence,{stagingDeploymentId:100,stagingCiRunId:110});
+    assert.deepEqual(receipt.priorRuns,[{key:'test_catalogue_run_id',runId:'90'}]);
+  }finally{rmSync(dir,{recursive:true,force:true});}
+  for(const over of [
+    {receipt:{postflightVerified:false}},{receipt:{ledgerStatementsSha256:'b'.repeat(64)}},
+    {receipt:{migrationSha256:'b'.repeat(64)}},{receipt:{candidateId:'tablets-v1-foundation'}},
+    {run:{head_sha:'b'.repeat(40)}},{run:{run_attempt:2}},{run:{conclusion:'failure'}},
+    {artifact:{digest:'sha256:'+'b'.repeat(64)}},{artifact:{expired:true}},
+    {web:{run:{conclusion:'failure'}}},{web:{deployment:{created_at:'2026-11-02T00:00:00Z'}}}
+  ]){
+    let tools=0;
+    await assert.rejects(releaseReusable({environment:'FairSwapProd',candidateId:TV2,context,runner:()=>{tools++;},fetcher:tv2ProductionEvidence(over)}),/EVIDENCE|RECEIPT|STAGING/);
+    assert.equal(tools,0);
+  }
 });
 
 // ---- Accessories read-only adoption in the known post-Tablets state ----------------------------------------------------
