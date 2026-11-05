@@ -154,7 +154,7 @@ export const WEARABLES_WEB = Object.freeze({
   // Full SHA of the reviewed, deployed Web commit that contains the Wearables E2E runner. It must descend from
   // stagingSha with exactly the reviewed runner, CI and Tablets V2 changes (see WEARABLES_E2E.runnerPaths).
   // The pin alone does not satisfy the independent Test E2E evidence gate.
-  e2eRunnerSha: '30b6979d5ca568f2841ab0bae5ce991d2fa5d474',
+  e2eRunnerSha: 'c0f2d7fcdb9614a5d762df46b8121ce596267594',
   repository: ACCESSORIES_WEB.repository,
   productionEnvironment: ACCESSORIES_WEB.productionEnvironment
 });
