@@ -19,10 +19,30 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ inputs.environment == 'test' && 'FairSwapTest' || inputs.environment }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Check required secrets
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for secret_name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID OPENAI_API_KEY AZURE_MODERATION_SECRET SUPABASE_ACCESS_TOKEN; do
+            if [[ -z "${!secret_name}" ]]; then
+              printf '::error::Missing required secret: %s\n' "$secret_name"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Azure Login via OIDC
         uses: azure/login@v2
@@ -113,10 +133,26 @@ jobs:
             allowedStorageHost=${{ steps.env-vars.outputs.STORAGE_HOST }}
             imageTag=${{ steps.env-vars.outputs.IMAGE_TAG }}
 
-      # Step 6: Deploy Edge Function and configure required secrets in Supabase
-      - name: Deploy Supabase Edge Function & Secrets
+      - name: Verify Azure controller health
+        if: ${{ inputs.environment == 'test' }}
+        shell: bash
+        timeout-minutes: 3
+        env:
+          CONTROLLER_FQDN: ${{ steps.bicep.outputs.controllerFqdn }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --output /dev/null \
+            --connect-timeout 10 --max-time 20 \
+            --retry 5 --retry-delay 5 --retry-connrefused --retry-all-errors \
+            --retry-max-time 120 \
+            "https://${CONTROLLER_FQDN:?Missing controller FQDN}/healthz"
+
+      # Step 6: Configure required Azure Moderation secrets in Supabase
+      - name: Configure Supabase Azure Moderation secrets
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
+          CONTROLLER_FQDN: ${{ steps.bicep.outputs.controllerFqdn }}
         run: |
           if [ "${{ inputs.environment }}" = "prod" ]; then
             PROJECT_REF="kriuhwppxgxsyyrbjsau"
@@ -131,10 +167,6 @@ jobs:
 
           # Set Azure Moderation secrets (Controller endpoint and secret) in Edge runtime
           ./supabase secrets set \
-            AZURE_MODERATION_ENDPOINT="https://${{ steps.bicep.outputs.controllerFqdn }}/v1/moderate" \
-            AZURE_MODERATION_SECRET="${{ secrets.AZURE_MODERATION_SECRET }}" \
-            --project-ref "$PROJECT_REF"
-
-          # Deploy Edge Function preserving Vault worker auth boundary (no --no-verify-jwt)
-          ./supabase functions deploy process-listing-moderation \
+            AZURE_MODERATION_ENDPOINT="https://${CONTROLLER_FQDN}/v1/moderate" \
+            AZURE_MODERATION_SECRET="$AZURE_MODERATION_SECRET" \
             --project-ref "$PROJECT_REF"
