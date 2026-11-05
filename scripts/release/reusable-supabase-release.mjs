@@ -720,10 +720,11 @@ export async function releaseReusable({
       ...(wearables ? {
         // SQL postflight is a catalogue/ACL/ownership/moderation integrity check, never E2E evidence.
         postflightScope: 'sql-integrity-smoke-not-e2e',
-        ...(stagePlan.e2eRunId ? {
-          e2eRunId: stagePlan.e2eRunId,
+        ...(stagePlan.crossCommitRuns ? {
           accessoriesProdFoundationRunId: stagePlan.crossCommitRuns[0].runId
-        } : {})
+        } : {}),
+        ...(stagePlan.e2eRunId ? {e2eRunId: stagePlan.e2eRunId} : {}),
+        ...(stagePlan.e2eWaiver ? {e2eWaiver: stagePlan.e2eWaiver} : {})
       } : {}),
       ...(candidate.strict ? {
         stage: candidate.stage,

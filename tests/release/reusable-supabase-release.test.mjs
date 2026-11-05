@@ -9,7 +9,7 @@ import {join, resolve as resolvePath} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {rootCertificates} from 'node:tls';
 import {X509Certificate, createHash} from 'node:crypto';
-import {getCandidate, verifyCandidateSha, CANDIDATES, planDispatch, ACCESSORIES_WEB, WEARABLES_WEB, WEB_PINS, EXISTING_INSTALLATIONS, adoptionAttestation, getAdoption} from '../../scripts/release/reusable-candidates.mjs';
+import {getCandidate, verifyCandidateSha, CANDIDATES, planDispatch, ACCESSORIES_WEB, WEARABLES_WEB, WEARABLES_E2E_WAIVER, WEB_PINS, EXISTING_INSTALLATIONS, adoptionAttestation, getAdoption} from '../../scripts/release/reusable-candidates.mjs';
 import {
   ADOPTED_STATUS, MOBILE_PHONES_HISTORY, WEARABLES_E2E, assertLedgerTail, assertMobilePhonesProvenance, requirePriorCommitEvidence, runWearablesPostflight,
   WEARABLES_ANCESTOR_EVIDENCE, WEARABLES_OUT_OF_ORDER, TABLETS_V2_LEDGER, MODERATION_SWITCHING_LEDGER, assertSwitchingPrerequisite, assertCliSupportsIncludeAll, runWearablesPreflight, validateCrossCommitReceipt, verifyE2eEvidence, wearablesPostflightChecks, AZURE_FINALIZER_BODY_SHA256, SWITCHING_FINALIZER_BODY_SHA256
@@ -1316,6 +1316,74 @@ test('Wearables Production plans require Test, Accessories Production and E2E ev
   assert.throws(() => wPlan(WA, 'test', {test_foundation_run_id: ''}), /EVIDENCE_RUN_REQUIRED/);
 });
 
+const waiverDispatch = {
+  GITHUB_ACTIONS: 'true',
+  GITHUB_EVENT_NAME: 'workflow_dispatch',
+  GITHUB_REPOSITORY: 'vivek2310sharma/FairSwap-Backend',
+  GITHUB_REF: 'refs/heads/main',
+  GITHUB_ACTOR: 'vivek2310sharma',
+  GITHUB_TRIGGERING_ACTOR: 'vivek2310sharma',
+  GITHUB_ACTOR_ID: '59019804',
+  GITHUB_REPOSITORY_OWNER_ID: '59019804',
+  GITHUB_WORKFLOW_REF: 'vivek2310sharma/FairSwap-Backend/.github/workflows/reusable-supabase-release.yml@refs/heads/main',
+  GITHUB_SHA: 'a'.repeat(40),
+  GITHUB_RUN_ID: '99'
+};
+const waiverInput = WEARABLES_E2E_WAIVER.input;
+const waiverPlan = (candidateId, target = 'production', context = waiverDispatch, overrides = {}) =>
+  planDispatch({candidateId, target, context, inputs: {...wInputs, test_e2e_run_id: waiverInput, ...overrides}});
+
+test('only an explicit Wearables Production dispatch by the verified owner can waive authenticated Test E2E', async () => {
+  for (const [id, target] of [[WF, 'test'], [WA, 'test'], [FOUNDATION, 'production'], [FOUNDATION, 'adopt'],
+    ['tablets-v2-catalogue', 'production'], ['moderation-switching-v1', 'test']]) {
+    assert.throws(() => waiverPlan(id, target), /E2E_WAIVER_SCOPE_INVALID/);
+  }
+  for (const key of Object.keys(waiverDispatch)) {
+    assert.throws(() => waiverPlan(WF, 'production', {...waiverDispatch, [key]: 'invalid'}), /E2E_WAIVER_OWNER_DISPATCH_REQUIRED/);
+  }
+  for (const id of [WF, WA]) {
+    const plan = waiverPlan(id);
+    assert.deepEqual(plan.priorRuns, wPlan(id, 'production').priorRuns);
+    assert.deepEqual(plan.crossCommitRuns, wPlan(id, 'production').crossCommitRuns);
+    assert.equal(plan.e2eRunId, undefined);
+    assert.equal(plan.e2eWaiver.status, 'WAIVED_BY_OWNER');
+    assert.equal(plan.e2eWaiver.testExecuted, false);
+    assert.equal(plan.e2eWaiver.dispatchRunId, '99');
+    assert.equal(await verifyE2eEvidence(plan, waiverDispatch, () => assert.fail('waiver must not look up E2E artifacts')), plan.e2eWaiver);
+    for (const key of ['test_activation_run_id', 'accessories_prod_foundation_run_id', id === WF ? 'test_foundation_run_id' : 'prod_foundation_run_id']) {
+      assert.throws(() => waiverPlan(id, 'production', waiverDispatch, {[key]: ''}), /EVIDENCE_RUN_REQUIRED/);
+    }
+  }
+});
+
+test('Wearables waiver activation requires the pinned selective tree, Production base, current READY deployment and main ancestry', async () => {
+  const plan = waiverPlan(WA);
+  const {webBaseSha, webTreeSha} = WEARABLES_E2E_WAIVER;
+  const sha = plan.webProductionSha;
+  const staging = wDep(1, plan.webStagingSha, 'Preview');
+  const prod = wDep(2, sha, 'Production');
+  const check = (o = {}) => verifyWebDeployments(plan, {WEB_EVIDENCE_TOKEN: 'mock'}, async u => {
+    let data;
+    if (u.includes('/deployments?environment=Production')) data = [o.live ?? prod];
+    else if (u.includes(`/deployments?sha=${sha}`)) data = [prod];
+    else if (u.includes(`/deployments?sha=${plan.webStagingSha}`)) data = [staging];
+    else if (u.includes('/deployments/1/statuses')) data = [{state: o.staging ?? 'success'}];
+    else if (u.includes('/deployments/2/statuses')) data = [{state: o.production ?? 'success'}];
+    else if (u.includes(`/compare/${webBaseSha}...${sha}`)) data = {status: o.base ?? 'ahead', merge_base_commit: {sha: webBaseSha}};
+    else if (u.endsWith(`/git/commits/${sha}`)) data = {sha, tree: {sha: o.tree ?? webTreeSha}};
+    else if (u.endsWith(`/compare/${sha}...main`)) data = {status: o.main ?? 'ahead'};
+    else assert.fail(`unexpected URL ${u}`);
+    return {ok: true, json: async () => data};
+  });
+  assert.deepEqual(await check(), {stagingDeploymentId: 1, productionDeploymentId: 2});
+  await assert.rejects(check({tree: '0'.repeat(40)}), /WEB_PRODUCTION_SELECTIVE_RELEASE_NOT_VERIFIED/);
+  await assert.rejects(check({base: 'diverged'}), /WEB_PRODUCTION_SELECTIVE_RELEASE_NOT_VERIFIED/);
+  await assert.rejects(check({live: {...prod, sha: webBaseSha}}), /WEB_PRODUCTION_NOT_CURRENT_DEPLOYMENT/);
+  await assert.rejects(check({production: 'pending'}), /WEB_PRODUCTION_DEPLOYMENT_NOT_READY/);
+  await assert.rejects(check({staging: 'pending'}), /WEB_STAGING_DEPLOYMENT_NOT_READY/);
+  await assert.rejects(check({main: 'diverged'}), /WEB_PRODUCTION_NOT_ON_MAIN/);
+});
+
 test('Wearables Web verification uses the Wearables pin and cannot be satisfied by the Accessories commit', async () => {
   const env = {WEB_EVIDENCE_TOKEN: 't'};
   const fetcherFor = (deployments, o = {}) => async u => {
@@ -1772,6 +1840,18 @@ test('Wearables Test foundation installs through the existing pipeline and write
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
+});
+
+test('Wearables Production receipt records an owner waiver separately from SQL postflight', async () => {
+  const {receipt, dir} = await wRelease('FairSwapProd', WF, {}, {...waiverDispatch, TEST_E2E_RUN_ID: waiverInput});
+  try {
+    assert.deepEqual(receipt.e2eWaiver, waiverPlan(WF).e2eWaiver);
+    assert.equal(receipt.e2eRunId, undefined);
+    assert.equal(receipt.postflightScope, 'sql-integrity-smoke-not-e2e');
+    assert.equal(receipt.postflightVerified, true);
+    assert.equal(receipt.accessoriesProdFoundationRunId, '50');
+    assert.deepEqual(receipt.priorRuns.map(r => r.key), ['test_foundation_run_id', 'test_activation_run_id']);
+  } finally { rmSync(dir, {recursive: true, force: true}); }
 });
 
 test('Wearables Test activation and Production stages require their evidence and record it', async () => {

@@ -146,8 +146,7 @@ export const ACCESSORIES_WEB = Object.freeze({
   productionEnvironment: 'Production'
 });
 
-// Wearables has no hardcoded Production baseline: the deployed Production commit must instead be the current READY
-// Production deployment and contain the tested staging commit (compare ahead|identical) and be on main.
+// The normal Wearables path requires tested staging ancestry. The one-release waiver pins a selective Web tree.
 export const WEARABLES_WEB = Object.freeze({
   stagingSha: 'e37e28df1d387a02bcbea19487dfe0f82d198f74',
   productionBaselineSha: null,
@@ -157,6 +156,17 @@ export const WEARABLES_WEB = Object.freeze({
   e2eRunnerSha: 'c0f2d7fcdb9614a5d762df46b8121ce596267594',
   repository: ACCESSORIES_WEB.repository,
   productionEnvironment: ACCESSORIES_WEB.productionEnvironment
+});
+
+// Exact integration package for the owner's one-release exception. It is bound to the two
+// registered migration candidates and the selective Web port from the approved staging source.
+export const WEARABLES_E2E_WAIVER = Object.freeze({
+  input: 'OWNER_APPROVED_WEARABLES_V1_E2E_WAIVER',
+  owner: 'vivek2310sharma',
+  ownerId: '59019804',
+  webStagingSource: 'c0f2d7fcdb9614a5d762df46b8121ce596267594',
+  webBaseSha: '9d70e6bcdf7be9d2dc85efe67a6f061dfb7387d8',
+  webTreeSha: 'c1b447cc75fd2e4069af2870eaae543701fa68ac'
 });
 
 export const WEB_PINS = Object.freeze({
@@ -289,9 +299,21 @@ function need(ok, code) {
 // Pure, offline plan of what a dispatch must prove before it may touch a hosted database.
 // Accessories stages are separate dispatches (target=test | production); evidence of the earlier
 // stage is a prior successful run of this workflow. Only Accessories foundation can use ancestor evidence.
-export function planDispatch({candidateId, target = 'test', inputs = {}}) {
+export function planDispatch({candidateId, target = 'test', inputs = {}, context = {}}) {
   const candidate = getCandidate(candidateId);
   need(target === 'test' || target === 'production' || target === 'adopt', 'INVALID_TARGET');
+  const waiver = WEARABLES_E2E_WAIVER;
+  const waiveE2e = inputs.test_e2e_run_id === waiver.input;
+  if (waiveE2e) {
+    need(target === 'production' && (candidate.id === 'wearables-v1-foundation' || candidate.id === 'wearables-v1-activation'),
+      'E2E_WAIVER_SCOPE_INVALID');
+    need(context.GITHUB_ACTIONS === 'true' && context.GITHUB_EVENT_NAME === 'workflow_dispatch'
+      && context.GITHUB_REPOSITORY === `${waiver.owner}/FairSwap-Backend` && context.GITHUB_REF === 'refs/heads/main'
+      && context.GITHUB_WORKFLOW_REF === `${context.GITHUB_REPOSITORY}/.github/workflows/reusable-supabase-release.yml@${context.GITHUB_REF}`
+      && context.GITHUB_ACTOR === waiver.owner && context.GITHUB_TRIGGERING_ACTOR === waiver.owner
+      && context.GITHUB_ACTOR_ID === waiver.ownerId && context.GITHUB_REPOSITORY_OWNER_ID === waiver.ownerId
+      && SHA40.test(context.GITHUB_SHA ?? '') && RUN_ID.test(context.GITHUB_RUN_ID ?? ''), 'E2E_WAIVER_OWNER_DISPATCH_REQUIRED');
+  }
   if (target === 'adopt') {
     // Read-only attestation of an existing Production installation; only registered installations qualify.
     need(candidate.strict && EXISTING_INSTALLATIONS[`${candidate.id}|FairSwapProd`], 'ADOPTION_NOT_REGISTERED');
@@ -343,7 +365,21 @@ export function planDispatch({candidateId, target = 'test', inputs = {}}) {
   const extra = {};
   if (candidateFamily(candidate) === 'wearables-v1' && target === 'production') {
     extra.crossCommitRuns = [run('accessories_prod_foundation_run_id', 'accessories-v1-foundation', 'prod')];
-    extra.e2eRunId = run('test_e2e_run_id', candidate.id, 'test').runId;
+    if (waiveE2e) {
+      extra.e2eWaiver = {
+        status: 'WAIVED_BY_OWNER',
+        scope: 'authenticated-wearables-v1-test-e2e',
+        testExecuted: false,
+        approvedBy: waiver.owner,
+        approvedById: waiver.ownerId,
+        dispatchRunId: context.GITHUB_RUN_ID,
+        approvedWebStagingSource: waiver.webStagingSource,
+        reviewedWebProductionBase: waiver.webBaseSha,
+        reviewedWebProductionTree: waiver.webTreeSha
+      };
+    } else {
+      extra.e2eRunId = run('test_e2e_run_id', candidate.id, 'test').runId;
+    }
   }
   return {candidate, target, priorRuns, webStagingSha, webProductionSha, ...extra};
 }

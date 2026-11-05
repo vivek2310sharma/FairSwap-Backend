@@ -65,7 +65,7 @@ on:
         required: false
         type: string
       test_e2e_run_id:
-        description: 'Wearables Production: successful independent Wearables Test E2E run ID'
+        description: 'Wearables Production: successful Test E2E run ID, or OWNER_APPROVED_WEARABLES_V1_E2E_WAIVER (owner only)'
         required: false
         type: string
 
@@ -89,6 +89,8 @@ jobs:
       github.repository == 'vivek2310sharma/FairSwap-Backend' &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'vivek2310sharma' &&
+      (inputs.test_e2e_run_id != 'OWNER_APPROVED_WEARABLES_V1_E2E_WAIVER' ||
+        (github.actor_id == '59019804' && github.repository_owner_id == '59019804')) &&
       github.triggering_actor == 'vivek2310sharma' &&
       inputs.approved_sha == github.sha
     runs-on: ubuntu-24.04
@@ -169,7 +171,7 @@ jobs:
           import {recoveredFoundationSha, requireStageEvidence, usesLedgerHash} from './scripts/release/accessories-v1-release.mjs';
           import {WEARABLES_ANCESTOR_EVIDENCE, requirePriorCommitEvidence} from './scripts/release/wearables-v1-release.mjs';
           const e = process.env;
-          const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
+          const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, context: e, inputs: {
             web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
             test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
@@ -245,7 +247,7 @@ jobs:
           import {verifyTabletsV2Web} from './scripts/release/tablets-v2-release.mjs';
           import {verifyE2eEvidence} from './scripts/release/wearables-v1-release.mjs';
           const e = process.env;
-          const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
+          const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, context: e, inputs: {
             web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
             test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
@@ -385,7 +387,7 @@ jobs:
           import {verifyTabletsV2Web} from './scripts/release/tablets-v2-release.mjs';
           import {verifyE2eEvidence} from './scripts/release/wearables-v1-release.mjs';
           const e = process.env;
-          const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
+          const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, context: e, inputs: {
             web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
             test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
@@ -393,7 +395,8 @@ jobs:
             accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID
           }});
           await verifyWebDeployments(plan, e);
-          await verifyE2eEvidence(plan, e);
+          const e2e = await verifyE2eEvidence(plan, e);
+          if (plan.e2eWaiver) console.log(JSON.stringify({e2eWaiver: e2e}));
           await verifyTabletsV2Web(plan, e);
           NODE
 
