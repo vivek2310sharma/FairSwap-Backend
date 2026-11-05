@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {installPostingFixture} from '../../scripts/ci/posting-v2-fixture.mjs';
 import {getCandidate} from '../../scripts/release/reusable-candidates.mjs';
-import {runWearablesPostflight,runWearablesPreflight,AZURE_FINALIZER_BODY_SHA256} from '../../scripts/release/wearables-v1-release.mjs';
+import {runWearablesPostflight,runWearablesPreflight,AZURE_FINALIZER_BODY_SHA256,SWITCHING_FINALIZER_BODY_SHA256} from '../../scripts/release/wearables-v1-release.mjs';
 import {postflightQuery} from '../../scripts/release/accessories-v1-release.mjs';
 import {verifyRemotePostflight} from '../../scripts/release/reusable-supabase-release.mjs';
 import {NativeFixture,literal} from '../posting-v212/native-adapter.mjs';
@@ -50,8 +50,8 @@ const fixtureSql=`
  create table vault._secrets(name text primary key,decrypted_secret text);
  create view vault.decrypted_secrets as select name,decrypted_secret from vault._secrets;
  grant usage on schema vault,extensions,app_security,public to service_role;grant select on vault.decrypted_secrets to service_role;
- create table public.app_system_settings(setting_key text primary key,setting_value text not null);
- insert into public.app_system_settings values('moderation_automation_enabled','true');
+ create table public.app_system_settings(setting_key text primary key,setting_value text not null,description text);
+ insert into public.app_system_settings(setting_key,setting_value) values('moderation_automation_enabled','true'),('moderation_azure_enabled','true');
  create type public.moderation_decision_state as enum('auto_approved','routed_to_admin','awaiting_retry','escalated_to_admin','rejected_invalid','superseded');
  create type public.moderation_outcome_enum as enum('no_review_flags','needs_review','checks_incomplete','invalid_input');
  create type public.moderation_request_status as enum('pending','claimed','completed','retry','failed','superseded');
@@ -68,7 +68,7 @@ async function viaNative(run){
 const checkOut=x=>JSON.parse(x.split('\n').filter(Boolean).pop());
 const RULES="array['check_india_fraud_rules','check_openai_moderation','check_vision_nsfw','check_vision_category','check_ocr_qr']::text[]";
 const sha=s=>createHash('sha256').update(s).digest('hex');
-const activationSql=readFileSync(resolve('supabase/forward-migrations/wearables-v1/activation/supabase/migrations/20261104220000_activate_wearables_v1.sql'),'utf8');
+const activationSql=readFileSync(resolve('supabase/forward-migrations/wearables-v1/activation/supabase/migrations/20261104230000_activate_wearables_v1.sql'),'utf8');
 async function submit(over={}){const s=await stage(u,over);await db.start(submitSql(s.payload),ctx(u,'az_submit')).done;return s;}
 async function claim(listing,{mutate=false}={}){
  const l=(await db.query('select revision,title,description from public.listings where id=$1',[listing])).rows[0];
@@ -118,29 +118,41 @@ try{
  await test('Wearables foundation preflight passes on the hosted-order baseline (Accessories activated, Azure installed)',async()=>{
   const r=await viaNative(run=>runWearablesPreflight(foundation,sql=>run(sql)));assert.ok(Object.values(r).every(v=>v===true));
  });
- for(const [candidate,p] of [[foundation,'wearables-v1/supabase/migrations/20261104120000_posting_v2_wearables.sql'],[activation,'wearables-v1/activation/supabase/migrations/20261104220000_activate_wearables_v1.sql']]){
-  if(candidate===activation)await test('Wearables activation preflight passes with Azure installed and foundation disabled',async()=>{const r=await viaNative(run=>runWearablesPreflight(activation,sql=>run(sql)));assert.ok(Object.values(r).every(v=>v===true));});
+ for(const [candidate,p] of [[foundation,'wearables-v1/supabase/migrations/20261104120000_posting_v2_wearables.sql'],[activation,'wearables-v1/activation/supabase/migrations/20261104230000_activate_wearables_v1.sql']]){
+  // Hosted order: Azure 20261104113705 -> Wearables foundation 20261104120000 -> moderation switching 20261104223000 -> Wearables activation 20261104230000.
+  // The real switching migration is installed before activation; its finalizer body is the only baseline the activation accepts.
+  if(candidate===activation){
+   const azureOnly=checkOut(await db.exec("select jsonb_build_object('azure_only',encode(sha256(convert_to(prosrc,'UTF8')),'hex')='"+AZURE_FINALIZER_BODY_SHA256+"')::text from pg_proc where oid='app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)'::regprocedure"));
+   await test('Azure-only finalizer state fails the Wearables activation preflight (activation requires moderation switching)',async()=>{
+    assert.equal(azureOnly.azure_only,true);
+    const r=await viaNative(run=>{try{return runWearablesPreflight(activation,sql=>run(sql));}catch(e){return {error:String(e.message)};}});assert.match(r.error??'',/WEARABLES_PREFLIGHT_FAILED: azure_finalizer_baseline/);
+   });
+   await db.exec(readFileSync(resolve(f+'moderation-switching-v1/20261104223000_moderation_provider_switching.sql'),'utf8'));
+  }
+  if(candidate===activation)await test('Wearables activation preflight passes with moderation switching installed and foundation disabled',async()=>{const r=await viaNative(run=>runWearablesPreflight(activation,sql=>run(sql)));assert.ok(Object.values(r).every(v=>v===true));});
   if(candidate===activation){
    const compatSql=activationSql.slice(activationSql.indexOf('do $$\ndeclare'),activationSql.indexOf('\nupdate public.categories'));assert.ok(compatSql.startsWith('do $$')&&compatSql.includes('WEARABLES_AZURE_BASELINE_DRIFT'));
    const azureFile=readFileSync(resolve(f+'moderation-azure-v1/20261104113705_azure_moderation_finalizer.sql'),'utf8');
+   const FIN0='app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)';const switchingBody=(await db.query(`select prosrc from pg_proc where oid='${FIN0}'::regprocedure`)).rows[0].prosrc;
    const bodyStart=azureFile.indexOf('AS $$\n',azureFile.indexOf('CREATE OR REPLACE FUNCTION app_security.impl_finalize_moderation_result('))+5;const azureBody=azureFile.slice(bodyStart,azureFile.indexOf('\n$$;',bodyStart)+1);
    const FIN='app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)';
    const tamper=(opts,body='begin return null::jsonb; end')=>`create or replace function app_security.impl_finalize_moderation_result(p_request_id uuid,p_claim_token uuid,p_outcome text,p_ruleset_version text,p_scope text,p_completed_rules text[],p_failed_rules text[],p_flags jsonb,p_errors jsonb default '[]'::jsonb) returns jsonb language plpgsql volatile ${opts} as $t$${body}$t$;`;
    const lastLine=out=>out.split('\n').filter(Boolean).pop();
-   await test('PINNED DIGEST: the sha256 pinned in the activation SQL and the release scripts equals the Azure file body AND the natively installed pg_proc.prosrc',async()=>{
-    const pinned=sha(azureBody);assert.ok(activationSql.includes(pinned));assert.equal(pinned,AZURE_FINALIZER_BODY_SHA256);
+   await test('PINNED DIGEST: the sha256 pinned in the activation SQL and the release scripts equals the natively installed switching finalizer pg_proc.prosrc (never the Azure-only body)',async()=>{
+    const pinned=sha(switchingBody);assert.ok(activationSql.includes(pinned)&&!activationSql.includes(AZURE_FINALIZER_BODY_SHA256));assert.equal(pinned,SWITCHING_FINALIZER_BODY_SHA256);assert.equal(sha(azureBody),AZURE_FINALIZER_BODY_SHA256);
     assert.equal(getCandidate('moderation-azure-v1').sha256,sha(azureFile),'Azure candidate pin is the reviewed file');
     assert.equal(lastLine(await db.exec(`select encode(sha256(convert_to(prosrc,'UTF8')),'hex') from pg_proc where oid='${FIN}'::regprocedure`)),pinned);
    });
    await test('COMPAT PRECONDITIONS fail closed (each attempt rolled back): drifted body, non-definer, wrong search_path, missing flags table, conflicting inner function',async()=>{
     const rejects=(sql,msg)=>assert.rejects(()=>db.exec(sql),code(msg));
     await rejects(tamper("security definer set search_path=''")+compatSql,'WEARABLES_AZURE_BASELINE_DRIFT');
-    await rejects(tamper("security invoker set search_path=''",azureBody)+compatSql,'WEARABLES_AZURE_BASELINE_DRIFT');
-    await rejects(tamper('security definer',azureBody)+compatSql,'WEARABLES_AZURE_BASELINE_DRIFT');
+    await rejects(tamper("security definer set search_path=''",azureBody)+compatSql,'WEARABLES_AZURE_BASELINE_DRIFT');   // Azure-only body is never accepted
+    await rejects(tamper("security invoker set search_path=''",switchingBody)+compatSql,'WEARABLES_AZURE_BASELINE_DRIFT');
+    await rejects(tamper('security definer',switchingBody)+compatSql,'WEARABLES_AZURE_BASELINE_DRIFT');
     await rejects('alter table public.listing_wearable_risk_flags_v1 rename to flags_gone;'+compatSql,'WEARABLES_AZURE_PREREQUISITE_MISSING');
     await rejects('create function app_security.impl_finalize_moderation_result_azure_v1(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb) returns jsonb language sql as $x$select null::jsonb$x$;'+compatSql,'WEARABLES_AZURE_FINALIZER_ALREADY_WRAPPED');
     assert.equal(lastLine(await db.exec("select to_regprocedure('app_security.impl_finalize_moderation_result_azure_v1(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)') is null")),'t');
-    assert.equal(lastLine(await db.exec(`select encode(sha256(convert_to(prosrc,'UTF8')),'hex') from pg_proc where oid='${FIN}'::regprocedure`)),AZURE_FINALIZER_BODY_SHA256);
+    assert.equal(lastLine(await db.exec(`select encode(sha256(convert_to(prosrc,'UTF8')),'hex') from pg_proc where oid='${FIN}'::regprocedure`)),SWITCHING_FINALIZER_BODY_SHA256);
    });
    await test('COMPAT with no finalizer installed is a no-op (nothing to correct); an inner without a public finalizer is inconsistent',async()=>{
     assert.equal(lastLine(await db.exec(`drop function ${FIN};`+compatSql+`;select to_regprocedure('${FIN}') is null;rollback`)),'t');
@@ -305,17 +317,17 @@ try{
   const compatSql=activationSql.slice(activationSql.indexOf('do $$\ndeclare'),activationSql.indexOf('\nupdate public.categories'));
   await assert.rejects(()=>db.exec(compatSql),code('WEARABLES_AZURE_FINALIZER_ALREADY_WRAPPED'));
  });
- await test('REVIEW-ONLY rollback script refuses while enabled; after disabling it restores the Azure function name and W-AZ-1 fails closed again (guard raises, nothing published)',async()=>{
+ await test('REVIEW-ONLY rollback script refuses while enabled; after disabling it restores the original function name (switching body) and W-AZ-1 fails closed again (guard raises, nothing published)',async()=>{
   const rb=readFileSync(resolve(f+'wearables-v1/rollback/restore_azure_finalizer.sql'),'utf8');
   await assert.rejects(()=>db.exec(rb),code('WEARABLES_AZURE_ROLLBACK_PRECONDITION_FAILED'));
   await db.exec(readFileSync(resolve(f+'wearables-v1/rollback/disable_wearables_v1.sql'),'utf8'));
   await db.exec(rb);
   const inner=await db.exec("select to_regprocedure('app_security.impl_finalize_moderation_result_azure_v1(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)') is null");assert.equal(inner.split('\n').pop(),'t');
-  const body=await db.exec("select encode(sha256(convert_to(prosrc,'UTF8')),'hex') from pg_proc where oid='app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)'::regprocedure");assert.equal(body.split('\n').pop(),AZURE_FINALIZER_BODY_SHA256);
+  const body=await db.exec("select encode(sha256(convert_to(prosrc,'UTF8')),'hex') from pg_proc where oid='app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)'::regprocedure");assert.equal(body.split('\n').pop(),SWITCHING_FINALIZER_BODY_SHA256);
   await db.exec("update public.wearable_release_v1 set enabled=true;update public.categories set is_active=true where id=(select category_id from public.wearable_release_v1)");
   const s=await submit({pairing_status:'unknown'});const c=await claim(s.listing);
   await assert.rejects(()=>finalize(c),code('requires staff review'));assert.equal(await status(s.listing),'pending_review');
  });
- console.log(JSON.stringify({status:'PASS',postgres_version_num:version,checks,order:'Accessories(foundation+activation) -> Azure 20261104113705 -> Wearables foundation 20261104120000 -> Wearables activation 20261104220000 (wraps the Azure finalizer)',resolved_findings:['W-AZ-1'],known_findings:[],
+ console.log(JSON.stringify({status:'PASS',postgres_version_num:version,checks,order:'Accessories(foundation+activation) -> Azure 20261104113705 -> Wearables foundation 20261104120000 -> moderation switching 20261104223000 -> Wearables activation 20261104230000 (wraps the switching finalizer)',resolved_findings:['W-AZ-1'],known_findings:[],
   fixture_limitations:['pgcrypto: extensions.digest is a sha256() shim (no pgcrypto extension in the source build)','vault: vault.decrypted_secrets is a plain table-backed view; no real Vault','moderation identities: is_active_staff_aal2 is the posting fixture stub keyed on the request.staff GUC, so moderator/AAL2 identity is mocked (no Auth/JWT/AAL, no real moderate_listing_reviewed)','scan receipts use synthetic manifest hashes (sha256 of media id), not content hashes','auth.users, cities/localities, storage.objects and categories are minimal fixtures; roles authenticated/anon/service_role are fixture roles','PG 17.6 source build without openssl/icu/readline/zlib; not a Supabase-hosted instance']}));
 }finally{db.close();}

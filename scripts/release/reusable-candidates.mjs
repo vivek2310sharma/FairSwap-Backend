@@ -113,21 +113,22 @@ export const CANDIDATES = Object.freeze({
     stage: 'foundation',
     autoPromote: false,
     requiredLedgerVersions: Object.freeze(['20261102164135']),
-    incompatibleLedgerVersions: Object.freeze(['20261104220000'])
+    incompatibleLedgerVersions: Object.freeze(['20261104230000'])
   }),
   'wearables-v1-activation': Object.freeze({
     id: 'wearables-v1-activation',
-    version: '20261104220000',
-    filename: '20261104220000_activate_wearables_v1.sql',
-    path: 'supabase/forward-migrations/wearables-v1/activation/supabase/migrations/20261104220000_activate_wearables_v1.sql',
-    sha256: 'c5a50f11df325a9743f39b13d7aa536a1b7b12cca9467fc318da8f659527b10b',
+    version: '20261104230000',
+    filename: '20261104230000_activate_wearables_v1.sql',
+    path: 'supabase/forward-migrations/wearables-v1/activation/supabase/migrations/20261104230000_activate_wearables_v1.sql',
+    sha256: 'ec102db34e4414a713aed950b756ea617888209515031c5a615306d30e08ac54',
     description: 'Wearables V1 activation (enables typed category)',
     strict: true,
     stage: 'activation',
     autoPromote: false,
-    // Azure moderation 20261104113705 must be installed: activation wraps its finalizer (W-AZ-1), so strict order is
-    // Azure -> Wearables foundation -> Wearables activation.
-    requiredLedgerVersions: Object.freeze(['20261102164135', '20261104113705', '20261104120000']),
+    // Provider-switching moderation 20261104223000 (which supersedes Azure 20261104113705) must be installed: activation wraps
+    // its finalizer (W-AZ-1) and accepts only its body. Strict order: Azure -> Wearables foundation -> switching -> Wearables
+    // activation. The switching row's exact name and hosted statements digest are pinned in wearables-v1-release.mjs.
+    requiredLedgerVersions: Object.freeze(['20261102164135', '20261104113705', '20261104120000', '20261104223000']),
     incompatibleLedgerVersions: Object.freeze([])
   })
 });
@@ -210,7 +211,7 @@ export const EXISTING_INSTALLATIONS = Object.freeze({
       })
     ]),
     // Later chain stages must be absent: Wearables must never be recorded.
-    forbiddenLedgerVersions: Object.freeze(['20261104120000', '20261104220000']),
+    forbiddenLedgerVersions: Object.freeze(['20261104120000', '20261104230000']),
     // Tablets foundation + activation may be recorded ONLY as a complete, verified pair (the known post-Tablets state). Either
     // one alone is rejected. In that state the obsolete Accessories wrapper assertions are exempt (see postTabletsExemptKeys).
     postTabletsLedger: Object.freeze([

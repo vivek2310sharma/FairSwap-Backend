@@ -1,6 +1,6 @@
 -- Activate only after matching Web (POST_AD_WEARABLES_V1_ENABLED) and automated Test verification; no generic writes.
--- R4 (W-AZ-1): before the category is enabled, the installed Azure moderation finalizer (20261104113705, left untouched in
--- history) is wrapped so that a wearable carrying a risk flag can never be finalized as auto-approved; it is routed to staff.
+-- R4 (W-AZ-1): before the category is enabled, the installed provider-switching moderation finalizer (20261104223000, which
+-- supersedes Azure 20261104113705; both left untouched in history) is wrapped so that a wearable carrying a risk flag can never be finalized as auto-approved; it is routed to staff.
 begin;
 set local lock_timeout='5s';
 set local statement_timeout='30s';
@@ -12,10 +12,12 @@ do $$begin
 end $$;
 
 -- W-AZ-1 compatibility. Strict preconditions, all fail closed:
---  * the finalizer, if present, must be EXACTLY the reviewed Azure body (sha256 of pg_proc.prosrc pinned below), definer, empty search_path;
+--  * the finalizer, if present, must be EXACTLY the reviewed provider-switching body installed by 20261104223000 (sha256 of
+--    pg_proc.prosrc pinned below), definer, empty search_path. The older Azure-only body is NOT accepted: activation is sequenced
+--    after moderation switching and never silently wraps a pre-switching finalizer;
 --  * it must not already be wrapped. If no finalizer exists there is no moderation publication path to correct (the hosted release
 --    preflight requires Azure, so this branch cannot occur in Test or Production).
--- The Azure function is renamed, not edited; the wrapper keeps the original name/signature so every caller, the public
+-- The installed function is renamed, not edited; the wrapper keeps the original name/signature so every caller, the public
 -- wrapper and the Azure postflight resolve to it. Authority is the listing's own risk-flag rows only: never the caller's
 -- claims, Azure's outcome or any setting.
 do $$
@@ -31,9 +33,9 @@ begin
  end if;
  if pg_catalog.to_regprocedure(v_inner) is not null then raise exception 'WEARABLES_AZURE_FINALIZER_ALREADY_WRAPPED';end if;
  select * into p from pg_catalog.pg_proc where oid=v_oid;
- if pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc,'UTF8')),'hex')<>'fb49b713b5e37b784df6c43cad18ad63a036796d0463a2ad7350acf011ee30be'
+ if pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc,'UTF8')),'hex')<>'da759b51a920b6ff3048a2a1f53527fc1bb35373878c1f53ee904b505189556e'
   or not p.prosecdef or p.prokind<>'f' or p.prorettype<>'jsonb'::regtype or p.provolatile<>'v'
-  or not coalesce(p.proconfig @> array['search_path=""'],false) then raise exception 'WEARABLES_AZURE_BASELINE_DRIFT: installed finalizer is not the reviewed Azure 20261104113705 body';end if;
+  or not coalesce(p.proconfig @> array['search_path=""'],false) then raise exception 'WEARABLES_AZURE_BASELINE_DRIFT: installed finalizer is not the reviewed provider-switching 20261104223000 body';end if;
  if pg_catalog.to_regclass('public.listing_wearable_risk_flags_v1') is null or pg_catalog.to_regclass('app_security.listing_moderation_scan_receipts') is null then raise exception 'WEARABLES_AZURE_PREREQUISITE_MISSING';end if;
  alter function app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb) rename to impl_finalize_moderation_result_azure_v1;
  revoke all on function app_security.impl_finalize_moderation_result_azure_v1(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb) from public,anon,authenticated,service_role;

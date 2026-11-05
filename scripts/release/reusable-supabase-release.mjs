@@ -15,7 +15,7 @@ import {
 
 import {runTabletsV2Preflight, runTabletsV2Postflight, verifyTabletsV2Web} from './tablets-v2-release.mjs';
 import {readTabletsLedger, runTabletsPostflight, runTabletsPreflight, verifyTabletsLedger} from './tablets-v1-release.mjs';
-import {ADOPTED_STATUS, assertCliSupportsIncludeAll, assertLedgerTail, assertMobilePhonesProvenance, runWearablesPostflight, runWearablesPreflight} from './wearables-v1-release.mjs';
+import {ADOPTED_STATUS, assertCliSupportsIncludeAll, assertLedgerTail, assertMobilePhonesProvenance, assertSwitchingPrerequisite, runWearablesPostflight, runWearablesPreflight} from './wearables-v1-release.mjs';
 
 export const REFS = PROJECT_REFS;
 
@@ -589,6 +589,7 @@ export async function releaseReusable({
       if (wearables) {
         assertMobilePhonesProvenance(environment, ledgerBefore);
         outOfOrder = assertLedgerTail(candidate, ledgerBefore, environment);
+        assertSwitchingPrerequisite(candidate, ledgerBefore);
       }
       for (const version of candidate.requiredLedgerVersions) {
         const prerequisite = Object.values(CANDIDATES).find(entry => entry.version === version);
