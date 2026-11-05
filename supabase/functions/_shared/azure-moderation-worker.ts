@@ -147,7 +147,7 @@ export async function processClaimedModerationJob(
     }
 
     const arrayBuffer = await blobData.arrayBuffer();
-    const realSha256 = createHash("sha256").update(Buffer.from(arrayBuffer)).digest("hex");
+    const realSha256 = createHash("sha256").update(new Uint8Array(arrayBuffer)).digest("hex");
 
     const { data: signData, error: signError } = await supabase.storage
       .from("listing-originals")
