@@ -83,7 +83,34 @@ Every dispatch uses `approved_sha` = the reviewed `main` SHA and `expected_candi
 5. **Production activation**: `target=production test_activation_run_id=TA prod_foundation_run_id=PF test_e2e_run_id=E accessories_prod_foundation_run_id=AP web_staging_sha=… web_production_sha=<current READY Production Web commit containing the tested staging commit>`. Postflight verifies enabled and runs the read-only RPC checks.
 6. **Production Web flag**: remains OFF until its own release decision.
 
-Production is rejected without the Test E2E evidence even when every SQL receipt is valid.
+### Owner waiver for the selective Production release
+
+For this release only, the verified repository owner can set
+`test_e2e_run_id=OWNER_APPROVED_WEARABLES_V1_E2E_WAIVER` on each of steps 4
+and 5. The authenticated Test E2E is recorded as `WAIVED_BY_OWNER` with
+`testExecuted: false`. Keep the original Test foundation and activation
+receipts, Accessories Production foundation/adoption evidence, and the
+pinned Test Web deployment. All migration and SQL postflight gates apply.
+
+Deploy the exact selective Web patch from approved source
+`c0f2d7fcdb9614a5d762df46b8121ce596267594` over Production base
+`9d70e6bcdf7be9d2dc85efe67a6f061dfb7387d8`. Keep
+`POST_AD_WEARABLES_V1_ENABLED=false` in Vercel Production. Before step 5,
+pass the current READY Production deployment SHA on Web `main` as
+`web_production_sha`. The verifier checks its exact reviewed Git tree
+and ancestry from the pinned Production base. Enable the Production Web
+flag only after the Backend activation receipt verifies its SQL postflight.
+The ordinary numeric E2E run path still requires the tested staging ancestry
+and an independently verified E2E receipt.
+
+For rollback, turn the Web flag off and redeploy, then apply the reviewed
+`rollback/disable_wearables_v1.sql` as a guarded forward change. Verify the
+release and category are disabled. Preserve both migration ledger entries
+and retain listing, session, and catalogue data. If the moderation wrapper
+itself needs rollback, the reviewed `rollback/restore_azure_finalizer.sql`
+is eligible only after Wearables is disabled and no flagged wearable remains
+pending review. Verify the restored switching finalizer and moderator-only
+listing guard.
 
 ## W-AZ-1: flagged wearables and the Azure finalizer (fixed in the activation migration)
 The installed Azure finalizer (`20261104113705`, history untouched) could choose `auto_approved` for a wearable with risk flags; the Wearables guard (correctly) blocked the update, so finalization rolled back instead of routing to staff. The activation migration now, **before** the category is enabled and in the same transaction:

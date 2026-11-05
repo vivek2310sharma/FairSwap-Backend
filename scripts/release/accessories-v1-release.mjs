@@ -1,7 +1,7 @@
 // Accessories V1 release gates: ledger ordering, live preflight, strict read-only postflight, stage evidence.
 import {inflateRawSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
-import {PROJECT_REFS, getCandidate, planDispatch, verifyCandidateSha, webPin} from './reusable-candidates.mjs';
+import {PROJECT_REFS, getCandidate, planDispatch, WEARABLES_E2E_WAIVER, verifyCandidateSha, webPin} from './reusable-candidates.mjs';
 
 const BACKEND = 'vivek2310sharma/FairSwap-Backend';
 const WORKFLOW_ID = 404601811;
@@ -280,8 +280,9 @@ export function runAccessoriesPostflight(candidate, rawOutput, {exemptKeys = []}
 
 // Re-derives the offline plan inside the runner so it cannot be reached with weaker evidence than the workflow checked.
 export function assertStageInputs(candidate, environment, ctx) {
-  if (!candidate.strict) return null;
+  if (!candidate.strict && ctx.TEST_E2E_RUN_ID !== WEARABLES_E2E_WAIVER.input) return null;
   return planDispatch({
+    context: ctx,
     candidateId: candidate.id,
     target: environment === 'FairSwapProd' ? 'production' : 'test',
     inputs: {
@@ -343,9 +344,19 @@ export async function verifyWebDeployments(plan, c, fetcher = fetch) {
     if (!Array.isArray(live) || live[0]?.sha !== sha || live[0]?.environment !== pin.productionEnvironment) fail('WEB_PRODUCTION_NOT_CURRENT_DEPLOYMENT', sha);
     const d = await deploymentReady(pin, token, fetcher, sha, true);
     if (!d || d.id !== live[0].id) fail('WEB_PRODUCTION_DEPLOYMENT_NOT_READY', sha);
-    // The deployed Production commit must contain the tested staging commit and be an ancestor of (or equal to) Web main.
-    const tested = await getJson(`https://api.github.com/repos/${web}/compare/${plan.webStagingSha}...${sha}`, token, fetcher, 'WEB_DEPLOYMENT_LOOKUP_FAILED');
-    if (!['ahead', 'identical'].includes(tested.status)) fail('WEB_PRODUCTION_MISSING_TESTED_RELEASE', sha);
+    if (plan.e2eWaiver) {
+      // The selective port has no staging ancestry. Require the exact reviewed tree over the pinned Production base.
+      const {webBaseSha, webTreeSha} = WEARABLES_E2E_WAIVER;
+      const base = await getJson(`https://api.github.com/repos/${web}/compare/${webBaseSha}...${sha}`, token, fetcher, 'WEB_DEPLOYMENT_LOOKUP_FAILED');
+      const commit = await getJson(`https://api.github.com/repos/${web}/git/commits/${sha}`, token, fetcher, 'WEB_DEPLOYMENT_LOOKUP_FAILED');
+      if (base.status !== 'ahead' || base.merge_base_commit?.sha !== webBaseSha
+          || commit.sha !== sha || commit.tree?.sha !== webTreeSha) {
+        fail('WEB_PRODUCTION_SELECTIVE_RELEASE_NOT_VERIFIED', sha);
+      }
+    } else {
+      const tested = await getJson(`https://api.github.com/repos/${web}/compare/${plan.webStagingSha}...${sha}`, token, fetcher, 'WEB_DEPLOYMENT_LOOKUP_FAILED');
+      if (!['ahead', 'identical'].includes(tested.status)) fail('WEB_PRODUCTION_MISSING_TESTED_RELEASE', sha);
+    }
     const main = await getJson(`https://api.github.com/repos/${web}/compare/${sha}...main`, token, fetcher, 'WEB_DEPLOYMENT_LOOKUP_FAILED');
     if (!['ahead', 'identical'].includes(main.status)) fail('WEB_PRODUCTION_NOT_ON_MAIN', sha);
     result.productionDeploymentId = d.id;
