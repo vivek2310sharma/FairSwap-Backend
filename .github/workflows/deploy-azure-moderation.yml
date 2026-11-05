@@ -161,22 +161,23 @@ jobs:
           fi
 
           # Install pinned Supabase CLI without running package scripts
+          CLI_DIR="$(mktemp -d "${RUNNER_TEMP:?}/supabase-cli.XXXXXX")"
           curl -fsSL \
             --connect-timeout 10 --max-time 60 \
             --retry 5 --retry-delay 5 --retry-connrefused --retry-all-errors \
             --retry-max-time 180 \
             https://github.com/supabase/cli/releases/download/v2.117.0/supabase_linux_amd64.tar.gz \
-            -o supabase.tar.gz
-          tar -xzf supabase.tar.gz || exit 1
-          chmod +x supabase
-          cli_version="$(./supabase --version)" || exit 1
+            -o "$CLI_DIR/supabase.tar.gz"
+          tar -xzf "$CLI_DIR/supabase.tar.gz" -C "$CLI_DIR" || exit 1
+          chmod +x "$CLI_DIR/supabase"
+          cli_version="$("$CLI_DIR/supabase" --version)" || exit 1
           if [[ "$cli_version" != "2.117.0" ]]; then
             echo "::error::Expected Supabase CLI version 2.117.0"
             exit 1
           fi
 
           # Set Azure Moderation secrets (Controller endpoint and secret) in Edge runtime
-          ./supabase secrets set \
+          "$CLI_DIR/supabase" secrets set \
             AZURE_MODERATION_ENDPOINT="https://${CONTROLLER_FQDN}/v1/moderate" \
             AZURE_MODERATION_SECRET="$AZURE_MODERATION_SECRET" \
             --project-ref "$PROJECT_REF"
