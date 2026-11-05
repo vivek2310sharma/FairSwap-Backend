@@ -152,9 +152,9 @@ export const WEARABLES_WEB = Object.freeze({
   stagingSha: 'e37e28df1d387a02bcbea19487dfe0f82d198f74',
   productionBaselineSha: null,
   // Full SHA of the reviewed, deployed Web commit that contains the Wearables E2E runner. It must descend from
-  // stagingSha and differ from it only by runner files (see WEARABLES_E2E.runnerPaths). Null keeps Production blocked:
-  // it is set by a reviewed Backend commit once the Web runner is merged and deployed to staging. Never guess it.
-  e2eRunnerSha: null,
+  // stagingSha with exactly the reviewed runner, CI and Tablets V2 changes (see WEARABLES_E2E.runnerPaths).
+  // The pin alone does not satisfy the independent Test E2E evidence gate.
+  e2eRunnerSha: '30b6979d5ca568f2841ab0bae5ce991d2fa5d474',
   repository: ACCESSORIES_WEB.repository,
   productionEnvironment: ACCESSORIES_WEB.productionEnvironment
 });

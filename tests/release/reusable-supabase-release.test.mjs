@@ -1487,9 +1487,35 @@ test('cross-commit Accessories Production evidence accepts only a verified ances
 });
 
 // Independent Test E2E evidence. The runner lives in a LATER, reviewed and deployed Web commit than the tested staging commit.
-const RUNNER = '9a'.repeat(20);
+const RUNNER = '30b6979d5ca568f2841ab0bae5ce991d2fa5d474';
 const E2E_PIN = Object.freeze({...WEARABLES_WEB, e2eRunnerSha: RUNNER});
 const REPO_API = `https://api.github.com/repos/${WEARABLES_WEB.repository}`;
+// Exact git diff --name-status at the two reviewed Web commits.
+const REVIEWED_RUNNER_FILES = [
+  {filename: '.github/workflows/ci.yml', status: 'modified'},
+  {filename: '.github/workflows/wearables-e2e-test.yml', status: 'added'},
+  {filename: 'docs/operations/TABLETS_POST_AD_V2.md', status: 'added'},
+  {filename: 'e2e/wearables/cleanup.mjs', status: 'added'},
+  {filename: 'e2e/wearables/cleanup.selftest.mjs', status: 'added'},
+  {filename: 'e2e/wearables/contract.mjs', status: 'added'},
+  {filename: 'e2e/wearables/helpers.ts', status: 'added'},
+  {filename: 'e2e/wearables/playwright.config.ts', status: 'added'},
+  {filename: 'e2e/wearables/preflight.mjs', status: 'added'},
+  {filename: 'e2e/wearables/preflight.selftest.mjs', status: 'added'},
+  {filename: 'e2e/wearables/wearables-v1.journey.ts', status: 'added'},
+  {filename: 'e2e/wearables/write-evidence.mjs', status: 'added'},
+  {filename: 'src/app/api/post-ad/tablets/submit/route.ts', status: 'modified'},
+  {filename: 'src/components/listings/TabletForm.tsx', status: 'modified'},
+  {filename: 'src/components/listings/posting/SearchCombobox.tsx', status: 'modified'},
+  {filename: 'src/components/listings/posting/tablet-wizard.ts', status: 'modified'},
+  {filename: 'src/lib/listings/tablets/contract.ts', status: 'modified'},
+  {filename: 'src/lib/listings/tablets/public.ts', status: 'modified'},
+  {filename: 'tests/browser/tablets-v1.spec.ts', status: 'modified'},
+  {filename: 'tests/unit/tablet-public-details.test.tsx', status: 'modified'},
+  {filename: 'tests/unit/tablet-submit-boundary.test.ts', status: 'modified'},
+  {filename: 'tests/unit/tablets-v1.test.ts', status: 'modified'},
+  {filename: 'tools/tablets-v1/verify.mjs', status: 'modified'},
+];
 
 function e2eFetcher(o = {}) {
   const art = `${REPO_API}/actions/artifacts/7/zip`;
@@ -1504,11 +1530,12 @@ function e2eFetcher(o = {}) {
   const zip = makeZip({[WEARABLES_E2E.receiptName]: body, [WEARABLES_E2E.sumsName]: `${o.sums ?? createHash('sha256').update(body).digest('hex')}  ${WEARABLES_E2E.receiptName}\n`});
   const base = `${REPO_API}/actions/runs/60`;
   const ok = json => ({ok: true, status: 200, json: async () => json});
-  const files = o.files ?? [{filename: '.github/workflows/wearables-e2e-test.yml'}, {filename: 'e2e/wearables/journey.spec.ts'}];
+  const files = o.files ?? REVIEWED_RUNNER_FILES;
   const deployments = o.deployments ?? [{id: 5, sha: RUNNER, environment: 'Preview'}];
   return async u => {
     if (u === art) return {ok: true, status: 200, arrayBuffer: async () => zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.length)};
-    if (u === `${REPO_API}/compare/${WEARABLES_WEB.stagingSha}...${RUNNER}`) return ok({status: o.compare ?? 'ahead', files});
+    if (u === `${REPO_API}/compare/${WEARABLES_WEB.stagingSha}...${RUNNER}`) return ok({status: o.compare ?? 'ahead', base_commit: {sha: WEARABLES_WEB.stagingSha},
+      merge_base_commit: {sha: WEARABLES_WEB.stagingSha}, commits: [{sha: RUNNER}], files, ...(o.source ?? {})});
     if (u.includes('/deployments?sha=')) return ok(deployments.filter(d => u.includes(d.sha)));
     if (/deployments\/\d+\/statuses/.test(u)) return ok([{state: o.deployState ?? 'success'}]);
     if (u === base) return ok({path: WEARABLES_E2E.workflowPath, head_sha: RUNNER, status: 'completed', conclusion: 'success', ...(o.run ?? {})});
@@ -1547,27 +1574,54 @@ test('Production requires independent Test E2E evidence, not only a successful S
   await bad({receipt: {runId: '61'}}, /E2E_RECEIPT_INVALID.*run/);
 });
 
-test('E2E runner commit pin is unset by default, keeping Production blocked, and must be an isolated READY deployment', async () => {
+test('reviewed E2E runner pin requires the exact 23-file comparison and a READY deployment', async () => {
   const plan = wPlan(WF, 'production');
   const env = {WEB_EVIDENCE_TOKEN: 't', TEST_ACTIVATION_RUN_ID: '11'};
-  assert.equal(WEARABLES_WEB.e2eRunnerSha, null);
-  // the registry pin (used by the workflow) fails closed even with otherwise perfect evidence
-  await assert.rejects(verifyE2eEvidence(plan, env, e2eFetcher()), /E2E_RUNNER_PIN_UNSET/);
+  assert.equal(WEARABLES_WEB.e2eRunnerSha, RUNNER);
+  assert.equal(WEARABLES_WEB.stagingSha, 'e37e28df1d387a02bcbea19487dfe0f82d198f74');
+  assert.equal(WEARABLES_E2E.maxRunnerFiles, 23);
+  assert.deepEqual(WEARABLES_E2E.runnerPaths, REVIEWED_RUNNER_FILES.map(f => f.filename));
+  // Exercise the production registry lookup without the test seam.
+  assert.deepEqual(await verifyE2eEvidence(plan, env, e2eFetcher()), {
+    runId: '60', webStagingSha: WEARABLES_WEB.stagingSha, runnerSha: RUNNER
+  });
+  assert.deepEqual(await verifyE2eEvidence(plan, env, e2eFetcher({files: [...REVIEWED_RUNNER_FILES].reverse()})), {
+    runId: '60', webStagingSha: WEARABLES_WEB.stagingSha, runnerSha: RUNNER
+  });
+  await assert.rejects(verifyE2eEvidence(plan, env, e2eFetcher(), {...E2E_PIN, e2eRunnerSha: null}), /E2E_RUNNER_PIN_UNSET/);
   await assert.rejects(verifyE2eEvidence(plan, env, e2eFetcher(), {...E2E_PIN, e2eRunnerSha: 'main'}), /E2E_RUNNER_PIN_UNSET/);
   await assert.rejects(verifyE2eEvidence(plan, env, e2eFetcher(), {...E2E_PIN, e2eRunnerSha: WEARABLES_WEB.stagingSha}), /E2E_RUNNER_PIN_UNSET/);
   const bad = (o, re) => assert.rejects(verifyE2eEvidence(plan, env, e2eFetcher(o), E2E_PIN), re);
   // runner commit must descend from the tested commit
   for (const compare of ['diverged', 'behind', 'identical']) await bad({compare}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
-  // ...and add nothing but runner files: no application, SQL, dependency, workflow-other or traversal path
+  // Nothing outside the exact reviewed set, including new E2E files or similarly named CI paths.
   for (const filename of ['src/app/page.tsx', 'package.json', 'pnpm-lock.yaml', 'supabase/migrations/x.sql', '.github/workflows/other.yml',
-    '.github/workflows/wearables-e2e-test.yml.bak', 'e2e/other/x.ts', 'e2e/wearables/../../src/x.ts', 'next.config.ts']) {
-    await bad({files: [{filename: 'e2e/wearables/ok.ts'}, {filename}]}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
+    '.github/workflows/wearables-e2e-test.yml.bak', '.github/workflows/ci.yml.bak', 'e2e/wearables/unreviewed.ts', 'e2e/other/x.ts', 'e2e/wearables/../../src/x.ts', 'next.config.ts']) {
+    await bad({files: [...REVIEWED_RUNNER_FILES.slice(1), {filename, status: 'modified'}]}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
   }
-  await bad({files: [{filename: 'e2e/wearables/ok.ts', previous_filename: 'src/old.ts'}]}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
+  // Removed, renamed, copied, missing, duplicated and malformed entries all fail closed.
+  for (const status of ['removed', 'renamed', 'copied', 'changed', undefined]) {
+    await bad({files: [{...REVIEWED_RUNNER_FILES[0], status}, ...REVIEWED_RUNNER_FILES.slice(1)]}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
+  }
+  for (const previous_filename of ['src/old.ts', REVIEWED_RUNNER_FILES[1].filename]) {
+    await bad({files: [{...REVIEWED_RUNNER_FILES[0], previous_filename}, ...REVIEWED_RUNNER_FILES.slice(1)]}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
+  }
+  // Each reviewed path is mandatory; even a valid 22-path subset is rejected.
+  for (let i = 0; i < REVIEWED_RUNNER_FILES.length; i++) {
+    await bad({files: REVIEWED_RUNNER_FILES.filter((_, j) => i !== j)}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
+  }
+  await bad({files: [REVIEWED_RUNNER_FILES[1], ...REVIEWED_RUNNER_FILES.slice(1)]}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
+  await bad({files: [null, ...REVIEWED_RUNNER_FILES.slice(1)]}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
+  for (const source of [
+    {base_commit: {sha: 'f'.repeat(40)}}, {merge_base_commit: {sha: 'f'.repeat(40)}},
+    {commits: [{sha: WEARABLES_WEB.stagingSha}]}, {base_commit: null}, {merge_base_commit: null}, {commits: []}, {commits: null}
+  ]) await bad({source}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
   await bad({files: []}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
+  await bad({files: [...REVIEWED_RUNNER_FILES, {filename: 'e2e/wearables/extra.ts', status: 'added'}]}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
   await bad({files: Array.from({length: 101}, (_, i) => ({filename: `e2e/wearables/f${i}.ts`}))}, /E2E_RUNNER_COMMIT_NOT_ISOLATED/);
   // the deployed runner commit must be READY, in a non-Production environment
   await bad({deployments: []}, /E2E_RUNNER_DEPLOYMENT_NOT_READY/);
+  await bad({deployments: [{id: 5, sha: WEARABLES_WEB.stagingSha, environment: 'Preview'}]}, /E2E_RUNNER_DEPLOYMENT_NOT_READY/);
   await bad({deployState: 'failure'}, /E2E_RUNNER_DEPLOYMENT_NOT_READY/);
   await bad({deployments: [{id: 5, sha: RUNNER, environment: 'Production'}]}, /E2E_RUNNER_DEPLOYMENT_NOT_READY/);
 });
@@ -1580,8 +1634,8 @@ test('moderation-switching-v1 without E2E evidence returns null, while actual We
   const env = {WEB_EVIDENCE_TOKEN: 't', TEST_ACTIVATION_RUN_ID: '11'};
   // Strict validation still active: missing token throws fail-closed error
   await assert.rejects(verifyE2eEvidence(wearablesPlan, {}, e2eFetcher(), E2E_PIN), /E2E_EVIDENCE_UNAVAILABLE/);
-  // Default pin lookup without test seam fails closed because runner pin is unset in registry
-  await assert.rejects(verifyE2eEvidence(wearablesPlan, env, e2eFetcher()), /E2E_RUNNER_PIN_UNSET/);
+  // The reviewed registry pin still rejects invalid evidence without a test seam.
+  await assert.rejects(verifyE2eEvidence(wearablesPlan, env, e2eFetcher({receipt: {runnerSha: 'f'.repeat(40)}})), /E2E_RECEIPT_INVALID.*web/);
   // Valid evidence with seam passes
   assert.deepEqual(await verifyE2eEvidence(wearablesPlan, env, e2eFetcher(), E2E_PIN), {
     runId: '60',

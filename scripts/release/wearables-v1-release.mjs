@@ -393,9 +393,34 @@ export async function requirePriorCommitEvidence(plan, c, fetcher = fetch) {
 export const WEARABLES_E2E = Object.freeze({
   workflowPath: '.github/workflows/wearables-e2e-test.yml',
   artifactPrefix: 'wearables-e2e-test-',
-  // The runner commit may differ from the tested staging commit ONLY in these files (no application, SQL or dependency change).
-  runnerPaths: Object.freeze([/^\.github\/workflows\/wearables-e2e-test\.yml$/, /^e2e\/wearables\/[A-Za-z0-9._/-]+$/]),
-  maxRunnerFiles: 100,
+  // Exact reviewed staging-to-runner delta, including the CI correction and Tablets V2 changes.
+  // No directory patterns: every path must be present exactly once and only added or modified.
+  runnerPaths: Object.freeze([
+    '.github/workflows/ci.yml',
+    '.github/workflows/wearables-e2e-test.yml',
+    'docs/operations/TABLETS_POST_AD_V2.md',
+    'e2e/wearables/cleanup.mjs',
+    'e2e/wearables/cleanup.selftest.mjs',
+    'e2e/wearables/contract.mjs',
+    'e2e/wearables/helpers.ts',
+    'e2e/wearables/playwright.config.ts',
+    'e2e/wearables/preflight.mjs',
+    'e2e/wearables/preflight.selftest.mjs',
+    'e2e/wearables/wearables-v1.journey.ts',
+    'e2e/wearables/write-evidence.mjs',
+    'src/app/api/post-ad/tablets/submit/route.ts',
+    'src/components/listings/TabletForm.tsx',
+    'src/components/listings/posting/SearchCombobox.tsx',
+    'src/components/listings/posting/tablet-wizard.ts',
+    'src/lib/listings/tablets/contract.ts',
+    'src/lib/listings/tablets/public.ts',
+    'tests/browser/tablets-v1.spec.ts',
+    'tests/unit/tablet-public-details.test.tsx',
+    'tests/unit/tablet-submit-boundary.test.ts',
+    'tests/unit/tablets-v1.test.ts',
+    'tools/tablets-v1/verify.mjs',
+  ]),
+  maxRunnerFiles: 23,
   receiptName: 'wearables-v1-e2e-test.json',
   sumsName: 'SHA256SUMS_e2e',
   schema: 'wearables-v1-e2e/1',
@@ -442,13 +467,17 @@ export async function verifyE2eEvidence(plan, c, fetcher = fetch, pin) {
   // The runner commit pin is reviewed Backend source. Unset means no E2E evidence can exist yet: Production stays blocked.
   if (!SHA40.test(pin.e2eRunnerSha ?? '') || pin.e2eRunnerSha === pin.stagingSha) fail('E2E_RUNNER_PIN_UNSET');
   const repo = pin.repository;
-  // Source provenance: the runner commit must contain the tested staging commit and add nothing but runner files.
+  // Source provenance: exact compared commits, staging ancestry and the complete reviewed path set.
   const diff = await getJson(`https://api.github.com/repos/${repo}/compare/${pin.stagingSha}...${pin.e2eRunnerSha}`, token, fetcher, 'E2E_EVIDENCE_LOOKUP_FAILED');
   const files = Array.isArray(diff.files) ? diff.files : null;
-  const allowed = name => typeof name === 'string' && !name.split('/').some(part => part === '' || part === '.' || part === '..')
-    && WEARABLES_E2E.runnerPaths.some(re => re.test(name));
-  if (diff.status !== 'ahead' || !files || files.length === 0 || files.length > WEARABLES_E2E.maxRunnerFiles
-    || files.some(f => !allowed(f.filename) || (f.previous_filename !== undefined && !allowed(f.previous_filename)))) {
+  const allowed = new Set(WEARABLES_E2E.runnerPaths);
+  if (diff.status !== 'ahead' || diff.base_commit?.sha !== pin.stagingSha
+    || diff.merge_base_commit?.sha !== pin.stagingSha || !Array.isArray(diff.commits)
+    || diff.commits.at(-1)?.sha !== pin.e2eRunnerSha
+    || !files || files.length !== allowed.size || files.length > WEARABLES_E2E.maxRunnerFiles
+    || new Set(files.map(f => f?.filename)).size !== allowed.size
+    || files.some(f => !f || !allowed.has(f.filename) || !['added', 'modified'].includes(f.status)
+      || f.previous_filename !== undefined)) {
     fail('E2E_RUNNER_COMMIT_NOT_ISOLATED', pin.e2eRunnerSha);
   }
   // The runner commit must itself be a READY, non-Production Web deployment (the code the E2E actually exercised).
