@@ -12,6 +12,7 @@ on:
           - moderation-analytics-v1
           - moderation-azure-v1
           - moderation-switching-v1
+          - mobile-catalogue-india-v1
           - accessories-v1-foundation
           - accessories-v1-activation
           - tablets-v1-foundation
@@ -28,7 +29,7 @@ on:
         required: true
         type: string
       target:
-        description: 'Stage: test (moderation also auto-promotes), production (strict candidates, after Test evidence), or adopt (read-only attestation of an existing registered Production installation)'
+        description: 'Stage: test (moderation and mobile catalogue auto-promote), production (strict candidates, after Test evidence), or adopt (read-only attestation of an existing registered Production installation)'
         required: true
         default: 'test'
         type: choice
@@ -311,6 +312,8 @@ jobs:
 
   verify_test:
     needs: [verify, test]
+    outputs:
+      mobile_catalogue_ledger_sha: ${{ steps.mobile_catalogue_proof.outputs.ledger_sha }}
     if: ${{ needs.test.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -339,14 +342,27 @@ jobs:
           sha256sum --check SHA256SUMS_fairswaptest
           printf '%s  %s-fairswaptest.json\n' "$EXPECTED_SHA" "$CANDIDATE" | sha256sum --check --status
 
+      - name: Verify Mobile Catalogue Test postflight receipt
+        id: mobile_catalogue_proof
+        if: ${{ inputs.candidate == 'mobile-catalogue-india-v1' }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {appendFileSync, readFileSync} from 'node:fs';
+          import {verifyMobileCatalogueTestReceipt} from './scripts/release/reusable-supabase-release.mjs';
+          const receipt = JSON.parse(readFileSync('test-evidence/mobile-catalogue-india-v1-fairswaptest.json', 'utf8'));
+          const digest = verifyMobileCatalogueTestReceipt(receipt, process.env);
+          appendFileSync(process.env.GITHUB_OUTPUT, `ledger_sha=${digest}\n`);
+          NODE
+
   production:
-    # Moderation: automatic after verified Test (unchanged). Accessories and Tablets: only a dedicated target=production
+    # Moderation and Mobile Catalogue: automatic after verified Test. Accessories and Tablets: only a dedicated target=production
     # dispatch, whose Web and earlier-stage Test/Production evidence was already enforced by the verify job.
     needs: [verify, test, verify_test]
     if: >-
       ${{ always() && needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
-      ((inputs.target == 'test' && needs.verify.outputs.auto_promote == 'true' && needs.test.result == 'success' && needs.verify_test.result == 'success') ||
-      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped') ||
+      ((inputs.target == 'test' && needs.verify.outputs.auto_promote == 'true' && needs.test.result == 'success' && needs.verify_test.result == 'success' &&
+      (inputs.candidate != 'mobile-catalogue-india-v1' || needs.verify_test.outputs.mobile_catalogue_ledger_sha != '')) ||
+      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1') ||
       (inputs.target == 'adopt' && inputs.candidate == 'accessories-v1-foundation' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped')) }}
     environment: FairSwapProd
     runs-on: ubuntu-24.04
@@ -409,6 +425,7 @@ jobs:
       - name: Execute Production release and automated read-only verification
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          MOBILE_CATALOGUE_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.mobile_catalogue_ledger_sha }}
           WEB_EVIDENCE_TOKEN: ${{ inputs.candidate == 'tablets-v2-catalogue' && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
           ACCESSORIES_RECHECK_PROD_FOUNDATION: ${{ needs.verify.outputs.accessories_recheck_prod_foundation }}
           ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}

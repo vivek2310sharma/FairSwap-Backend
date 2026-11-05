@@ -3,7 +3,18 @@ import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 
+export const MOBILE_CATALOGUE_CANDIDATE = 'mobile-catalogue-india-v1';
+
 export const CANDIDATES = Object.freeze({
+  [MOBILE_CATALOGUE_CANDIDATE]: Object.freeze({
+    id: MOBILE_CATALOGUE_CANDIDATE,
+    version: '20261105213015',
+    filename: '20261105213015_posting_v2_mobile_catalogue_india.sql',
+    path: 'supabase/forward-migrations/posting-v2/supabase/migrations/20261105213015_posting_v2_mobile_catalogue_india.sql',
+    sha256: '4bb663e766876f34136620651308c41293cce1e9411c7247bd87801a7cd9f360',
+    description: 'Posting V2 India Mobile Catalogue V1',
+    autoPromote: true
+  }),
   'moderation-analytics-v1': Object.freeze({
     id: 'moderation-analytics-v1',
     version: '20261102000000',

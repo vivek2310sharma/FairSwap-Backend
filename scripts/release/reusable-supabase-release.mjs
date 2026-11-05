@@ -8,7 +8,7 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
-import {CANDIDATES, adoptionAttestation, getAdoption, getCandidate, planDispatch, verifyCandidateSha, PROJECT_REFS} from './reusable-candidates.mjs';
+import {CANDIDATES, adoptionAttestation, getAdoption, getCandidate, planDispatch, verifyCandidateSha, PROJECT_REFS, MOBILE_CATALOGUE_CANDIDATE} from './reusable-candidates.mjs';
 import {
   assertLedgerOrdering, assertStageInputs, requireStageEvidence, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved, verifyAccessoriesLedger
 } from './accessories-v1-release.mjs';
@@ -130,6 +130,125 @@ export function verifyLedgerVersion(ledgerOutput, expectedVersion) {
   if (candidateMatches > 1) {
     throw new Error(`REUSABLE_RELEASE_LEDGER_DUPLICATE_ROW: found ${candidateMatches} rows for ${expectedVersion}`);
   }
+}
+
+const MOBILE_CATALOGUE_COUNTS = {before: [21, 100], after: [27, 1473]};
+const SHA256 = /^[a-f0-9]{64}$/;
+const MOBILE_CATALOGUE_SCOPE = 'mobile-catalogue-v1-integrity';
+
+export function verifyMobileCatalogueTestReceipt(receipt, context) {
+  const candidate = getCandidate(MOBILE_CATALOGUE_CANDIDATE);
+  if (!/^[a-f0-9]{40}$/.test(context.GITHUB_SHA ?? '') ||
+      !/^[1-9]\d*$/.test(context.GITHUB_RUN_ID ?? '') ||
+      !/^[1-9]\d*$/.test(context.GITHUB_RUN_ATTEMPT ?? '') ||
+      receipt?.environment !== 'FairSwapTest' || receipt.projectRef !== REFS.FairSwapTest ||
+      receipt.candidateId !== candidate.id || receipt.migrationVersion !== candidate.version ||
+      receipt.migrationFile !== candidate.filename || receipt.migrationSha256 !== candidate.sha256 ||
+      receipt.reviewedCommit !== context.GITHUB_SHA || receipt.releaseWorkflowRun !== context.GITHUB_RUN_ID ||
+      receipt.releaseWorkflowAttempt !== context.GITHUB_RUN_ATTEMPT ||
+      receipt.status !== 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED' || receipt.postflightVerified !== true ||
+      receipt.postflightScope !== MOBILE_CATALOGUE_SCOPE ||
+      !Array.isArray(receipt.dryRunPending) || receipt.dryRunPending.length !== 1 ||
+      receipt.dryRunPending[0] !== candidate.filename || !SHA256.test(receipt.ledgerStatementsSha256 ?? '')) {
+    throw new Error('REUSABLE_RELEASE_MOBILE_CATALOGUE_TEST_RECEIPT_INVALID');
+  }
+  return receipt.ledgerStatementsSha256;
+}
+
+// Keep fingerprints in process memory. Release receipts and errors contain no listing identities or row contents.
+export function readMobileCatalogueSnapshot(exec, stage) {
+  const output = exec(`-- mobile-catalogue-integrity
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SET LOCAL statement_timeout = '15s';
+SET LOCAL TIME ZONE 'UTC';
+WITH protected_tables AS (
+  SELECT oid, relname, relowner, relacl, relrowsecurity, relforcerowsecurity
+  FROM pg_catalog.pg_class
+  WHERE oid IN ('public.phone_brands'::regclass, 'public.phone_models'::regclass, 'public.listing_mobile_contexts'::regclass)
+), protected_functions AS (
+  SELECT oid, proname, proowner, proacl, pg_get_functiondef(oid) AS definition
+  FROM pg_catalog.pg_proc
+  WHERE oid IN ('public.posting_v2_catalogue()'::regprocedure,
+                'public.submit_mobile_v2(jsonb)'::regprocedure,
+                'public.admin_phone_catalogue(text,jsonb)'::regprocedure)
+)
+SELECT jsonb_build_object(
+  'brands', (SELECT coalesce(jsonb_agg(encode(sha256(convert_to(to_jsonb(b)::text, 'UTF8')), 'hex')), '[]')
+    FROM public.phone_brands b),
+  'models', (SELECT coalesce(jsonb_agg(encode(sha256(convert_to(to_jsonb(m)::text, 'UTF8')), 'hex')), '[]')
+    FROM public.phone_models m),
+  'listingReferences', (SELECT coalesce(jsonb_agg(encode(sha256(convert_to(
+    jsonb_build_array(c.listing_id, c.brand_id, c.model_id)::text, 'UTF8')), 'hex')), '[]')
+    FROM public.listing_mobile_contexts c),
+  'fallbacks', NOT EXISTS (
+    SELECT 1 FROM public.phone_brands b LEFT JOIN public.phone_models m ON m.brand_id = b.id AND m.other
+    GROUP BY b.id HAVING count(m.id) <> 1 OR (b.enabled AND NOT coalesce(bool_or(m.enabled), false))),
+  'referencesValid', NOT EXISTS (
+    SELECT 1 FROM public.listing_mobile_contexts c
+    LEFT JOIN public.phone_models m ON (m.id, m.brand_id) = (c.model_id, c.brand_id)
+    LEFT JOIN public.listings l ON l.id = c.listing_id
+    WHERE m.id IS NULL OR l.id IS NULL),
+  'visibleBrands', (SELECT count(*) FROM public.phone_brands WHERE enabled),
+  'visibleModels', (SELECT count(*) FROM public.phone_models m
+    JOIN public.phone_brands b ON b.id = m.brand_id WHERE m.enabled AND b.enabled),
+  'sellerPermissions', (
+    (SELECT count(*) = 3 AND bool_and(relrowsecurity AND relforcerowsecurity) FROM protected_tables)
+    AND NOT EXISTS (
+      SELECT 1 FROM protected_tables t CROSS JOIN (VALUES ('anon'), ('authenticated')) AS roles(role)
+      WHERE has_table_privilege(role::name, t.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER')
+        OR has_any_column_privilege(role::name, t.oid, 'INSERT,UPDATE'))
+    AND NOT has_any_column_privilege('anon', 'public.phone_brands', 'SELECT')
+    AND NOT has_any_column_privilege('anon', 'public.phone_models', 'SELECT')
+    AND has_function_privilege('authenticated', 'public.submit_mobile_v2(jsonb)', 'EXECUTE')
+    AND NOT has_function_privilege('anon', 'public.submit_mobile_v2(jsonb)', 'EXECUTE')
+    AND NOT has_function_privilege('anon', 'public.posting_v2_catalogue()', 'EXECUTE')),
+  'security', encode(sha256(convert_to(jsonb_build_object(
+    'tables', (SELECT jsonb_agg(to_jsonb(t) ORDER BY relname) FROM protected_tables t),
+    'columns', (SELECT jsonb_agg(jsonb_build_array(attrelid, attnum, attacl) ORDER BY attrelid, attnum)
+      FROM pg_catalog.pg_attribute WHERE attrelid IN (SELECT oid FROM protected_tables) AND attnum > 0),
+    'policies', (SELECT jsonb_agg(to_jsonb(p) ORDER BY tablename, policyname) FROM pg_catalog.pg_policies p
+      WHERE schemaname = 'public' AND tablename IN (SELECT relname FROM protected_tables)),
+    'functions', (SELECT jsonb_agg(to_jsonb(f) ORDER BY proname) FROM protected_functions f)
+  )::text, 'UTF8')), 'hex')
+);
+SET LOCAL ROLE authenticated;
+SELECT jsonb_build_object('enabled', catalogue->'enabled', 'version', catalogue->'version',
+  'selection', catalogue->'selection', 'brands', jsonb_array_length(catalogue->'brands'),
+  'models', jsonb_array_length(catalogue->'models'))
+FROM (SELECT public.posting_v2_catalogue() AS catalogue) seller;
+COMMIT;`);
+  try {
+    const lines = output.trim().split('\n');
+    if (lines.length !== 2) throw new Error();
+    const [snapshot, seller] = lines.map(line => JSON.parse(line));
+    const [brands, models] = MOBILE_CATALOGUE_COUNTS[stage];
+    const fingerprintSet = rows => Array.isArray(rows) && rows.every(row => SHA256.test(row)) &&
+      new Set(rows).size === rows.length;
+    if (!fingerprintSet(snapshot.brands) || snapshot.brands.length !== brands ||
+        !fingerprintSet(snapshot.models) || snapshot.models.length !== models ||
+        !fingerprintSet(snapshot.listingReferences) || !SHA256.test(snapshot.security) ||
+        snapshot.fallbacks !== true || snapshot.referencesValid !== true || snapshot.sellerPermissions !== true ||
+        seller.enabled !== true || seller.version !== 2 ||
+        seller.selection?.category !== 'mobiles' || seller.selection?.subcategory !== 'mobile-phones' ||
+        seller.selection?.version !== 2 || seller.brands !== snapshot.visibleBrands ||
+        seller.models !== snapshot.visibleModels) throw new Error();
+    return snapshot;
+  } catch {
+    throw new Error(`REUSABLE_RELEASE_MOBILE_CATALOGUE_${stage.toUpperCase()}_INVALID`);
+  }
+}
+
+export function verifyMobileCataloguePostflight(before, exec) {
+  if (!before) throw new Error('REUSABLE_RELEASE_MOBILE_CATALOGUE_BASELINE_REQUIRED');
+  const after = readMobileCatalogueSnapshot(exec, 'after');
+  for (const key of ['brands', 'models', 'listingReferences']) {
+    const retained = new Set(after[key]);
+    if (!before[key].every(fingerprint => retained.has(fingerprint))) {
+      throw new Error(`REUSABLE_RELEASE_MOBILE_CATALOGUE_EXISTING_ROWS_CHANGED: ${key}`);
+    }
+  }
+  if (before.security !== after.security) throw new Error('REUSABLE_RELEASE_MOBILE_CATALOGUE_PERMISSIONS_CHANGED');
+  return {verified: true};
 }
 
 export async function verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore) {
@@ -406,6 +525,10 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
     }
     return check;
   }
+  if (candidate.id === MOBILE_CATALOGUE_CANDIDATE) {
+    return verifyMobileCataloguePostflight(catalogueBefore,
+      sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+  }
   if (candidate.id === 'tablets-v2-catalogue') {
     return runTabletsV2Postflight(catalogueBefore,
       sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
@@ -446,6 +569,12 @@ export async function releaseReusable({
   }
   const candidate = getCandidate(candidateId);
   const projectRef = REFS[environment];
+  const mobileCatalogue = candidateId === MOBILE_CATALOGUE_CANDIDATE;
+  const mobileTestLedger = context.MOBILE_CATALOGUE_TEST_LEDGER_SHA;
+  if (mobileCatalogue && environment === 'FairSwapProd' &&
+      (context.TARGET !== 'test' || !SHA256.test(mobileTestLedger ?? ''))) {
+    throw new Error('REUSABLE_RELEASE_MOBILE_CATALOGUE_TEST_EVIDENCE_REQUIRED');
+  }
   // Accessories evidence (Web SHAs, earlier stages) is re-derived here; no-op for non-strict candidates.
   const stagePlan = assertStageInputs(candidate, environment, context);
 
@@ -558,17 +687,17 @@ export async function releaseReusable({
     const catalogue = candidate.id === 'tablets-v2-catalogue';
     const tablets = catalogue || candidate.id.startsWith('tablets-v1-');
     const wearables = candidate.id.startsWith('wearables-v1-');
-    // Tablets and Wearables pin the ledger: history is read before apply, must not change, and the installed
+    // Tablets, Wearables and Mobile Catalogue pin the ledger: history is read before apply, must not change, and the installed
     // statements hash is carried Test -> Production through the receipts.
-    const pinned = tablets || wearables;
-    const label = wearables ? 'WEARABLES' : 'TABLETS';
+    const pinned = tablets || wearables || mobileCatalogue;
+    const label = mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
     const foundationVersion = wearables ? '20261104120000' : '20261102165946';
     const readLedger = () => readTabletsLedger(sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
     let catalogueBefore;
     let ledgerBefore;
     let ledgerStatementsSha256;
     let outOfOrder = {includeAll: false, ahead: []};
-    if (candidate.strict) {
+    if (candidate.strict || mobileCatalogue) {
       // Prerequisites, ordering and partial state fail closed; resumption of a verified release is allowed in both environments.
       const ordering = assertLedgerOrdering(candidate, initialLedger);
       isAlreadyApplied = ordering.state === 'applied';
@@ -586,12 +715,12 @@ export async function releaseReusable({
       // A pre-existing entry has no trusted receipt tying it to the reviewed source bytes.
       if (isAlreadyApplied) throw new Error(`REUSABLE_RELEASE_${label}_ALREADY_RECORDED`);
       ledgerBefore = readLedger();
+      if (wearables || mobileCatalogue) assertMobilePhonesProvenance(environment, ledgerBefore);
       if (wearables) {
-        assertMobilePhonesProvenance(environment, ledgerBefore);
         outOfOrder = assertLedgerTail(candidate, ledgerBefore, environment);
         assertSwitchingPrerequisite(candidate, ledgerBefore);
       }
-      for (const version of candidate.requiredLedgerVersions) {
+      for (const version of candidate.requiredLedgerVersions ?? []) {
         const prerequisite = Object.values(CANDIDATES).find(entry => entry.version === version);
         const row = ledgerBefore.find(entry => entry.version === version);
         if (!row?.hasStatements || row.name !== prerequisite.filename.slice(15, -4)) {
@@ -613,7 +742,7 @@ export async function releaseReusable({
           ledgerBefore.find(row => row.version === foundationVersion)?.statementsSha256 !== context.TABLETS_FOUNDATION_LEDGER_SHA) {
         throw new Error(`REUSABLE_RELEASE_${label}_FOUNDATION_EVIDENCE_MISMATCH`);
       }
-      if (environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
+      if (!mobileCatalogue && environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
         throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_EVIDENCE_REQUIRED`);
       }
       if (ledgerBefore.length !== beforeRemote.size || ledgerBefore.some(row =>
@@ -647,6 +776,10 @@ export async function releaseReusable({
       dryRunPending = [];
     } else {
       // Standard path: candidate-only dry run, migration apply, ledger verification and postflight
+      if (mobileCatalogue) {
+        phase = 'preflight';
+        catalogueBefore = readMobileCatalogueSnapshot(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'), 'before');
+      }
       if (candidate.strict) {
         phase = 'preflight';
         if (catalogue) catalogueBefore = runTabletsV2Preflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
@@ -682,10 +815,11 @@ export async function releaseReusable({
       phase = 'ledger';
       const ledgerOutput = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
       verifyLedgerVersion(ledgerOutput, candidate.version);
-      if (candidate.strict) verifyHistoryPreserved(beforeRemote, ledgerOutput, candidate.version);
+      if (candidate.strict || mobileCatalogue) verifyHistoryPreserved(beforeRemote, ledgerOutput, candidate.version);
       if (pinned) {
         ledgerStatementsSha256 = verifyTabletsLedger(ledgerBefore, readLedger(), candidate);
-        if (environment === 'FairSwapProd' && ledgerStatementsSha256 !== context.TABLETS_CANDIDATE_LEDGER_SHA) {
+        const testLedger = mobileCatalogue ? mobileTestLedger : context.TABLETS_CANDIDATE_LEDGER_SHA;
+        if (environment === 'FairSwapProd' && ledgerStatementsSha256 !== testLedger) {
           throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_MISMATCH`);
         }
       }
@@ -715,6 +849,11 @@ export async function releaseReusable({
       postflightVerified: true,
       ...(pinned ? {ledgerStatementsSha256} : {}),
       ...(catalogue ? {webStagingEvidence: catalogueWebEvidence ?? null} : {}),
+      ...(mobileCatalogue ? {
+        postflightScope: MOBILE_CATALOGUE_SCOPE,
+        releaseWorkflowAttempt: context.GITHUB_RUN_ATTEMPT,
+        ...(environment === 'FairSwapProd' ? {testLedgerStatementsSha256: mobileTestLedger} : {})
+      } : {}),
       ...(recovering ? {recoveredFoundationCommit: recoveredCommit} : {}),
       ...(outOfOrder.includeAll ? {outOfOrderInstall: {includeAll: true, aheadVersions: outOfOrder.ahead}} : {}),
       ...(wearables ? {
