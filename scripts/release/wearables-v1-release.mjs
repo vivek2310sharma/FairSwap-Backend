@@ -44,28 +44,45 @@ export function assertMobilePhonesProvenance(environment, ledgerRows) {
 }
 
 // The CLI refuses to insert a migration older than the remote tail; fail closed with a clear code instead.
-// One reviewed exception: the Wearables foundation (installed in Test before Tablets V2, version unchanged) is installed
-// out of order in Production, and only while the sole newer ledger row is the approved Tablets V2 migration with its exact
-// name and CLI statement digest (SHA-256 of the source split with the pinned CLI's SplitAndTrim, as for the Accessories pins).
-// Any other newer row, a missing/renamed/altered Tablets V2 row, or any other candidate or environment stays refused.
+// One reviewed exception: the Wearables foundation (installed in Test before Tablets V2 and moderation switching, version
+// unchanged) is installed out of order in Production, and only while the newer ledger rows are EXACTLY the two approved
+// migrations, in this order, each with its exact name, statement count and CLI statement digest (SHA-256 of the stored
+// statements JSON, as for the Accessories pins). Any additional, missing, renamed or altered row, or any other candidate or
+// environment, stays refused.
+export const TABLETS_V2_LEDGER = Object.freeze({candidateId: 'tablets-v2-catalogue', statementCount: 15,
+  statementsSha256: '5a4e5e07d4469d41bbf423ac9bf552917c8d71ff93efbe3eb61c0e19a6001525'});
+export const MODERATION_SWITCHING_LEDGER = Object.freeze({candidateId: 'moderation-switching-v1', statementCount: 9,
+  statementsSha256: '13b79d292798b3052f27cd57178e9c636023372572d1f6635b54459320a9e32f'});
 export const WEARABLES_OUT_OF_ORDER = Object.freeze({
   candidateId: 'wearables-v1-foundation',
   environment: 'FairSwapProd',
-  ahead: Object.freeze({candidateId: 'tablets-v2-catalogue', statementCount: 15,
-    statementsSha256: '5a4e5e07d4469d41bbf423ac9bf552917c8d71ff93efbe3eb61c0e19a6001525'})
+  ahead: Object.freeze([TABLETS_V2_LEDGER, MODERATION_SWITCHING_LEDGER])
 });
+
+const matchesPin = (row, pin) => {
+  const c = getCandidate(pin.candidateId);
+  return row?.version === c.version && row.name === c.filename.slice(15, -4) && row.hasStatements === true
+    && row.statementCount === pin.statementCount && row.statementsSha256 === pin.statementsSha256;
+};
+
+// Wearables activation wraps the provider-switching finalizer, so that migration must be installed exactly as reviewed
+// (version, name, statement count and hosted digest) in every environment. Missing or altered history fails before any apply.
+export function assertSwitchingPrerequisite(candidate, ledgerRows) {
+  if (candidate.stage !== 'activation') return;
+  const c = getCandidate(MODERATION_SWITCHING_LEDGER.candidateId);
+  if (!matchesPin(ledgerRows.find(row => row.version === c.version), MODERATION_SWITCHING_LEDGER)) {
+    fail('WEARABLES_SWITCHING_PREREQUISITE_MISMATCH', c.version);
+  }
+}
 
 // Returns {includeAll}; true only for the approved out-of-order case, which must then use `supabase db push --include-all`.
 export function assertLedgerTail(candidate, ledgerRows, environment) {
   const ahead = ledgerRows.filter(row => row.version >= candidate.version);
   if (!ahead.length) return {includeAll: false, ahead: []};
   const rule = WEARABLES_OUT_OF_ORDER;
-  const tablets = getCandidate(rule.ahead.candidateId);
-  const [row] = ahead;
-  if (candidate.id === rule.candidateId && environment === rule.environment && ahead.length === 1
-      && row.version === tablets.version && row.name === tablets.filename.slice(15, -4)
-      && row.hasStatements === true && row.statementsSha256 === rule.ahead.statementsSha256) {
-    return {includeAll: true, ahead: [row.version]};
+  if (candidate.id === rule.candidateId && environment === rule.environment && ahead.length === rule.ahead.length
+      && rule.ahead.every((pin, i) => matchesPin(ahead[i], pin))) {
+    return {includeAll: true, ahead: ahead.map(row => row.version)};
   }
   fail('WEARABLES_LEDGER_TAIL_AHEAD', ahead.map(r => r.version).join(','));
 }
@@ -95,9 +112,11 @@ const FINALIZER = 'app_security.impl_finalize_moderation_result(uuid,uuid,text,t
 const FINALIZER_AZURE = 'app_security.impl_finalize_moderation_result_azure_v1(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)';
 export const AZURE_FINALIZER_BODY_SHA256 = 'fb49b713b5e37b784df6c43cad18ad63a036796d0463a2ad7350acf011ee30be';
 export const SWITCHING_FINALIZER_BODY_SHA256 = 'da759b51a920b6ff3048a2a1f53527fc1bb35373878c1f53ee904b505189556e';
-const bodyIsAzure = sig => `(SELECT encode(sha256(convert_to(prosrc, 'UTF8')), 'hex') IN ('${AZURE_FINALIZER_BODY_SHA256}', '${SWITCHING_FINALIZER_BODY_SHA256}')
+const bodyHashIn = (sig, hashes) => `(SELECT encode(sha256(convert_to(prosrc, 'UTF8')), 'hex') IN (${hashes.map(h => `'${h}'`).join(', ')})
   AND prosecdef AND provolatile = 'v' AND prorettype = 'jsonb'::regtype AND proconfig @> ARRAY['search_path=""']::text[]
   FROM pg_proc WHERE oid = to_regprocedure('${sig}'))`;
+// Activation is sequenced after moderation switching: only the reviewed switching body is acceptable (never the Azure-only body).
+const bodyIsSwitching = sig => bodyHashIn(sig, [SWITCHING_FINALIZER_BODY_SHA256]);
 
 const readOnly = sql => `BEGIN READ ONLY; SET LOCAL statement_timeout = '15s'; ${sql}; COMMIT;`;
 
@@ -157,8 +176,8 @@ export function runWearablesPreflight(candidate, exec) {
     ...BASELINE_CHECKS,
     foundation_installed: `to_regclass('public.wearable_release_v1') IS NOT NULL AND to_regprocedure('${CORE}') IS NOT NULL
       AND to_regprocedure('public.submit_wearable_v1(jsonb)') IS NOT NULL`,
-    // The installed finalizer must be exactly the reviewed Azure body and not yet wrapped; otherwise activation aborts (BASELINE_DRIFT).
-    azure_finalizer_baseline: `to_regprocedure('${FINALIZER_AZURE}') IS NULL AND ${bodyIsAzure(FINALIZER)}`,
+    // The installed finalizer must be exactly the reviewed provider-switching body and not yet wrapped; otherwise activation aborts (BASELINE_DRIFT).
+    azure_finalizer_baseline: `to_regprocedure('${FINALIZER_AZURE}') IS NULL AND ${bodyIsSwitching(FINALIZER)}`,
     foundation_disabled: `(SELECT count(*) = 1 AND NOT bool_or(r.enabled OR c.is_active OR c.new_listing_enabled)
       FROM public.wearable_release_v1 r JOIN public.categories c ON c.id = r.category_id)`,
     catalogue_complete: `(SELECT count(*) = 1 AND bool_and(v.rows_approved = (SELECT count(*) FROM public.wearable_models_v1 WHERE status = 'approved'))
@@ -248,12 +267,12 @@ export function wearablesPostflightChecks(stage) {
       FROM (SELECT public.search_wearables_v1('{}'::jsonb) AS x) q)`
   };
   if (enabled) {
-    // Flagged wearables can never finalize as auto-approved: the finalizer is the wrapper, the Azure body is intact and
+    // Flagged wearables can never finalize as auto-approved: the finalizer is the wrapper, the inner provider-switching body keeps its pinned hash and
     // callable only through it, and no client role (nor service_role directly) can reach the renamed Azure function.
     checks.azure_finalizer_wearable_routing = `(SELECT prosecdef AND proconfig @> ARRAY['search_path=""']::text[]
         AND prosrc LIKE '%listing_wearable_risk_flags_v1%' AND prosrc LIKE '%impl_finalize_moderation_result_azure_v1%' AND prosrc LIKE '%needs_review%'
         FROM pg_proc WHERE oid = to_regprocedure('${FINALIZER}'))
-      AND ${bodyIsAzure(FINALIZER_AZURE)}
+      AND ${bodyIsSwitching(FINALIZER_AZURE)}
       AND has_function_privilege('service_role', '${FINALIZER}', 'EXECUTE')
       AND NOT has_function_privilege('public', '${FINALIZER}', 'EXECUTE') AND NOT has_function_privilege('anon', '${FINALIZER}', 'EXECUTE')
       AND NOT has_function_privilege('authenticated', '${FINALIZER}', 'EXECUTE')

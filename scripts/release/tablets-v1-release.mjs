@@ -82,6 +82,7 @@ export function runTabletsPostflight(enabled, exec) {
 export function readTabletsLedger(exec) {
   const ledger = JSON.parse(exec(readOnly(`SELECT jsonb_agg(jsonb_build_object(
     'version', version, 'name', name, 'hasStatements', coalesce(cardinality(statements) > 0, false),
+    'statementCount', coalesce(cardinality(statements), 0),
     'statementsSha256', encode(sha256(convert_to(coalesce(to_jsonb(statements)::text, 'null'), 'UTF8')), 'hex')
   ) ORDER BY version)::text FROM supabase_migrations.schema_migrations`)));
   if (!Array.isArray(ledger) || new Set(ledger.map(row => row.version)).size !== ledger.length ||
