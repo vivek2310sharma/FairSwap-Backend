@@ -16,6 +16,7 @@ on:
           - accessories-v1-activation
           - tablets-v1-foundation
           - tablets-v1-activation
+          - tablets-v2-catalogue
           - wearables-v1-foundation
           - wearables-v1-activation
       approved_sha:
@@ -36,11 +37,15 @@ on:
           - production
           - adopt
       web_staging_sha:
-        description: 'Accessories and Tablets: verified matching Web staging commit SHA'
+        description: 'Accessories and Tablets: verified Web staging SHA; V2 Production requires successful staging CI and deployment'
         required: false
         type: string
       web_production_sha:
         description: 'Production activation: deployed Web production commit SHA'
+        required: false
+        type: string
+      test_catalogue_run_id:
+        description: 'Tablets V2 Production: successful Test catalogue release run on the same reviewed Backend commit'
         required: false
         type: string
       test_foundation_run_id:
@@ -147,6 +152,7 @@ jobs:
           TARGET: ${{ inputs.target }}
           WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
           WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
+          TEST_CATALOGUE_RUN_ID: ${{ inputs.test_catalogue_run_id }}
           TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
@@ -161,6 +167,7 @@ jobs:
           const e = process.env;
           const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
             web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
+            test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
             prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID,
             accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID
@@ -216,6 +223,7 @@ jobs:
           TARGET: ${{ inputs.target }}
           WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
           WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
+          TEST_CATALOGUE_RUN_ID: ${{ inputs.test_catalogue_run_id }}
           TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
@@ -226,16 +234,19 @@ jobs:
           node --input-type=module - <<'NODE'
           import {planDispatch} from './scripts/release/reusable-candidates.mjs';
           import {verifyWebDeployments} from './scripts/release/accessories-v1-release.mjs';
+          import {verifyTabletsV2Web} from './scripts/release/tablets-v2-release.mjs';
           import {verifyE2eEvidence} from './scripts/release/wearables-v1-release.mjs';
           const e = process.env;
           const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
             web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
+            test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
             prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID,
             accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID
           }});
           await verifyWebDeployments(plan, e);
           await verifyE2eEvidence(plan, e);
+          await verifyTabletsV2Web(plan, e);
           NODE
 
       - name: Install psql client
@@ -257,6 +268,7 @@ jobs:
           CHAT_DB_POOLER_HOST: ${{ vars.CHAT_DB_POOLER_HOST }}
           WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
           WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
+          TEST_CATALOGUE_RUN_ID: ${{ inputs.test_catalogue_run_id }}
           TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
@@ -351,6 +363,7 @@ jobs:
           TARGET: ${{ inputs.target }}
           WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
           WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
+          TEST_CATALOGUE_RUN_ID: ${{ inputs.test_catalogue_run_id }}
           TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
@@ -361,16 +374,19 @@ jobs:
           node --input-type=module - <<'NODE'
           import {planDispatch} from './scripts/release/reusable-candidates.mjs';
           import {verifyWebDeployments} from './scripts/release/accessories-v1-release.mjs';
+          import {verifyTabletsV2Web} from './scripts/release/tablets-v2-release.mjs';
           import {verifyE2eEvidence} from './scripts/release/wearables-v1-release.mjs';
           const e = process.env;
           const plan = planDispatch({candidateId: e.CANDIDATE, target: e.TARGET, inputs: {
             web_staging_sha: e.WEB_STAGING_SHA, web_production_sha: e.WEB_PRODUCTION_SHA,
+            test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
             prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID,
             accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID
           }});
           await verifyWebDeployments(plan, e);
           await verifyE2eEvidence(plan, e);
+          await verifyTabletsV2Web(plan, e);
           NODE
 
       - name: Install psql client
@@ -381,6 +397,8 @@ jobs:
 
       - name: Execute Production release and automated read-only verification
         env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WEB_EVIDENCE_TOKEN: ${{ inputs.candidate == 'tablets-v2-catalogue' && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
           ACCESSORIES_RECHECK_PROD_FOUNDATION: ${{ needs.verify.outputs.accessories_recheck_prod_foundation }}
           ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
           TARGET: ${{ inputs.target }}
@@ -394,6 +412,7 @@ jobs:
           CHAT_DB_POOLER_HOST: ${{ vars.CHAT_DB_POOLER_HOST }}
           WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
           WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
+          TEST_CATALOGUE_RUN_ID: ${{ inputs.test_catalogue_run_id }}
           TEST_FOUNDATION_RUN_ID: ${{ inputs.test_foundation_run_id }}
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
