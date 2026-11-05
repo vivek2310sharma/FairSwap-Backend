@@ -9,14 +9,14 @@ import {join, resolve as resolvePath} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {rootCertificates} from 'node:tls';
 import {X509Certificate, createHash} from 'node:crypto';
-import {getCandidate, verifyCandidateSha, CANDIDATES, planDispatch, ACCESSORIES_WEB, WEARABLES_WEB, WEARABLES_E2E_WAIVER, WEB_PINS, EXISTING_INSTALLATIONS, adoptionAttestation, getAdoption} from '../../scripts/release/reusable-candidates.mjs';
+import {getCandidate, verifyCandidateSha, CANDIDATES, MOBILE_CATALOGUE_CANDIDATE, planDispatch, ACCESSORIES_WEB, WEARABLES_WEB, WEARABLES_E2E_WAIVER, WEB_PINS, EXISTING_INSTALLATIONS, adoptionAttestation, getAdoption} from '../../scripts/release/reusable-candidates.mjs';
 import {
   ADOPTED_STATUS, MOBILE_PHONES_HISTORY, WEARABLES_E2E, assertLedgerTail, assertMobilePhonesProvenance, requirePriorCommitEvidence, runWearablesPostflight,
   WEARABLES_ANCESTOR_EVIDENCE, WEARABLES_OUT_OF_ORDER, TABLETS_V2_LEDGER, MODERATION_SWITCHING_LEDGER, assertSwitchingPrerequisite, assertCliSupportsIncludeAll, runWearablesPreflight, validateCrossCommitReceipt, verifyE2eEvidence, wearablesPostflightChecks, AZURE_FINALIZER_BODY_SHA256, SWITCHING_FINALIZER_BODY_SHA256
 } from '../../scripts/release/wearables-v1-release.mjs';
 import {readTabletsLedger, verifyTabletsLedger} from '../../scripts/release/tablets-v1-release.mjs';
 import {assertLedgerOrdering, assertPreflight, parseLedgerVersions, postflightKeys, postflightQuery, preflightEnabledQuery, preflightQuery, readZipEntries, recoveredFoundationSha, requireStageEvidence, runAccessoriesPostflight, runLivePreflight, validateReceipt, verifyAccessoriesLedger, verifyHistoryPreserved, verifyWebDeployments} from '../../scripts/release/accessories-v1-release.mjs';
-import {adoptExistingInstallation, parsePendingDryRun, verifyLedgerVersion, releaseReusable, subprocessFailure, REFS} from '../../scripts/release/reusable-supabase-release.mjs';
+import {adoptExistingInstallation, parsePendingDryRun, verifyLedgerVersion, releaseReusable, subprocessFailure, REFS, readMobileCatalogueSnapshot, verifyMobileCataloguePostflight, verifyMobileCatalogueTestReceipt} from '../../scripts/release/reusable-supabase-release.mjs';
 
 test('candidate registry correctly registers moderation-analytics-v1', () => {
   const c = getCandidate('moderation-analytics-v1');
@@ -420,7 +420,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'wearables-v1-activation', 'wearables-v1-foundation']);
+  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'wearables-v1-activation', 'wearables-v1-foundation']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -3008,4 +3008,136 @@ test('disposable PostgreSQL: activation after moderation switching wraps the swi
     assert.equal(await call('00000000-0000-0000-0000-0000000000b2', 'no_review_flags'), 'no_review_flags'); // unflagged unchanged
     assert.equal(await call('00000000-0000-0000-0000-0000000000b1', 'blocked'), 'blocked');
     await db.close();
+  });
+
+test('Mobile Catalogue is checksum-pinned and dispatches only through Test with automatic promotion', () => {
+  const {candidate, sha256} = verifyCandidateSha(MOBILE_CATALOGUE_CANDIDATE);
+  assert.equal(candidate.version, '20261105213015');
+  assert.equal(sha256, '4bb663e766876f34136620651308c41293cce1e9411c7247bd87801a7cd9f360');
+  assert.equal(candidate.autoPromote, true);
+  const plan = target => planDispatch({candidateId: candidate.id, target});
+  assert.deepEqual(plan('test').priorRuns, []);
+  assert.equal(plan('test').webStagingSha, null);
+  assert.throws(() => plan('production'), /TARGET_NOT_SUPPORTED/);
+  assert.throws(() => plan('adopt'), /ADOPTION_NOT_REGISTERED/);
+  const yaml = readFileSync('.github/workflows/reusable-supabase-release.yml', 'utf8');
+  assert.match(yaml, /- mobile-catalogue-india-v1\n/);
+  assert.ok(yaml.indexOf('sha256sum --check --status') < yaml.indexOf('Verify Mobile Catalogue Test postflight receipt'));
+  assert.ok(yaml.includes("needs.test.result == 'success' && needs.verify_test.result == 'success' &&"));
+  assert.ok(yaml.includes("inputs.candidate != 'mobile-catalogue-india-v1' || needs.verify_test.outputs.mobile_catalogue_ledger_sha != ''"));
+  assert.ok(yaml.includes("inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1'"));
+});
+
+const mobileContext = {...baseEnv, GITHUB_SHA: 'a'.repeat(40), GITHUB_RUN_ID: '119', GITHUB_RUN_ATTEMPT: '1', TARGET: 'test'};
+const mobileLedgerDigest = 'b'.repeat(64);
+function mobileSnapshotOutput({brands, models, ...over}) {
+  const fingerprints = (count, prefix) => Array.from({length: count},
+    (_, i) => createHash('sha256').update(prefix + i).digest('hex'));
+  return [
+    JSON.stringify({
+      brands: fingerprints(brands, 'brand'), models: fingerprints(models, 'model'),
+      listingReferences: [], fallbacks: true, referencesValid: true,
+      visibleBrands: brands, visibleModels: models, sellerPermissions: true, security: 'c'.repeat(64), ...over
+    }),
+    JSON.stringify({
+      version: 2, enabled: true, brands, models,
+      selection: {category: 'mobiles', subcategory: 'mobile-phones', version: 2}
+    })
+  ].join('\n');
+}
+
+test('Mobile Catalogue verifies both stages, refuses invalid Test proof and withholds receipts on drift', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mobile-release-receipt-'));
+  const candidate = getCandidate(MOBILE_CATALOGUE_CANDIDATE);
+  const execute = (environment, env = {}, options = {}) => {
+    const history = [...baseHistory.map(version => ({version, name: 'historical', hasStatements: true,
+      statementsSha256: mobileLedgerDigest})), ...mobileRows(environment).map(row => ({...row, statementsSha256: mobileLedgerDigest}))];
+    const before = history.map(row => row.version);
+    const after = [...before, candidate.version];
+    let ledgerReads = 0;
+    let snapshots = 0;
+    const runner = makeRunner({before, after, filename: candidate.filename, sql: () => [
+      ...history, ...(++ledgerReads === 3 ? [{version: candidate.version, name: candidate.filename.slice(15, -4),
+        hasStatements: true, statementsSha256: options.ledgerDigest ?? mobileLedgerDigest}] : [])
+    ]});
+    return releaseReusable({environment, candidateId: candidate.id, receiptDir: dir, context: {...mobileContext, ...env},
+      runner: (cmd, args, ...rest) => {
+        if (cmd === 'psql' && args.at(-1).startsWith('-- mobile-catalogue-integrity')) {
+          return ++snapshots === 1 ? mobileSnapshotOutput({brands: 21, models: 100}) :
+            mobileSnapshotOutput({brands: 27, models: 1473, ...options.postflight});
+        }
+        options.calls?.push([cmd, ...args]);
+        return runner(cmd, args, ...rest);
+      }});
+  };
+
+  try {
+    const calls = [];
+    await assert.rejects(execute('FairSwapProd', {}, {calls}), /TEST_EVIDENCE_REQUIRED/);
+    await assert.rejects(execute('FairSwapProd', {TARGET: 'production', MOBILE_CATALOGUE_TEST_LEDGER_SHA: mobileLedgerDigest},
+      {calls}), /TEST_EVIDENCE_REQUIRED/);
+    assert.deepEqual(calls, []);
+
+    const testReceipt = await execute('FairSwapTest');
+    const digest = verifyMobileCatalogueTestReceipt(testReceipt, mobileContext);
+    assert.equal(digest, mobileLedgerDigest);
+    for (const invalid of [{environment: 'FairSwapProd'}, {releaseWorkflowRun: '120'}, {releaseWorkflowAttempt: '2'},
+      {reviewedCommit: 'f'.repeat(40)}, {migrationSha256: 'd'.repeat(64)}, {postflightVerified: false},
+      {ledgerStatementsSha256: 'invalid'}, {postflightScope: ''}]) {
+      assert.throws(() => verifyMobileCatalogueTestReceipt({...testReceipt, ...invalid}, mobileContext), /TEST_RECEIPT_INVALID/);
+    }
+    const env = {MOBILE_CATALOGUE_TEST_LEDGER_SHA: digest};
+    await assert.rejects(execute('FairSwapProd', env, {ledgerDigest: 'a'.repeat(64)}), /TEST_LEDGER_MISMATCH/);
+    await assert.rejects(execute('FairSwapProd', env, {postflight: {fallbacks: false}}), /AFTER_INVALID/);
+    assert.ok(!existsSync(join(dir, `${candidate.id}-fairswapprod.json`)));
+    const production = await execute('FairSwapProd', env);
+    assert.equal(production.testLedgerStatementsSha256, digest);
+    assert.equal(production.postflightVerified, true);
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('real PostgreSQL: Mobile Catalogue verifies IDs, listing references, fallbacks, seller ACLs and RLS',
+  {skip: pgBin ? false : 'no local PostgreSQL binaries; enforced when REQUIRE_REAL_PG=1'}, async () => {
+    const {installPostingFixture} = await import('../../scripts/ci/posting-v2-fixture.mjs');
+    const pg = startPg(pgBin);
+    try {
+      await installPostingFixture({exec: async sql => pg.run(sql)});
+      pg.run('grant select on public.categories to anon, authenticated');
+      pg.run(readFileSync('supabase/forward-migrations/posting-v2/activation/supabase/migrations/20261025135152_activate_posting_v2_mobiles.sql', 'utf8'));
+      const addListing = `
+        WITH listing AS (
+          INSERT INTO public.listings (id, category_id)
+          SELECT gen_random_uuid(), listing_category_id FROM public.posting_category_definitions RETURNING id, category_id
+        )
+        INSERT INTO public.listing_mobile_contexts (listing_id, category_id, brand_id, model_id, brand_name, model_name, storage)
+        SELECT l.id, l.category_id, b.id, m.id, b.name, m.name, '128 GB'
+        FROM listing l, public.phone_brands b JOIN public.phone_models m ON m.brand_id = b.id
+        WHERE b.name = 'Apple' AND m.name = 'iPhone 15';
+      `;
+      pg.run(addListing);
+      const before = readMobileCatalogueSnapshot(pg.run, 'before');
+      pg.run(readFileSync(getCandidate(MOBILE_CATALOGUE_CANDIDATE).path, 'utf8'));
+      assert.deepEqual(verifyMobileCataloguePostflight(before, pg.run), {verified: true});
+      pg.run(addListing);
+      assert.deepEqual(verifyMobileCataloguePostflight(before, pg.run), {verified: true});
+      const detectAndRestore = (change, restore, error) => {
+        pg.run(change);
+        try { assert.throws(() => verifyMobileCataloguePostflight(before, pg.run), error); }
+        finally { pg.run(restore); }
+      };
+      detectAndRestore("update public.phone_models set name = 'iPhone altered' where name = 'iPhone 15'",
+        "update public.phone_models set name = 'iPhone 15' where name = 'iPhone altered'", /EXISTING_ROWS_CHANGED: models/);
+      detectAndRestore("update public.listing_mobile_contexts set model_id = (select id from public.phone_models where name = 'iPhone 16')",
+        "update public.listing_mobile_contexts set model_id = (select id from public.phone_models where name = 'iPhone 15')",
+        /EXISTING_ROWS_CHANGED: listingReferences/);
+      detectAndRestore("update public.phone_models set other = false where other and brand_id = (select id from public.phone_brands where name = 'CMF')",
+        "update public.phone_models set other = true where name = 'Other model' and brand_id = (select id from public.phone_brands where name = 'CMF')",
+        /AFTER_INVALID/);
+      detectAndRestore('create policy extra_phone_read on public.phone_models for select to anon using (true)',
+        'drop policy extra_phone_read on public.phone_models', /PERMISSIONS_CHANGED/);
+      detectAndRestore('grant update (name) on public.phone_models to authenticated',
+        'revoke update (name) on public.phone_models from authenticated', /AFTER_INVALID/);
+    } finally { pg.stop(); }
   });
