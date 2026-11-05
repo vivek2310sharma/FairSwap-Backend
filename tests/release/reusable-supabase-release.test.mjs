@@ -806,6 +806,16 @@ test('ancestor evidence requires the original immutable run and matching source 
   }), ancestorOption), /RECEIPT_CONTENT_INVALID: .*commit/);
 });
 
+test('strict evidence checks remain active when allowFoundationAncestors is true', async () => {
+  const entries = {'10': testFoundation};
+  const baseCheck = over => requireStageEvidence([testFoundation], ctx, historicalEvidence(entries, over), {allowFoundationAncestors: true});
+  await assert.rejects(baseCheck({run: {actor: {login: 'unauthorized-user'}}}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  await assert.rejects(baseCheck({run: {head_repository: {full_name: 'fork/FairSwap-Backend'}}}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  await assert.rejects(baseCheck({artifact: {name: 'reusable-test-accessories-v1-foundation-10-2'}}), /EVIDENCE_RECEIPT_MISSING/);
+  await assert.rejects(baseCheck({artifact: {digest: 'sha256:' + 'e'.repeat(64)}}), /artifact digest/);
+  await assert.rejects(baseCheck({artifact: {archive_download_url: 'https://evil.example/artifact.zip'}}), /RECEIPT_CONTENT_INVALID.*url/);
+});
+
 test('historical Production foundation verifies its own Test chain', async () => {
   const entries = {'10': testFoundation, '11': prior[0], '12': prodFoundation};
   const check = () => requireStageEvidence([prodFoundation], ctx, historicalEvidence(entries), ancestorOption);
@@ -1339,6 +1349,77 @@ test('Wearables receipts are bound to the Wearables Web pin and to the current c
   await assert.rejects(run({ledgerStatementsSha256: undefined}), /RECEIPT_CONTENT_INVALID.*hash/);
   // normal same-commit rule is unchanged: a receipt from an earlier commit is rejected for Wearables stages
   await assert.rejects(run({reviewedCommit: 'd'.repeat(40)}), /RECEIPT_CONTENT_INVALID.*commit/);
+});
+
+test('Wearables Test activation accepts a verified immutable ancestor foundation receipt', async () => {
+  const ancestorCommit = 'e96d1b6e00746ce13902f2b1fbbdcb9233fbfb3d';
+  const candidate = getCandidate(WF);
+  const source = readFileSync(candidate.path);
+  const testFoundation = {key: 'test_foundation_run_id', runId: '41979462046', candidateId: WF, environment: 'test'};
+  const makeEvidence = (over = {}) => {
+    const receipt = receiptFor(WF, 'test', '41979462046', {
+      reviewedCommit: ancestorCommit,
+      ledgerStatementsSha256: 'a'.repeat(64),
+      ...(over.receipt ?? {})
+    });
+    const body = JSON.stringify(receipt, null, 2) + '\n';
+    const name = `${WF}-fairswaptest.json`;
+    const zip = makeZip({[name]: body, SHA256SUMS_fairswaptest: `${over.sums ?? createHash('sha256').update(body).digest('hex')}  ${name}\n`});
+    return async raw => {
+      const u = new URL(raw);
+      const ok = value => ({ok: true, json: async () => value});
+      if (u.pathname.includes('/compare/')) {
+        return ok(over.comparison ?? {
+          status: 'ahead', behind_by: 0, base_commit: {sha: ancestorCommit}, merge_base_commit: {sha: ancestorCommit}
+        });
+      }
+      if (u.pathname.includes('/contents/')) {
+        const bytes = over.source ?? source;
+        return ok({type: 'file', path: candidate.path, encoding: 'base64', content: bytes.toString('base64'), size: bytes.length});
+      }
+      const m = u.pathname.match(/\/(runs|artifacts)\/(\d+)(?:\/(artifacts|zip))?$/);
+      assert(m, raw);
+      const [, kind, id, suffix] = m;
+      if (kind === 'artifacts') return {ok: true, arrayBuffer: async () => zip};
+      if (!suffix) {
+        return ok({
+          path: goodRun.path, head_sha: ancestorCommit, head_branch: 'main', event: 'workflow_dispatch',
+          status: 'completed', conclusion: 'success', id: Number(id), run_attempt: 1, workflow_id: 404601811,
+          head_repository: {full_name: GH}, actor: {login: 'vivek2310sharma'}, triggering_actor: {login: 'vivek2310sharma'},
+          ...over.run
+        });
+      }
+      const artifact = {
+        id: Number(id), name: `reusable-test-${WF}-${id}-1`, expired: false,
+        workflow_run: {id: Number(id), head_sha: ancestorCommit},
+        archive_download_url: `https://api.github.com/repos/${GH}/actions/artifacts/${id}/zip`,
+        digest: `sha256:${createHash('sha256').update(zip).digest('hex')}`,
+        ...over.artifact
+      };
+      return ok({artifacts: over.missing ? [] : [artifact]});
+    };
+  };
+
+  const check = over => requireStageEvidence([testFoundation], ctx, makeEvidence(over));
+  const res = await check();
+  assert.equal(res.test_foundation_run_id.reviewedCommit, ancestorCommit);
+  assert.equal(res.test_foundation_run_id.candidateId, WF);
+
+  // Fails closed if ancestor comparison diverged or behind
+  await assert.rejects(check({comparison: {status: 'diverged'}}), /EVIDENCE_ANCESTRY_NOT_VERIFIED/);
+  await assert.rejects(check({comparison: {status: 'ahead', behind_by: 0, base_commit: {sha: ancestorCommit}, merge_base_commit: {sha: SHA_C}}}), /EVIDENCE_ANCESTRY_NOT_VERIFIED/);
+
+  // Fails closed if SQL source on ancestor commit differs from candidate
+  await assert.rejects(check({source: Buffer.from('select 1;')}), /EVIDENCE_SOURCE_MISMATCH/);
+
+  // Fails closed if run was not successful
+  await assert.rejects(check({run: {conclusion: 'failure'}}), /EVIDENCE_RUN_NOT_VERIFIED/);
+
+  // Strict validation: Production foundation cannot use this Test-only ancestor path
+  await assert.rejects(
+    requireStageEvidence([{key: 'prod_foundation_run_id', runId: '41979462046', candidateId: WF, environment: 'prod'}], ctx, makeEvidence()),
+    /EVIDENCE_RUN_NOT_VERIFIED/
+  );
 });
 
 // Cross-commit Accessories Production evidence

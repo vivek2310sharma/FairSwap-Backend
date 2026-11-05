@@ -467,8 +467,22 @@ export async function downloadArtifact(url, token, fetcher) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-async function verifyFoundationSource(previous, current, token, fetcher) {
-  const {candidate, sha256} = verifyCandidateSha(FOUNDATION);
+async function verifyFoundationSource(candidateOrPrevious, previousOrCurrent, currentOrToken, tokenOrFetcher, maybeFetcher) {
+  let candidateId, previous, current, token, fetcher;
+  if (maybeFetcher !== undefined) {
+    candidateId = typeof candidateOrPrevious === 'string' ? candidateOrPrevious : candidateOrPrevious.id;
+    previous = previousOrCurrent;
+    current = currentOrToken;
+    token = tokenOrFetcher;
+    fetcher = maybeFetcher;
+  } else {
+    candidateId = FOUNDATION;
+    previous = candidateOrPrevious;
+    current = previousOrCurrent;
+    token = currentOrToken;
+    fetcher = tokenOrFetcher;
+  }
+  const {candidate, sha256} = verifyCandidateSha(candidateId);
   const base = `https://api.github.com/repos/${BACKEND}`;
   const comparison = await getJson(`${base}/compare/${previous}...${current}?per_page=1`, token, fetcher);
   if (comparison.status !== 'ahead' || comparison.merge_base_commit?.sha !== previous
@@ -495,13 +509,17 @@ export async function requireStageEvidence(priorRuns, c, fetcher = fetch, {allow
     const base = `https://api.github.com/repos/${c.GITHUB_REPOSITORY}/actions/runs/${p.runId}`;
     const run = await getJson(base, c.GITHUB_TOKEN, fetcher);
     const historical = run.head_sha !== c.GITHUB_SHA;
+    const isWearablesTestFoundation = candidate.id === 'wearables-v1-foundation'
+      && p.key === 'test_foundation_run_id' && p.environment === 'test';
+    const allowAncestor = (allowFoundationAncestors && candidate.id === FOUNDATION
+      && p.key === `${p.environment}_foundation_run_id` && ['test', 'prod'].includes(p.environment))
+      || isWearablesTestFoundation;
     if (run.path !== WORKFLOW_PATH || run.head_branch !== 'main' || run.event !== 'workflow_dispatch'
       || run.status !== 'completed' || run.conclusion !== 'success'
-      || (historical && !(allowFoundationAncestors && candidate.id === FOUNDATION
-        && p.key === `${p.environment}_foundation_run_id` && ['test', 'prod'].includes(p.environment)))) {
+      || (historical && !allowAncestor)) {
       fail('EVIDENCE_RUN_NOT_VERIFIED', p.key);
     }
-    const immutable = allowFoundationAncestors || candidate.id === 'tablets-v2-catalogue';
+    const immutable = allowFoundationAncestors || isWearablesTestFoundation || candidate.id === 'tablets-v2-catalogue';
     if (immutable && (c.GITHUB_REPOSITORY !== BACKEND || !c.GITHUB_TOKEN || !ID.test(p.runId)
         || !SHA40.test(run.head_sha) || !SHA40.test(c.GITHUB_SHA)
         || String(run.id) !== p.runId || run.workflow_id !== WORKFLOW_ID
@@ -510,7 +528,7 @@ export async function requireStageEvidence(priorRuns, c, fetcher = fetch, {allow
         || !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1)) {
       fail('EVIDENCE_RUN_NOT_VERIFIED', p.key);
     }
-    if (historical) await verifyFoundationSource(run.head_sha, c.GITHUB_SHA, c.GITHUB_TOKEN, fetcher);
+    if (historical) await verifyFoundationSource(candidate, run.head_sha, c.GITHUB_SHA, c.GITHUB_TOKEN, fetcher);
 
     const data = await getJson(`${base}/artifacts?per_page=100`, c.GITHUB_TOKEN, fetcher);
     const prefix = `reusable-${p.environment}-${p.candidateId}-${p.runId}-`;
