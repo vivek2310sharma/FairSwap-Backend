@@ -500,10 +500,17 @@ async function verifyFoundationSource(candidateOrPrevious, previousOrCurrent, cu
   }
 }
 
+// Wearables recursion follows only the Test links of a receipt (activation's own link is foundation).
+const WEARABLES_CHAIN_LINKS = {test_foundation_run_id: 'foundation', test_activation_run_id: 'activation'};
+const MAX_CHAIN_DEPTH = 3;
+
 // Ancestor eligibility is opt-in for the Accessories workflow. The protected target
 // must still verify the live ledger and state before using the recovered evidence.
-export async function requireStageEvidence(priorRuns, c, fetcher = fetch, {allowFoundationAncestors = false} = {}) {
+// `ancestorPolicy` (a Set of `${candidateId}|${environment}|${key}`) is a separate opt-in used only by Wearables;
+// it never applies to a tuple outside the set and defaults to none.
+export async function requireStageEvidence(priorRuns, c, fetcher = fetch, {allowFoundationAncestors = false, ancestorPolicy = null} = {}, depth = 0) {
   const receipts = {};
+  if (depth > MAX_CHAIN_DEPTH) fail('EVIDENCE_RUN_NOT_VERIFIED', 'chain depth');
   for (const p of priorRuns) {
     const candidate = getCandidate(p.candidateId);
     const base = `https://api.github.com/repos/${c.GITHUB_REPOSITORY}/actions/runs/${p.runId}`;
@@ -511,15 +518,16 @@ export async function requireStageEvidence(priorRuns, c, fetcher = fetch, {allow
     const historical = run.head_sha !== c.GITHUB_SHA;
     const isWearablesTestFoundation = candidate.id === 'wearables-v1-foundation'
       && p.key === 'test_foundation_run_id' && p.environment === 'test';
+    const policyAncestor = ancestorPolicy instanceof Set && ancestorPolicy.has(`${candidate.id}|${p.environment}|${p.key}`);
     const allowAncestor = (allowFoundationAncestors && candidate.id === FOUNDATION
       && p.key === `${p.environment}_foundation_run_id` && ['test', 'prod'].includes(p.environment))
-      || isWearablesTestFoundation;
+      || isWearablesTestFoundation || policyAncestor;
     if (run.path !== WORKFLOW_PATH || run.head_branch !== 'main' || run.event !== 'workflow_dispatch'
       || run.status !== 'completed' || run.conclusion !== 'success'
       || (historical && !allowAncestor)) {
       fail('EVIDENCE_RUN_NOT_VERIFIED', p.key);
     }
-    const immutable = allowFoundationAncestors || isWearablesTestFoundation || candidate.id === 'tablets-v2-catalogue';
+    const immutable = allowFoundationAncestors || isWearablesTestFoundation || policyAncestor || candidate.id === 'tablets-v2-catalogue';
     if (immutable && (c.GITHUB_REPOSITORY !== BACKEND || !c.GITHUB_TOKEN || !ID.test(p.runId)
         || !SHA40.test(run.head_sha) || !SHA40.test(c.GITHUB_SHA)
         || String(run.id) !== p.runId || run.workflow_id !== WORKFLOW_ID
@@ -546,7 +554,11 @@ export async function requireStageEvidence(priorRuns, c, fetcher = fetch, {allow
       if (immutable && a.digest !== `sha256:${createHash('sha256').update(zip).digest('hex')}`) {
         fail('RECEIPT_CONTENT_INVALID', `${p.key}:artifact digest`);
       }
-      const receipt = validateReceipt(p, {...c, GITHUB_SHA: run.head_sha}, readZipEntries(zip), {originalChain: historical});
+      // Wearables links are re-verified below from the receipt's recorded runs, so the chain is matched in original mode.
+      const receipt = validateReceipt(p, {...c, GITHUB_SHA: run.head_sha}, readZipEntries(zip), {originalChain: historical || policyAncestor});
+      if ((policyAncestor || isWearablesTestFoundation) && receipt.recoveredFoundationCommit !== undefined) {
+        fail('RECEIPT_CONTENT_INVALID', `${p.key}:release result`);
+      }
       if (immutable && (receipt.webProductionSha !== null
         || (receipt.recoveredFoundationCommit !== undefined &&
           (!SHA40.test(receipt.recoveredFoundationCommit) || receipt.recoveredFoundationCommit === run.head_sha
@@ -558,7 +570,26 @@ export async function requireStageEvidence(priorRuns, c, fetcher = fetch, {allow
       if (receipts[p.key] && receipts[p.key].ledgerStatementsSha256 !== receipt.ledgerStatementsSha256) {
         fail('RECEIPT_CONTENT_INVALID', `${p.key}:inconsistent ledger hashes`);
       }
-      if (historical && p.environment === 'prod') {
+      if (policyAncestor && receipt.priorRuns.length) {
+        // Bounded to the allowlisted stage chain: each recorded run must be a verified run of the exact earlier stage,
+        // at this receipt's commit or an ancestor of it, with its own SQL hash, artifact digest and receipt checked.
+        const links = receipt.priorRuns.map(x => ({key: x.key, runId: x.runId}));
+        const family = candidate.id.slice(0, -candidate.stage.length);
+        if (new Set([p.runId, ...links.map(x => x.runId)]).size !== links.length + 1
+            || links.some(x => !WEARABLES_CHAIN_LINKS[x.key])) {
+          fail('EVIDENCE_RUN_NOT_VERIFIED', `${p.key}:chain`);
+        }
+        const linked = await requireStageEvidence(links.map(x => ({
+          ...x, candidateId: family + WEARABLES_CHAIN_LINKS[x.key], environment: 'test'
+        })), {...c, GITHUB_SHA: run.head_sha}, fetcher, {allowFoundationAncestors, ancestorPolicy}, depth + 1);
+        // Test -> Production byte identity: a Production foundation records the Test foundation's installed-statements hash.
+        const testFoundation = linked.test_foundation_run_id;
+        if (candidate.stage === 'foundation' && testFoundation
+            && testFoundation.ledgerStatementsSha256 !== receipt.ledgerStatementsSha256) {
+          fail('RECEIPT_CONTENT_INVALID', `${p.key}:ledger hash`);
+        }
+      }
+      if (historical && p.environment === 'prod' && !policyAncestor) {
         const [foundation, activation] = receipt.priorRuns;
         const testReceipts = await requireStageEvidence([
           {...foundation, candidateId: FOUNDATION, environment: 'test'},
