@@ -1487,7 +1487,7 @@ test('cross-commit Accessories Production evidence accepts only a verified ances
 });
 
 // Independent Test E2E evidence. The runner lives in a LATER, reviewed and deployed Web commit than the tested staging commit.
-const RUNNER = '30b6979d5ca568f2841ab0bae5ce991d2fa5d474';
+const RUNNER = 'c0f2d7fcdb9614a5d762df46b8121ce596267594';
 const E2E_PIN = Object.freeze({...WEARABLES_WEB, e2eRunnerSha: RUNNER});
 const REPO_API = `https://api.github.com/repos/${WEARABLES_WEB.repository}`;
 // Exact git diff --name-status at the two reviewed Web commits.
