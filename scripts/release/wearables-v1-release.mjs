@@ -377,8 +377,9 @@ export function validateE2eReceipt(runId, run, c, files, pin = webPin(getCandida
 }
 
 // `pin` is a test seam only; the workflow always uses the reviewed registry pin.
-export async function verifyE2eEvidence(plan, c, fetcher = fetch, pin = webPin(plan.candidate)) {
+export async function verifyE2eEvidence(plan, c, fetcher = fetch, pin) {
   if (!plan.e2eRunId) return null;
+  pin ??= webPin(plan.candidate);
   const token = c.WEB_EVIDENCE_TOKEN;
   if (!token) fail('E2E_EVIDENCE_UNAVAILABLE', 'no token');
   // The runner commit pin is reviewed Backend source. Unset means no E2E evidence can exist yet: Production stays blocked.

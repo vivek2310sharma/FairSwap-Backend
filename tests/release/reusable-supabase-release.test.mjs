@@ -1569,6 +1569,24 @@ test('E2E runner commit pin is unset by default, keeping Production blocked, and
   await bad({deployments: [{id: 5, sha: RUNNER, environment: 'Production'}]}, /E2E_RUNNER_DEPLOYMENT_NOT_READY/);
 });
 
+test('moderation-switching-v1 without E2E evidence returns null, while actual Wearables E2E evidence still undergoes strict validation', async () => {
+  const modPlan = planDispatch({candidateId: 'moderation-switching-v1', target: 'test', inputs: {}});
+  assert.equal(await verifyE2eEvidence(modPlan, {}), null);
+
+  const wearablesPlan = wPlan(WF, 'production');
+  const env = {WEB_EVIDENCE_TOKEN: 't', TEST_ACTIVATION_RUN_ID: '11'};
+  // Strict validation still active: missing token throws fail-closed error
+  await assert.rejects(verifyE2eEvidence(wearablesPlan, {}, e2eFetcher(), E2E_PIN), /E2E_EVIDENCE_UNAVAILABLE/);
+  // Default pin lookup without test seam fails closed because runner pin is unset in registry
+  await assert.rejects(verifyE2eEvidence(wearablesPlan, env, e2eFetcher()), /E2E_RUNNER_PIN_UNSET/);
+  // Valid evidence with seam passes
+  assert.deepEqual(await verifyE2eEvidence(wearablesPlan, env, e2eFetcher(), E2E_PIN), {
+    runId: '60',
+    webStagingSha: WEARABLES_WEB.stagingSha,
+    runnerSha: RUNNER
+  });
+});
+
 const checkKeys = query => [...query.matchAll(/'([a-z_]+)', \(/g)].map(m => m[1]);
 const allTrue = query => Object.fromEntries(checkKeys(query).map(k => [k, true]));
 
