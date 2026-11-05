@@ -806,6 +806,16 @@ test('ancestor evidence requires the original immutable run and matching source 
   }), ancestorOption), /RECEIPT_CONTENT_INVALID: .*commit/);
 });
 
+test('strict evidence checks remain active when allowFoundationAncestors is true', async () => {
+  const entries = {'10': testFoundation};
+  const baseCheck = over => requireStageEvidence([testFoundation], ctx, historicalEvidence(entries, over), {allowFoundationAncestors: true});
+  await assert.rejects(baseCheck({run: {actor: {login: 'unauthorized-user'}}}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  await assert.rejects(baseCheck({run: {head_repository: {full_name: 'fork/FairSwap-Backend'}}}), /EVIDENCE_RUN_NOT_VERIFIED/);
+  await assert.rejects(baseCheck({artifact: {name: 'reusable-test-accessories-v1-foundation-10-2'}}), /EVIDENCE_RECEIPT_MISSING/);
+  await assert.rejects(baseCheck({artifact: {digest: 'sha256:' + 'e'.repeat(64)}}), /artifact digest/);
+  await assert.rejects(baseCheck({artifact: {archive_download_url: 'https://evil.example/artifact.zip'}}), /RECEIPT_CONTENT_INVALID.*url/);
+});
+
 test('historical Production foundation verifies its own Test chain', async () => {
   const entries = {'10': testFoundation, '11': prior[0], '12': prodFoundation};
   const check = () => requireStageEvidence([prodFoundation], ctx, historicalEvidence(entries), ancestorOption);

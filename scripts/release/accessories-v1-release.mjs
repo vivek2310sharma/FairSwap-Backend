@@ -519,7 +519,7 @@ export async function requireStageEvidence(priorRuns, c, fetcher = fetch, {allow
       || (historical && !allowAncestor)) {
       fail('EVIDENCE_RUN_NOT_VERIFIED', p.key);
     }
-    const immutable = allowAncestor || candidate.id === 'tablets-v2-catalogue';
+    const immutable = allowFoundationAncestors || isWearablesTestFoundation || candidate.id === 'tablets-v2-catalogue';
     if (immutable && (c.GITHUB_REPOSITORY !== BACKEND || !c.GITHUB_TOKEN || !ID.test(p.runId)
         || !SHA40.test(run.head_sha) || !SHA40.test(c.GITHUB_SHA)
         || String(run.id) !== p.runId || run.workflow_id !== WORKFLOW_ID
