@@ -1,9 +1,11 @@
 // supabase/functions/process-listing-moderation/index.ts
 // FairSwap Edge Function: process-listing-moderation
 // Authorizes callers via service-role Vault token, claims batch of pending jobs,
-// and routes them to Azure Moderation V1 dispatcher.
-// Fail-closed invariant: If Azure is configured and fails or is unavailable, jobs fail closed to 'retry' / 'review';
-// never revert to legacy 3-rule automatic approval.
+// resolves moderation provider mode server-side, and executes authoritative moderation.
+// Fail-closed invariants:
+// - Conflicts (both Azure and Google Cloud enabled) fail closed.
+// - Google Cloud enabled without implemented adapter fails closed.
+// - Provider failures never auto-approve; always route to review or retry.
 
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -11,9 +13,10 @@ import {
   WorkerConfigSchema,
 } from "../_shared/listing-moderation-worker";
 import {
-  processClaimedAzureJob,
-  AzureWorkerConfigSchema,
+  processClaimedModerationJob,
+  type ModerationJobOptions,
 } from "../_shared/azure-moderation-worker";
+import { resolveModerationMode } from "../_shared/moderation-mode-selector";
 
 declare const Deno: {
   env: {
@@ -66,46 +69,95 @@ export async function processListingModerationHandler(req: Request): Promise<Res
     });
   }
 
-  // Azure Moderation V1 configuration check
-  const azureEndpoint = getEnv("AZURE_MODERATION_ENDPOINT");
-  const azureSecret = getEnv("AZURE_MODERATION_SECRET");
-
-  if (azureEndpoint && azureSecret) {
-    const azureConfigResult = AzureWorkerConfigSchema.safeParse({
-      supabaseUrl: config.supabaseUrl,
-      supabaseServiceRoleKey: config.supabaseServiceRoleKey,
-      azureModerationEndpoint: azureEndpoint,
-      azureModerationSecret: azureSecret,
-      batchSize: config.batchSize,
-      leaseSeconds: config.leaseSeconds,
-    });
-
-    if (azureConfigResult.success) {
-      const { data: jobs, error: claimError } = await supabase.rpc("claim_moderation_batch", {
-        p_batch_size: config.batchSize,
-        p_lease_seconds: config.leaseSeconds,
-      });
-
-      if (claimError) {
-        return new Response(JSON.stringify({ error: claimError.message }), { status: 500 });
-      }
-
-      const results = [];
-      for (const job of (jobs as any[]) || []) {
-        results.push(await processClaimedAzureJob(job, supabase, azureConfigResult.data));
-      }
-
-      return new Response(JSON.stringify({ processedCount: results.length, results }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
+  // 1. Authoritative Server-Side Mode Resolution
+  const modeResolution = await resolveModerationMode(supabase);
+  if (modeResolution.error) {
+    return new Response(
+      JSON.stringify({
+        error: `MODERATION_MODE_RESOLUTION_FAILED: ${modeResolution.error}`,
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
 
-  // If Azure is not configured, fall back to legacy prototype worker
-  // Note: Database finalizer impl_finalize_moderation_result strictly prevents prototype_v0.1.1 from auto-approving.
-  const { handleModerationWorkerRequest } = await import("../_shared/listing-moderation-worker");
-  return handleModerationWorkerRequest(req, config, supabase);
+  if (!modeResolution.enabled) {
+    return new Response(
+      JSON.stringify({
+        processedCount: 0,
+        enabled: false,
+        reason: modeResolution.reason,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  if (!modeResolution.mode) {
+    return new Response(
+      JSON.stringify({
+        error: "MODERATION_MODE_RESOLUTION_FAILED: Missing mode",
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  if (modeResolution.mode === "google_cloud") {
+    return new Response(
+      JSON.stringify({
+        error: "GOOGLE_CLOUD_PROVIDER_NOT_IMPLEMENTED_FAIL_CLOSED",
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  // 2. Snapshot Provider Mode and Configuration for this batch
+  const selectedMode = modeResolution.mode;
+  const azureEndpoint = getEnv("AZURE_MODERATION_ENDPOINT");
+  const azureSecret = getEnv("AZURE_MODERATION_SECRET");
+  const openAiApiKey = getEnv("OPENAI_API_KEY");
+
+  if (selectedMode === "azure" && (!azureEndpoint || !azureSecret)) {
+    return new Response(
+      JSON.stringify({
+        error: "AZURE_PROVIDER_ENABLED_BUT_UNCONFIGURED_FAIL_CLOSED",
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  const jobOptions: ModerationJobOptions = {
+    mode: selectedMode,
+    azureEndpoint,
+    azureSecret,
+    openAiApiKey,
+  };
+
+  // 3. Claim batch under transaction lock
+  const { data: jobs, error: claimError } = await supabase.rpc("claim_moderation_batch", {
+    p_batch_size: config.batchSize,
+    p_lease_seconds: config.leaseSeconds,
+  });
+
+  if (claimError) {
+    return new Response(JSON.stringify({ error: claimError.message }), { status: 500 });
+  }
+
+  // 4. Authoritatively process each claimed job with snapshotted mode
+  const results = [];
+  for (const job of (jobs as any[]) || []) {
+    results.push(await processClaimedModerationJob(job, supabase, jobOptions));
+  }
+
+  return new Response(
+    JSON.stringify({
+      processedCount: results.length,
+      mode: selectedMode,
+      results,
+    }),
+    {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }
+  );
 }
 
 if (typeof Deno !== "undefined" && typeof Deno.serve === "function") {

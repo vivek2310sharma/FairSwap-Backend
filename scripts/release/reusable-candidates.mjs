@@ -22,6 +22,15 @@ export const CANDIDATES = Object.freeze({
     description: 'Azure Moderation V1 Authoritative Publication Gate and Receipt Registry',
     autoPromote: true
   }),
+  'moderation-switching-v1': Object.freeze({
+    id: 'moderation-switching-v1',
+    version: '20261104223000',
+    filename: '20261104223000_moderation_provider_switching.sql',
+    path: 'supabase/forward-migrations/moderation-switching-v1/20261104223000_moderation_provider_switching.sql',
+    sha256: '1e75154d50333e94aa80894f0c59a507d0ab3ebad34e99f2e909506d64b94a7d',
+    description: 'FairSwap Provider-Switchable Moderation Architecture V1',
+    autoPromote: true
+  }),
   'accessories-v1-foundation': Object.freeze({
     id: 'accessories-v1-foundation',
     version: '20261102164135',

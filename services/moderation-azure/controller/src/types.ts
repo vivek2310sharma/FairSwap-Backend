@@ -3,7 +3,7 @@ import { z } from "zod";
 export const ControllerConfigSchema = z.object({
   port: z.coerce.number().default(8080),
   moderationSecret: z.string().min(16),
-  openAiApiKey: z.string().min(1),
+  openAiApiKey: z.string().optional(),
   openAiApiBase: z.string().url().default("https://api.openai.com/v1"),
   nodeVisionServiceUrl: z.string().url().default("http://ca-node-vision:8081"),
   pythonOcrServiceUrl: z.string().url().default("http://ca-python-ocr:8082"),
@@ -104,4 +104,6 @@ export interface ModerationDecisionRecord {
   };
   scannedMediaCount: number;
   evaluatedAt: string;
+  extractedTexts?: string[];
+  qrPayloads?: string[];
 }

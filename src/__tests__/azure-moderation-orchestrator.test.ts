@@ -148,10 +148,10 @@ describe("Azure Moderation V1 - Orchestration, Integrity & Security Scenarios", 
     }
   });
 
-  it("fails closed when OpenAI API times out or fails", async () => {
+  it("fails closed when vision service times out or fails", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
-      if (url.includes("moderations")) {
+      if (url.includes("node-vision")) {
         return Promise.resolve(new Response("Internal Server Error", { status: 500 }));
       }
       return Promise.resolve(
@@ -178,18 +178,15 @@ describe("Azure Moderation V1 - Orchestration, Integrity & Security Scenarios", 
       const validDigestJob = { ...baseJob, mediaDigest: digest };
       const res = await orchestrateModerationJob(validDigestJob, mockConfig);
       expect(res.verdict).toBe("INCOMPLETE");
-      expect(res.failedChecks).toContain("check_openai_moderation");
+      expect(res.failedChecks).toContain("check_vision_nsfw");
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  it("returns APPROVE only when all 5 checks succeed and all images are hash verified with clean content", async () => {
+  it("returns APPROVE and extracted text/QR when all 3 image checks succeed with clean content", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
-      if (url.includes("moderations")) {
-        return Promise.resolve(new Response(JSON.stringify({ results: [{ flagged: false }, { flagged: false }] }), { status: 200 }));
-      }
       if (url.includes("node-vision")) {
         return Promise.resolve(
           new Response(
@@ -231,13 +228,110 @@ describe("Azure Moderation V1 - Orchestration, Integrity & Security Scenarios", 
       expect(res.verdict).toBe("APPROVE");
       expect(res.failedChecks).toHaveLength(0);
       expect(res.completedChecks).toEqual([
-        "check_india_fraud_rules",
-        "check_openai_moderation",
         "check_vision_nsfw",
         "check_vision_category",
         "check_ocr_qr",
       ]);
+      expect(res.extractedTexts).toEqual(["Sony WH-1000XM4 Wireless Noise Cancelling"]);
       expect(res.perImageResults[0].hashVerified).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects Vision response with duplicate media ID or count mismatch", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("node-vision")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "completed",
+              scannedCount: 2,
+              // Duplicate media ID returned!
+              results: [
+                { mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: true, status: "success" },
+                { mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: true, status: "success" },
+              ],
+              flags: [],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            status: "completed",
+            scannedCount: 1,
+            results: [{ mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: true, status: "success" }],
+            extractedTexts: [],
+            qrPayloads: [],
+          }),
+          { status: 200 }
+        )
+      );
+    });
+
+    try {
+      const { createHash } = await import("node:crypto");
+      const digest = createHash("sha256")
+        .update("33333333-3333-3333-3333-333333333333:listings/photo.jpg:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        .digest("hex");
+
+      const validDigestJob = { ...baseJob, mediaDigest: digest };
+      const res = await orchestrateModerationJob(validDigestJob, mockConfig);
+      expect(res.verdict).toBe("INCOMPLETE");
+      expect(res.failedChecks).toContain("check_vision_nsfw");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects OCR response with missing or unexpected media ID", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("node-vision")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "completed",
+              scannedCount: 1,
+              results: [{ mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: true, status: "success" }],
+              flags: [],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      if (url.includes("python-ocr")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "completed",
+              scannedCount: 1,
+              // Wrong/unexpected media ID returned!
+              results: [{ mediaId: "99999999-9999-9999-9999-999999999999", sha256Verified: true, status: "success" }],
+              extractedTexts: [],
+              qrPayloads: [],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.reject(new Error("Unhandled route"));
+    });
+
+    try {
+      const { createHash } = await import("node:crypto");
+      const digest = createHash("sha256")
+        .update("33333333-3333-3333-3333-333333333333:listings/photo.jpg:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        .digest("hex");
+
+      const validDigestJob = { ...baseJob, mediaDigest: digest };
+      const res = await orchestrateModerationJob(validDigestJob, mockConfig);
+      expect(res.verdict).toBe("INCOMPLETE");
+      expect(res.failedChecks).toContain("check_ocr_qr");
     } finally {
       globalThis.fetch = originalFetch;
     }

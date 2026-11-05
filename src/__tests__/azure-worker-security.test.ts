@@ -183,5 +183,203 @@ describe("Azure Moderation Worker - Response Validation & Security Gates", () =>
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("processes baseline two-check job with zero photos successfully", async () => {
+    const { processClaimedModerationJob } = await import("../../supabase/functions/_shared/azure-moderation-worker");
+    const mockSupabase: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "listings") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: { category_id: "77777777-7777-7777-7777-777777777777", categories: { slug: "electronics" } },
+                error: null,
+              }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: [], // 0 photos
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }),
+      rpc: vi.fn().mockImplementation((fn: string) => {
+        if (fn === "register_moderation_scan_receipt") return Promise.resolve({ error: null });
+        if (fn === "impl_finalize_moderation_result") return Promise.resolve({ data: { decision: "auto_approved" }, error: null });
+        return Promise.resolve({ error: null });
+      }),
+    };
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("moderations")) {
+        return Promise.resolve(new Response(JSON.stringify({ results: [{ flagged: false, categories: {}, category_scores: {} }] }), { status: 200 }));
+      }
+      return Promise.reject(new Error("Unexpected URL"));
+    });
+
+    try {
+      const res = await processClaimedModerationJob(mockJob, mockSupabase, {
+        mode: "baseline",
+        openAiApiKey: "test-openai-key",
+      });
+      expect(res.success).toBe(true);
+      expect(res.decision).toBe("auto_approved");
+      expect(mockSupabase.rpc).toHaveBeenCalledWith(
+        "register_moderation_scan_receipt",
+        expect.objectContaining({
+          p_ruleset_version: "india_baseline_v1.0.0",
+          p_scope: "baseline_two_check",
+          p_completed_checks: ["check_india_fraud_rules", "check_openai_moderation"],
+          p_failed_checks: [],
+          p_scanned_media_count: 0,
+        })
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("fails closed when OpenAI API key is missing (never counts as completed check)", async () => {
+    const { processClaimedModerationJob } = await import("../../supabase/functions/_shared/azure-moderation-worker");
+    const mockSupabase: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "listings") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: { category_id: "77777777-7777-7777-7777-777777777777", categories: { slug: "electronics" } },
+                error: null,
+              }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          }),
+        };
+      }),
+      rpc: vi.fn().mockImplementation((fn: string) => {
+        if (fn === "register_moderation_scan_receipt") return Promise.resolve({ error: null });
+        if (fn === "impl_finalize_moderation_result") return Promise.resolve({ data: { decision: "awaiting_retry" }, error: null });
+        return Promise.resolve({ error: null });
+      }),
+    };
+
+    // Missing openAiApiKey
+    const res = await processClaimedModerationJob(mockJob, mockSupabase, { mode: "baseline" });
+    expect(res.success).toBe(true);
+    expect(mockSupabase.rpc).toHaveBeenCalledWith(
+      "register_moderation_scan_receipt",
+      expect.objectContaining({
+        p_failed_checks: ["check_openai_moderation"],
+        p_verdict: "INCOMPLETE",
+      })
+    );
+  });
+
+  it("evaluates OCR and QR text with India fraud rules and flags suspicious payloads", async () => {
+    const { processClaimedModerationJob } = await import("../../supabase/functions/_shared/azure-moderation-worker");
+    const mockSupabase: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "listings") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: { category_id: "77777777-7777-7777-7777-777777777777", categories: { slug: "electronics" } },
+                error: null,
+              }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: [
+                  { id: "55555555-5555-5555-5555-555555555555", original_storage_path: "listings/photo1.jpg", processing_status: "ready" },
+                ],
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }),
+      storage: {
+        from: vi.fn().mockReturnValue({
+          download: vi.fn().mockResolvedValue({
+            data: { arrayBuffer: () => Promise.resolve(new ArrayBuffer(10)) },
+            error: null,
+          }),
+          createSignedUrl: vi.fn().mockResolvedValue({
+            data: { signedUrl: "https://storage.test/photo1.jpg" },
+            error: null,
+          }),
+        }),
+      },
+      rpc: vi.fn().mockImplementation((fn: string) => {
+        if (fn === "register_moderation_scan_receipt") return Promise.resolve({ error: null });
+        if (fn === "impl_finalize_moderation_result") return Promise.resolve({ data: { decision: "routed_to_admin" }, error: null });
+        return Promise.resolve({ error: null });
+      }),
+    };
+
+    const originalFetch = globalThis.fetch;
+    // Azure returns extractedTexts containing suspicious payment demand; OpenAI returns clean
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("moderations")) {
+        return Promise.resolve(new Response(JSON.stringify({ results: [{ flagged: false, categories: {}, category_scores: {} }] }), { status: 200 }));
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            verdict: "APPROVE",
+            listingId: mockJob.listing_id,
+            listingRevision: mockJob.listing_revision,
+            generationId: mockJob.generation_id,
+            mediaDigest: "e865150fede4cd97c9559a494b4258929bc2c39c78c18e4a5e4ef0b74168695b",
+            completedChecks: ["check_vision_nsfw", "check_vision_category", "check_ocr_qr"],
+            failedChecks: [],
+            flags: [],
+            modelVersions: { rulesetVersion: "india_azure_v1.0.0" },
+            scannedMediaCount: 1,
+            extractedTexts: ["Pay 500 advance via GPay to hold"],
+            qrPayloads: ["upi://pay?pa=scam@upi"],
+            manifest: [{ mediaId: "55555555-5555-5555-5555-555555555555", originalStoragePath: "listings/photo1.jpg", mediaSha256: "01d448afd928065458cf670b60f5a594d735af0172c8d67f22a81680132681ca" }],
+          }),
+          { status: 200 }
+        )
+      );
+    });
+
+    try {
+      const res = await processClaimedModerationJob(mockJob, mockSupabase, {
+        mode: "azure",
+        azureEndpoint: "https://azure.mod/scan",
+        azureSecret: "mock-azure-secret-12345",
+        openAiApiKey: "test-openai-key",
+      });
+      expect(res.success).toBe(true);
+      // Fraud rules flagged the extracted text -> outcome needs_review
+      expect(mockSupabase.rpc).toHaveBeenCalledWith(
+        "impl_finalize_moderation_result",
+        expect.objectContaining({
+          p_outcome: "needs_review",
+          p_scope: "multimodal_five_check",
+        })
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 

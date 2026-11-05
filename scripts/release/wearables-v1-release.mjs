@@ -62,10 +62,12 @@ const WEARABLE_SESSION = 'app_security.impl_wearable_v1_session(uuid,text,uuid)'
 
 // W-AZ-1: the activation migration wraps the installed Azure finalizer (20261104113705, history untouched). The wrapper keeps the
 // original name; the Azure body is renamed and must remain byte-identical (sha256 of pg_proc.prosrc, derived from the pinned Azure file).
+// Resequenced provider-switching (20261104223000) updates the inner body while preserving the outer W-AZ-1 wrapper.
 const FINALIZER = 'app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)';
 const FINALIZER_AZURE = 'app_security.impl_finalize_moderation_result_azure_v1(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)';
 export const AZURE_FINALIZER_BODY_SHA256 = 'fb49b713b5e37b784df6c43cad18ad63a036796d0463a2ad7350acf011ee30be';
-const bodyIsAzure = sig => `(SELECT encode(sha256(convert_to(prosrc, 'UTF8')), 'hex') = '${AZURE_FINALIZER_BODY_SHA256}'
+export const SWITCHING_FINALIZER_BODY_SHA256 = 'da759b51a920b6ff3048a2a1f53527fc1bb35373878c1f53ee904b505189556e';
+const bodyIsAzure = sig => `(SELECT encode(sha256(convert_to(prosrc, 'UTF8')), 'hex') IN ('${AZURE_FINALIZER_BODY_SHA256}', '${SWITCHING_FINALIZER_BODY_SHA256}')
   AND prosecdef AND provolatile = 'v' AND prorettype = 'jsonb'::regtype AND proconfig @> ARRAY['search_path=""']::text[]
   FROM pg_proc WHERE oid = to_regprocedure('${sig}'))`;
 

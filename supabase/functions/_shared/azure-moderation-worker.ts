@@ -1,20 +1,32 @@
 // supabase/functions/_shared/azure-moderation-worker.ts
-// Authoritative Azure Moderation Dispatcher for FairSwap India V1.
+// Authoritative Moderation Dispatcher for FairSwap India V1.
+// Supports Provider-Switchable Moderation (Baseline Two-Check vs Azure Five-Check).
 // Computes real byte-level SHA-256 hashes of private originals from 'listing-originals'.
-// Registers verifiable scan receipt before finalization.
+// Registers verifiable scan receipts before finalization.
+// Supabase authoritatively executes India fraud rules and OpenAI moderation for all listings.
 
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { evaluateListingText } from "../../../src/lib/moderation/checker";
+import { evaluateIndiaRules } from "../../../src/lib/moderation/india/checker";
+import { evaluateOpenAiModeration } from "./openai-moderation-adapter";
+import type { ModerationModeResolution } from "./moderation-mode-selector";
 
+export const INDIA_AZURE_RULESET_VERSION = "india_azure_v1.0.0" as const;
+export const INDIA_AZURE_EVALUATION_SCOPE = "multimodal_five_check" as const;
 export const INDIA_RULESET_VERSION = "india_v1.0.0" as const;
 export const INDIA_EVALUATION_SCOPE = "multimodal_five_check" as const;
+
+export const INDIA_BASELINE_RULESET_VERSION = "india_baseline_v1.0.0" as const;
+export const INDIA_BASELINE_EVALUATION_SCOPE = "baseline_two_check" as const;
 
 export const AzureWorkerConfigSchema = z.object({
   supabaseUrl: z.string().url(),
   supabaseServiceRoleKey: z.string().min(1),
   azureModerationEndpoint: z.string().url(),
   azureModerationSecret: z.string().min(16),
+  openAiApiKey: z.string().optional(),
   batchSize: z.coerce.number().int().positive().max(100).default(10),
   leaseSeconds: z.coerce.number().int().positive().max(600).default(60),
 });
@@ -45,6 +57,8 @@ export const AzureScanResponseSchema = z.object({
   flags: z.array(z.unknown()),
   modelVersions: z.record(z.string()),
   scannedMediaCount: z.number().int(),
+  extractedTexts: z.array(z.string()).optional(),
+  qrPayloads: z.array(z.string()).optional(),
   manifest: z.array(
     z.object({
       id: z.string().uuid().optional(),
@@ -57,10 +71,20 @@ export const AzureScanResponseSchema = z.object({
   ),
 });
 
-export async function processClaimedAzureJob(
+export interface ModerationJobOptions {
+  mode: "baseline" | "azure";
+  azureEndpoint?: string;
+  azureSecret?: string;
+  openAiApiKey?: string;
+}
+
+/**
+ * Authoritatively executes provider-switchable moderation on a claimed listing job.
+ */
+export async function processClaimedModerationJob(
   rawJob: unknown,
   supabase: SupabaseClient,
-  config: AzureWorkerConfig
+  options: ModerationJobOptions
 ): Promise<{ success: boolean; decision?: string; error?: string }> {
   const parsedJob = ClaimedAzureJobSchema.safeParse(rawJob);
   if (!parsedJob.success) {
@@ -101,6 +125,11 @@ export async function processClaimedAzureJob(
     (m) => Boolean(m.original_storage_path) && m.processing_status === "ready"
   );
 
+  // Five-check mode requires at least 1 photo
+  if (options.mode === "azure" && readyMedia.length === 0) {
+    return { success: false, error: "ZERO_MEDIA_DISALLOWED_FOR_MULTIMODAL_POLICY" };
+  }
+
   const mediaItems: Array<{
     id: string;
     originalStoragePath: string;
@@ -136,118 +165,222 @@ export async function processClaimedAzureJob(
     });
   }
 
-  // Canonical media manifest digest
+  // Media manifest digest
   const manifestEntries = mediaItems
     .map((item) => `${item.id}:${item.originalStoragePath}:${item.mediaSha256}`)
     .sort()
     .join("\n");
-  const computedMediaDigest = createHash("sha256").update(manifestEntries).digest("hex");
+  const computedMediaDigest = mediaItems.length > 0
+    ? createHash("sha256").update(manifestEntries).digest("hex")
+    : "";
 
-  // 2. Dispatch to Azure Moderation Controller
-  let azureVerdict = "INCOMPLETE";
-  let completedChecks: string[] = [];
-  let failedChecks: string[] = [];
-  let flags: unknown[] = [];
+  // 2. Authoritative Supabase Check 1: India Fraud Rules on title & description (Both Modes)
+  const completedChecks: string[] = [];
+  const failedChecks: string[] = [];
+  const flags: unknown[] = [];
   let modelVersions: Record<string, string> = {};
-  let returnedMediaDigest = "";
 
-  try {
-    const azureRes = await fetch(config.azureModerationEndpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Moderation-Secret": config.azureModerationSecret,
-      },
-      body: JSON.stringify({
-        listingId: job.listing_id,
-        listingRevision: job.listing_revision,
-        generationId: job.generation_id,
-        title: job.title,
-        description: job.description,
-        categorySlug,
-        mediaDigest: computedMediaDigest,
-        media: mediaItems,
-      }),
-      signal: AbortSignal.timeout(15000),
+  // Execute full India fraud rules engine
+  const indiaFraudResult = evaluateIndiaRules({
+    title: job.title,
+    description: job.description,
+  });
+  if (indiaFraudResult.flags && indiaFraudResult.flags.length > 0) {
+    flags.push(...indiaFraudResult.flags);
+  }
+
+  // Execute canonical MOD-01A listing text checker
+  const textCheckerResult = evaluateListingText({
+    title: job.title,
+    description: job.description,
+  });
+  if ("flags" in textCheckerResult && textCheckerResult.flags && textCheckerResult.flags.length > 0) {
+    flags.push(...textCheckerResult.flags);
+  }
+
+  if (
+    textCheckerResult.outcome === "invalid_input" ||
+    textCheckerResult.outcome === "checks_incomplete"
+  ) {
+    failedChecks.push("check_india_fraud_rules");
+  } else {
+    completedChecks.push("check_india_fraud_rules");
+  }
+
+  // 3. Authoritative Supabase Check 2: OpenAI Moderation
+  if (options.openAiApiKey) {
+    const openAiRes = await evaluateOpenAiModeration({
+      text: `${job.title}\n\n${job.description}`,
+      imageUrls: mediaItems.map((m) => m.scopedSignedUrl),
+      apiKey: options.openAiApiKey,
     });
 
-    if (azureRes.ok) {
-      const parsedAzure = AzureScanResponseSchema.safeParse(await azureRes.json());
-      if (parsedAzure.success) {
-        // Rigorous response identity validation
-        const az = parsedAzure.data;
-        if (
-          az.listingId !== job.listing_id ||
-          az.listingRevision !== job.listing_revision ||
-          az.generationId !== job.generation_id ||
-          az.scannedMediaCount !== mediaItems.length ||
-          az.manifest.length !== mediaItems.length
-        ) {
-          failedChecks.push("azure_response_identity_mismatch");
-          azureVerdict = "INCOMPLETE";
-        } else {
-          // Require equal lengths, unique image IDs, identical ID sets, exact original paths, and exact SHA-256 values
-          const returnedIds = az.manifest.map((m) => m.id ?? m.mediaId);
-          const uniqueReturnedIds = new Set(returnedIds);
-          const expectedIds = new Set(mediaItems.map((m) => m.id));
-
-          // Reject duplicates, omissions, and extras
-          const idsAreUnique = uniqueReturnedIds.size === az.manifest.length;
-          const idsMatchExactly =
-            idsAreUnique &&
-            uniqueReturnedIds.size === expectedIds.size &&
-            [...uniqueReturnedIds].every((id) => expectedIds.has(id!));
-
-          let allMediaMatched = idsMatchExactly;
-          if (allMediaMatched) {
-            for (const expectedItem of mediaItems) {
-              const matchedEntry = az.manifest.find(
-                (m) => (m.id ?? m.mediaId) === expectedItem.id
-              );
-              if (!matchedEntry) {
-                allMediaMatched = false;
-                break;
-              }
-              const returnedPath = matchedEntry.path ?? matchedEntry.originalStoragePath;
-              const returnedSha = matchedEntry.sha256 ?? matchedEntry.mediaSha256;
-              if (
-                returnedPath !== expectedItem.originalStoragePath ||
-                returnedSha !== expectedItem.mediaSha256
-              ) {
-                allMediaMatched = false;
-                break;
-              }
-            }
-          }
-
-          if (!allMediaMatched) {
-            failedChecks.push("azure_manifest_mismatch");
-            azureVerdict = "INCOMPLETE";
-          } else {
-            azureVerdict = az.verdict;
-            completedChecks = az.completedChecks;
-            failedChecks = az.failedChecks;
-            flags = az.flags;
-            modelVersions = az.modelVersions;
-            returnedMediaDigest = az.mediaDigest;
-          }
-        }
-      } else {
-        failedChecks.push("azure_response_schema_invalid");
+    if (openAiRes.completed) {
+      completedChecks.push("check_openai_moderation");
+      modelVersions.openAiModel = openAiRes.model;
+      if (openAiRes.flagged) {
+        flags.push(...openAiRes.flags.map((f) => ({ rule: "check_openai_moderation", ...f })));
       }
     } else {
-      failedChecks.push(`azure_http_${azureRes.status}`);
+      failedChecks.push("check_openai_moderation");
     }
-  } catch (err: any) {
-    failedChecks.push("azure_dispatch_network_timeout");
+  } else {
+    // Missing OpenAI API key must never count as a completed moderation check
+    failedChecks.push("check_openai_moderation");
   }
 
-  if (mediaItems.length > 0 && returnedMediaDigest !== computedMediaDigest) {
-    failedChecks.push("media_digest_mismatch");
-    azureVerdict = "INCOMPLETE";
+  let verdict: "APPROVE" | "REJECT" | "FLAG" | "INCOMPLETE" = "APPROVE";
+  let rulesetVersion: string = INDIA_BASELINE_RULESET_VERSION;
+  let scope: string = INDIA_BASELINE_EVALUATION_SCOPE;
+
+  // 4. Branch based on Mode: Baseline Two-Check vs Azure Five-Check
+  if (options.mode === "azure") {
+    rulesetVersion = INDIA_AZURE_RULESET_VERSION;
+    scope = INDIA_AZURE_EVALUATION_SCOPE;
+
+    if (!options.azureEndpoint || !options.azureSecret) {
+      failedChecks.push("azure_missing_configuration");
+      verdict = "INCOMPLETE";
+    } else {
+      let returnedMediaDigest = "";
+      try {
+        const azureRes = await fetch(options.azureEndpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Moderation-Secret": options.azureSecret,
+          },
+          body: JSON.stringify({
+            listingId: job.listing_id,
+            listingRevision: job.listing_revision,
+            generationId: job.generation_id,
+            title: job.title,
+            description: job.description,
+            categorySlug,
+            mediaDigest: computedMediaDigest,
+            media: mediaItems,
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+
+        if (azureRes.ok) {
+          const parsedAzure = AzureScanResponseSchema.safeParse(await azureRes.json());
+          if (parsedAzure.success) {
+            const az = parsedAzure.data;
+            if (
+              az.listingId !== job.listing_id ||
+              az.listingRevision !== job.listing_revision ||
+              az.generationId !== job.generation_id ||
+              az.scannedMediaCount !== mediaItems.length ||
+              az.manifest.length !== mediaItems.length
+            ) {
+              failedChecks.push("azure_response_identity_mismatch");
+              verdict = "INCOMPLETE";
+            } else {
+              const returnedIds = az.manifest.map((m) => m.id ?? m.mediaId);
+              const uniqueReturnedIds = new Set(returnedIds);
+              const expectedIds = new Set(mediaItems.map((m) => m.id));
+
+              const idsMatchExactly =
+                uniqueReturnedIds.size === az.manifest.length &&
+                uniqueReturnedIds.size === expectedIds.size &&
+                [...uniqueReturnedIds].every((id) => expectedIds.has(id!));
+
+              let allMediaMatched = idsMatchExactly;
+              if (allMediaMatched) {
+                for (const expectedItem of mediaItems) {
+                  const matchedEntry = az.manifest.find(
+                    (m) => (m.id ?? m.mediaId) === expectedItem.id
+                  );
+                  if (!matchedEntry) {
+                    allMediaMatched = false;
+                    break;
+                  }
+                  const returnedPath = matchedEntry.path ?? matchedEntry.originalStoragePath;
+                  const returnedSha = matchedEntry.sha256 ?? matchedEntry.mediaSha256;
+                  if (
+                    returnedPath !== expectedItem.originalStoragePath ||
+                    returnedSha !== expectedItem.mediaSha256
+                  ) {
+                    allMediaMatched = false;
+                    break;
+                  }
+                }
+              }
+
+              if (!allMediaMatched) {
+                failedChecks.push("azure_manifest_mismatch");
+                verdict = "INCOMPLETE";
+              } else {
+                // Add Azure completed checks (excluding checks Supabase authoritatively evaluated)
+                for (const c of az.completedChecks) {
+                  if (!completedChecks.includes(c)) completedChecks.push(c);
+                }
+                for (const f of az.failedChecks) {
+                  if (!failedChecks.includes(f)) failedChecks.push(f);
+                }
+                flags.push(...az.flags);
+                modelVersions = { ...modelVersions, ...az.modelVersions };
+                returnedMediaDigest = az.mediaDigest;
+
+                // Evaluate OCR text and QR payloads with Supabase India fraud rules
+                const ocrTexts = az.extractedTexts || [];
+                const qrPayloads = az.qrPayloads || [];
+                const mediaFraud = evaluateIndiaRules({
+                  title: job.title,
+                  description: job.description,
+                  ocrTexts,
+                  qrPayloads,
+                });
+                if (mediaFraud.flags.length > 0) {
+                  flags.push(...mediaFraud.flags);
+                }
+                for (const text of [...ocrTexts, ...qrPayloads]) {
+                  const ocrFraud = evaluateListingText({ title: "Media Text", description: text });
+                  if (ocrFraud.outcome === "needs_review") {
+                    flags.push(...ocrFraud.flags);
+                  }
+                }
+
+                if (az.verdict === "REJECT" || az.verdict === "FLAG" || flags.length > 0) {
+                  verdict = "FLAG";
+                } else if (az.verdict === "INCOMPLETE" || failedChecks.length > 0) {
+                  verdict = "INCOMPLETE";
+                } else {
+                  verdict = "APPROVE";
+                }
+              }
+            }
+          } else {
+            failedChecks.push("azure_response_schema_invalid");
+            verdict = "INCOMPLETE";
+          }
+        } else {
+          failedChecks.push(`azure_http_${azureRes.status}`);
+          verdict = "INCOMPLETE";
+        }
+      } catch (err: any) {
+        failedChecks.push("azure_dispatch_network_timeout");
+        verdict = "INCOMPLETE";
+      }
+
+      if (mediaItems.length > 0 && returnedMediaDigest !== computedMediaDigest) {
+        failedChecks.push("media_digest_mismatch");
+        verdict = "INCOMPLETE";
+      }
+    }
+  } else {
+    // Baseline Two-Check Mode
+    if (flags.length > 0) {
+      verdict = "FLAG";
+    } else if (failedChecks.length > 0) {
+      verdict = "INCOMPLETE";
+    } else {
+      verdict = "APPROVE";
+    }
   }
 
-  // 3. Register trusted scan receipt in app_security before finalization
+  // 5. Register trusted scan receipt in app_security
   const { error: registerError } = await supabase.rpc("register_moderation_scan_receipt", {
     p_request_id: job.request_id,
     p_claim_token: job.claim_token,
@@ -255,9 +388,9 @@ export async function processClaimedAzureJob(
     p_listing_revision: job.listing_revision,
     p_generation_id: job.generation_id,
     p_media_digest: computedMediaDigest,
-    p_verdict: azureVerdict,
-    p_ruleset_version: INDIA_RULESET_VERSION,
-    p_scope: INDIA_EVALUATION_SCOPE,
+    p_verdict: verdict,
+    p_ruleset_version: rulesetVersion,
+    p_scope: scope,
     p_completed_checks: completedChecks,
     p_failed_checks: failedChecks,
     p_flags: flags,
@@ -267,34 +400,34 @@ export async function processClaimedAzureJob(
   });
 
   if (registerError) {
-    // If lease expired during slow scan/dispatch, fail closed gracefully without attempting finalizer
     if (registerError.message.includes("LEASE_EXPIRED")) {
       return { success: false, error: "LEASE_EXPIRED_DURING_SCAN" };
     }
     return { success: false, error: `RECEIPT_REGISTRATION_FAILED: ${registerError.message}` };
   }
 
-  // 4. Map verdict to publication outcome
+  // 6. Map verdict to publication outcome
   let outcome = "checks_incomplete";
-  if (azureVerdict === "APPROVE") {
+  if (verdict === "APPROVE") {
     outcome = "no_review_flags";
-  } else if (azureVerdict === "REJECT" || azureVerdict === "FLAG") {
+  } else if (verdict === "REJECT" || verdict === "FLAG") {
     outcome = "needs_review";
   }
 
-  // 5. Commit into authoritative publication gate (verifies registered receipt under lock)
+  // 7. Commit into authoritative publication gate
   const { data, error } = await supabase.rpc("impl_finalize_moderation_result", {
     p_request_id: job.request_id,
     p_claim_token: job.claim_token,
     p_outcome: outcome,
-    p_ruleset_version: INDIA_RULESET_VERSION,
-    p_scope: INDIA_EVALUATION_SCOPE,
+    p_ruleset_version: rulesetVersion,
+    p_scope: scope,
     p_completed_rules: completedChecks,
     p_failed_rules: failedChecks,
     p_flags: flags,
     p_errors: {
       media_digest: computedMediaDigest,
       scanned_media_count: mediaItems.length,
+      mode: options.mode,
     },
   });
 
@@ -303,4 +436,20 @@ export async function processClaimedAzureJob(
   }
 
   return { success: true, decision: (data as any)?.decision };
+}
+
+/**
+ * Drop-in backward-compatible entry point for Azure Moderation V1 tests and dispatchers.
+ */
+export async function processClaimedAzureJob(
+  rawJob: unknown,
+  supabase: SupabaseClient,
+  config: AzureWorkerConfig
+): Promise<{ success: boolean; decision?: string; error?: string }> {
+  return processClaimedModerationJob(rawJob, supabase, {
+    mode: "azure",
+    azureEndpoint: config.azureModerationEndpoint,
+    azureSecret: config.azureModerationSecret,
+    openAiApiKey: config.openAiApiKey,
+  });
 }

@@ -13,6 +13,7 @@ export default defineConfig({
     setupFiles: ["./tests/setup/no-network.ts"],
     include: [
       "src/__tests__/moderation-india-rules.test.ts",
+      "src/__tests__/moderation-mode-selector.test.ts",
       "src/__tests__/azure-moderation-orchestrator.test.ts",
       "src/__tests__/azure-worker-security.test.ts",
     ],
