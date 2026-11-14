@@ -376,6 +376,8 @@ const RECEIPT_CHAIN = {
   'accessories-v1-activation|test': ['test_foundation_run_id'],
   'accessories-v1-foundation|prod': ['test_foundation_run_id', 'test_activation_run_id'],
   'accessories-v1-activation|prod': [],
+  'wearables-v11-catalogue|test': [],
+  'wearables-v11-catalogue|prod': ['test_catalogue_run_id'],
   'tablets-v2-catalogue|test': [],
   'tablets-v2-catalogue|prod': ['test_catalogue_run_id'],
   'tablets-v1-foundation|test': [],
@@ -388,7 +390,7 @@ const RECEIPT_CHAIN = {
   'wearables-v1-activation|prod': []
 };
 // Candidates whose receipts must carry the installed-statements ledger hash (Test→Production byte identity).
-export const usesLedgerHash = candidate => candidate.id === 'tablets-v2-catalogue' || /^(tablets|wearables)-v1-/.test(candidate.id);
+export const usesLedgerHash = candidate => ['tablets-v2-catalogue', 'wearables-v11-catalogue'].includes(candidate.id) || /^(tablets|wearables)-v1-/.test(candidate.id);
 
 // Minimal bounded ZIP reader for the single GitHub artifact archive (stored or deflate entries only).
 export function readZipEntries(buf) {
@@ -457,7 +459,7 @@ export function validateReceipt(p, c, files, {originalChain = false} = {}) {
     run: String(r.releaseWorkflowRun) === p.runId,
     postflight: r.postflightVerified === true && RECEIPT_STATUSES.includes(r.status),
     stage: r.stage === candidate.stage,
-    web: candidate.id === 'tablets-v2-catalogue' && p.environment === 'prod'
+    web: ['tablets-v2-catalogue', 'wearables-v11-catalogue'].includes(candidate.id) && p.environment === 'prod'
       ? SHA40.test(r.webStagingSha ?? '') && r.webStagingSha === c.WEB_STAGING_SHA
       : (r.webStagingSha ?? null) === stagingWeb,
     chain: Array.isArray(r.priorRuns) && r.priorRuns.length === chain.length && chain.every((key, i) => {
@@ -538,7 +540,7 @@ export async function requireStageEvidence(priorRuns, c, fetcher = fetch, {allow
       || (historical && !allowAncestor)) {
       fail('EVIDENCE_RUN_NOT_VERIFIED', p.key);
     }
-    const immutable = allowFoundationAncestors || isWearablesTestFoundation || policyAncestor || candidate.id === 'tablets-v2-catalogue';
+    const immutable = allowFoundationAncestors || isWearablesTestFoundation || policyAncestor || ['tablets-v2-catalogue', 'wearables-v11-catalogue'].includes(candidate.id);
     if (immutable && (c.GITHUB_REPOSITORY !== BACKEND || !c.GITHUB_TOKEN || !ID.test(p.runId)
         || !SHA40.test(run.head_sha) || !SHA40.test(c.GITHUB_SHA)
         || String(run.id) !== p.runId || run.workflow_id !== WORKFLOW_ID
