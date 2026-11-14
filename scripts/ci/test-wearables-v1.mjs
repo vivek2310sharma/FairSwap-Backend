@@ -4,19 +4,27 @@
 //   node scripts/ci/test-wearables-v1.mjs [--pglite-module=<path>] [--web=<FairSwap-Web path>]
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-import {readFileSync,existsSync} from 'node:fs';
+import {readFileSync,existsSync,readdirSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {resolve,dirname} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {installPostingFixture} from './posting-v2-fixture.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 const opt=n=>process.argv.slice(2).find(a=>a.startsWith(`--${n}=`))?.slice(n.length+3);
-for(const a of process.argv.slice(2))if(!/^--(pglite-module|web)=/.test(a))throw new Error('Use only --pglite-module=<path> and --web=<path>');
+for(const a of process.argv.slice(2))if(a!=="--catalogue-update"&&!/^--(pglite-module|web)=/.test(a))throw new Error('Use only --pglite-module=<path> and --web=<path>');
 const web=resolve(opt('web')??resolve(root,'../FairSwap-Web'));
 const require=createRequire(resolve(web,'package.json'));
 const {PGlite}=opt('pglite-module')?await import(pathToFileURL(resolve(opt('pglite-module'))).href):require('@electric-sql/pglite');
 const {nameKey,baseKey}=await import(pathToFileURL(resolve(web,'scripts/wearables/name-key.mjs')).href);
-const catalogue=JSON.parse(readFileSync(resolve(web,'src/lib/listings/wearables/catalogue.generated.json'),'utf8'));
+let catalogue=JSON.parse(readFileSync(resolve(root,'tests/wearables-v1/web-fixture/src/lib/listings/wearables/catalogue.generated.json'),'utf8'));
+const {runWearablesV11Preflight,runWearablesV11Postflight}=await import('../release/wearables-v11-release.mjs');
+async function gate(db,fn,...args) {
+ let sql;
+ try {fn(...args,s=>{sql=s;throw Error('capture');});}catch(e){if(!sql)throw e;}
+ const results=await db.exec(sql),row=results.find(r=>r.rows?.[0]?.jsonb_build_object)?.rows[0];
+ return fn(...args,()=>row.jsonb_build_object);
+}
+const updateMode=process.argv.includes('--catalogue-update');
 const fm=resolve(root,'supabase/forward-migrations');
 const sql=p=>readFileSync(resolve(fm,p),'utf8');
 const FILES={recovery:'posting-v2/session-recovery/supabase/migrations/20261101234604_posting_v212_session_recovery.sql',phoneOn:'posting-v2/activation/supabase/migrations/20261025135152_activate_posting_v2_mobiles.sql',acc:'accessories-v1/foundation/supabase/migrations/20261102164135_accessories_v1.sql',wear:'wearables-v1/supabase/migrations/20261104120000_posting_v2_wearables.sql',wearOn:'wearables-v1/activation/supabase/migrations/20261104230000_activate_wearables_v1.sql'};
@@ -167,6 +175,46 @@ try{
   assert.equal(c.transfer_ready,true);assert.equal(c.other_model,false);assert.equal(c.catalogue_revision,catalogue.revision);
   assert(!('ram' in c.details)&&!('storage' in c.details));
  });
+ if(updateMode) await test('V1.1 update preserves 607 IDs, source rows, existing listings, contexts, ACLs and functions',async()=>{
+  const beforeModels=(await db.query('select id,brand_id,name,series,source_row from public.wearable_models_v1 order by id')).rows;
+  const beforeListings=(await db.query('select * from public.listings order by id')).rows;
+  const beforeContexts=(await db.query('select * from public.listing_wearable_contexts_v1 order by listing_id')).rows;
+  const metadata=async()=> (await db.query("select oid,prosrc,proacl,prosecdef,proconfig from pg_proc where pronamespace in ('public'::regnamespace,'app_security'::regnamespace) order by oid")).rows;
+  const beforeMetadata=await metadata();
+  const releaseBefore=await gate(db,runWearablesV11Preflight);
+  const dir=resolve(fm,'wearables-v11/supabase/migrations'),file=readdirSync(dir).find(x=>x.endsWith('.sql'));
+  await db.exec(readFileSync(resolve(dir,file),'utf8'));
+  assert.equal((await gate(db,runWearablesV11Postflight,releaseBefore)).verified,true);
+  catalogue=JSON.parse(readFileSync(resolve(web,'src/lib/listings/wearables/catalogue.generated.json'),'utf8'));
+  assert.equal((await q('select public.wearables_v1_catalogue()')).revision,catalogue.revision);
+  const all=(await db.query('select id,brand_id,name,series,source_row from public.wearable_models_v1 order by id')).rows;
+  for(const m of beforeModels)assert.deepEqual(all.find(x=>x.id===m.id),m);
+  assert.equal(all.length,catalogue.rows_total);
+  assert.deepEqual((await db.query('select * from public.listings order by id')).rows,beforeListings);
+  assert.deepEqual((await db.query('select * from public.listing_wearable_contexts_v1 order by listing_id')).rows,beforeContexts);
+  assert.deepEqual(await metadata(),beforeMetadata);
+  const approved=(await db.query("select id,brand_id,device_type,series,name from public.wearable_models_v1 where status='approved' order by id")).rows;
+  assert.deepEqual(approved,[...catalogue.models].sort((a,b)=>a.id.localeCompare(b.id)).map(m=>({id:m.id,brand_id:m.brand_id,device_type:m.type,series:m.series,name:m.name})));
+  assert.equal(await q("select device_type from public.wearable_models_v1 where name='Amazfit Active Edge'"),'smartwatch');
+  assert.equal(await q("select device_type from public.wearable_models_v1 where name='Amazfit Helio Strap'"),'fitness_band');
+  await assert.rejects(()=>db.exec(readFileSync(resolve(dir,file),'utf8')),/WEARABLES_V11_BASELINE_DRIFT/);await db.exec('rollback');
+  assert.equal(await q('select count(*)::int from public.wearable_models_v1'),catalogue.rows_total);
+ });
+ if(updateMode) await test('V1.1 baseline drift and postcondition failure roll back every write',async()=>{
+  const dir=resolve(fm,'wearables-v11/supabase/migrations');const update=readFileSync(resolve(dir,readdirSync(dir).find(x=>x.endsWith('.sql'))),'utf8');
+  for(const drift of [true,false]) {
+   const d=await base();try {
+    await d.exec(sql(FILES.wear));
+    if(drift)await d.exec("update public.wearable_models_v1 set name='Drifted name' where source_row=2");
+    const before=(await d.query('select * from public.wearable_models_v1 order by id')).rows;
+    const fail=drift?update:update.replace(' if (select count(*) from public.wearable_models_v1)', ' if true or (select count(*) from public.wearable_models_v1)');
+    await assert.rejects(()=>d.exec(fail),drift?/WEARABLES_V11_BASELINE_DRIFT/:/WEARABLES_V11_SEED_INCONSISTENT/);
+    await d.exec('rollback');
+    assert.deepEqual((await d.query('select * from public.wearable_models_v1 order by id')).rows,before);
+    assert.equal((await d.query('select revision from public.wearable_catalogue_revision_v1')).rows[0].revision,'8dd5783ac9b7e12e');
+   }finally{await d.close();}
+  }
+ });
  await test('unauthorized submissions are rejected',async()=>{
   const t=await prepW();
   await as(B);await bad(t.payload,/Upload session unavailable/);await as(A);
@@ -218,7 +266,7 @@ try{
   await bad(other('Ultrahuman Home',brand('Ultrahuman')),/not_a_wearable/);await bad(other('Home',brand('Ultrahuman')),/not_a_wearable/);
   await bad(other('Noise Luna Ring Gold',brand('Noise')),/possible_variant/);await bad(other('luna ring matte',brand('Noise')),/possible_variant/);
   await bad(other('Whoop 4.0',null),/./);await bad(other('Fitbit Ace 3',brand('Fitbit')),/kids_tracker/);await bad(other('Fitbit  ace-3',brand('Fitbit')),/kids_tracker/);
-  await bad(other('Amazfit Helio Strap',brand('Amazfit')),/type_mismatch/);
+  await bad(other('Amazfit Helio Strap',brand('Amazfit')),updateMode?/screenless_contract/:/type_mismatch/);
   await bad(other(model('smartwatch').name,model('smartwatch').brand_id),/WEARABLE_MODEL_LISTED/);
   await bad({...t.payload,model_id:null,other_model:''},/model name/);
   const ok=await submit(other('Zephyr Z1 Prototype'));assert.deepEqual(await flags(ok.listing_id),['other_model']);

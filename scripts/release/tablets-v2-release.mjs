@@ -126,7 +126,7 @@ function changedFunctionChecks(path) {
 }
 
 export async function verifyTabletsV2Web(plan, context, fetcher = fetch, testReceipt) {
-  if (plan.candidate.id !== 'tablets-v2-catalogue' || plan.target !== 'production') return null;
+  if (!['tablets-v2-catalogue','wearables-v11-catalogue'].includes(plan.candidate.id) || plan.target !== 'production') return null;
   const pin = webPin(plan.candidate);
   const token = context.WEB_EVIDENCE_TOKEN;
   if (!token) fail('WEB_EVIDENCE_UNAVAILABLE');

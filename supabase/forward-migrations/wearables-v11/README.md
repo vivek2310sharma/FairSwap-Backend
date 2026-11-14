@@ -1,0 +1,27 @@
+# Wearables V1.1 Backend release package — 14 November 2026
+
+607 immutable source rows + 22 additions = 629 total: 609 approved, 14 quarantined, 6 excluded. Two new type corrections (six cumulative). Revision `8dd5783ac9b7e12e` → `d5868fe5ffe2e4c5`. SQL SHA-256 `de4a8581988ec53e51c34b28836e24228df49b83dade94ef09d025be19900cf3`.
+
+Galaxy Watch9 and Pixel Watch 5 are added as smartwatches. Galaxy Watch Ultra2 follows the existing Samsung Ultra sports_gps_watch taxonomy. No size/colour/LTE model duplication. All 22 additions have model-specific manufacturer references in the versioned supplement, including direct Noise ColorFit Ultra 4 confirmation. Samsung Watch9 currently says “Not for sale”; confirmed existence is not a stock promise. India availability qualifiers are recorded per entry. Original CSV SHA-256, all 607 IDs/source rows, corrections and historical V1 migration bytes stay unchanged. Helio Strap remains quarantined for the screenless condition-contract gap. Existing listing snapshots/FKs, RLS/grants, locked rejection and moderation remain intact.
+
+## CI integration
+
+The old Web CI Backend pin `18511802f1f55806b13a699f026348de41d50bc6` lacks a frozen Web fixture. Legacy checks now pin verified base `4122670aee37dcd859b54d117f9d701ed6758e02`, passing that checkout's frozen 607-row `tests/wearables-v1/web-fixture` to both old runners. Legacy checks never read current Web JSON.
+
+The new update path requires non-secret Web repository variable `WEARABLES_V11_BACKEND_SHA`: set it to the full immutable commit SHA containing the integrated corrected Backend. That SHA cannot exist before ChatGPT commits the package; no invented pin is supplied. Empty values, branch names and abbreviated SHAs fail before checkout. After checkout the verifier requires matching HEAD and all reviewed runner/migration/fixture content hashes in `scripts/wearables/backend-ci-contract.json`. Both update-mode runners then receive `$GITHUB_WORKSPACE`, the exact Web commit under CI. Existing read-only Backend App token is reused; no new secrets.
+
+Backend CI retains the untouched V1 fixture and runs update/coexistence against a separate frozen V1.1 consumed Web export. `web-ci-contract.json` binds the export to the exact current Web JSON/name-key hashes; Web CI pins these Backend artifacts too and reruns against actual Web sources. No Backend cross-repository credentials or floating branch refs are added.
+
+Regenerate/check all consumed CI artifacts from Web with `node scripts/wearables/build-ci-contract.mjs --backend=/abs/FairSwap-Backend [--check]`. Existing workflows only: Web `ci.yml`, Backend `backend-ci.yml` and `reusable-supabase-release.yml`. The release workflow now offers `wearables-v11-catalogue` and provides its Production Web evidence token. Existing candidates' conditions and behavior are preserved.
+
+## Data generation and migration
+
+`node scripts/wearables/build-catalogue.mjs [--check]` merges unchanged CSV/corrections with the reviewed supplement. Original two-argument build remains the historical V1 contract. Supplement source rows >=1000001 are permanent synthetic provenance keys. `approx_release_year` is never exposed or used. Use `scripts/wearables/build-update.mjs --migration=<candidate absolute path> --manifest=<Backend catalogue-manifest.json> [--check]` to regenerate the new forward-only SQL and manifest; do not hand-edit generated output.
+
+Candidate `20261111195641_wearables_v11_catalogue.sql` is still unapplied according to ChatGPT's supplied read-only hosted preflight: both targets have foundation/activation, 607/587 rows, 35 brands, old revision and digest `0eca415b7889a3f4bf81fdca5ce0da41`, no referencing contexts, no V1.1 version. This is owner-reported evidence, not an agent hosted query. Existing registry hash verification permits a revised unapplied candidate; the runner refuses an already-recorded catalogue candidate and SQL compares the full baseline under catalogue locks before atomic data/revision commit. If target history changes, stop and create a new forward version. Historical SQL/ledger bytes are never edited.
+
+## Deployment and rollback (ChatGPT-owned; not executed)
+
+First integrate Backend and set the immutable Web CI pin above. GitHub CI → FairSwapTest SQL/Web → automated post-deployment verification → FairSwapProd SQL/Web → automated verification. Keep existing server flag `POST_AD_WEARABLES_V1_ENABLED=false` during each DB/Web revision transition; apply only the reviewed candidate through the existing pinned CLI 2.117.0 reusable workflow, deploy matching Web revision, restore the configured flag and run automated authenticated acceptance. Production requires successful Test catalogue receipt/ledger identity and matching successful staging Web CI/deployment; no owner manual staging-test gate. No runtime environment variables or secrets added. Targets: Test `wpppxlnbzqynvhpeuavd`, Prod `kriuhwppxgxsyyrbjsau`.
+
+Rollback: Web flag OFF → Web revert/previous Vercel deployment; retain all model IDs, listing contexts and migration history. Old Web/DB mismatches fail closed. Reopening after correction requires forward compensating SQL plus matching regenerated Web revision, retaining additions referenced by listings. Never delete referenced additions or label different data with the old revision. Owner Production review follows automated deployment receipts. Native/hosted execution and exact local evidence are reported in delivered HANDOFF.md.

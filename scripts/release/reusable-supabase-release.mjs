@@ -13,6 +13,7 @@ import {
   assertLedgerOrdering, assertStageInputs, requireStageEvidence, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved, verifyAccessoriesLedger
 } from './accessories-v1-release.mjs';
 
+import {runWearablesV11Preflight, runWearablesV11Postflight} from './wearables-v11-release.mjs';
 import {runTabletsV2Preflight, runTabletsV2Postflight, verifyTabletsV2Web} from './tablets-v2-release.mjs';
 import {readTabletsLedger, runTabletsPostflight, runTabletsPreflight, verifyTabletsLedger} from './tablets-v1-release.mjs';
 import {ADOPTED_STATUS, assertCliSupportsIncludeAll, assertLedgerTail, assertMobilePhonesProvenance, assertSwitchingPrerequisite, runWearablesPostflight, runWearablesPreflight} from './wearables-v1-release.mjs';
@@ -525,6 +526,7 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
     }
     return check;
   }
+  if (candidate.id === 'wearables-v11-catalogue') return runWearablesV11Postflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
   if (candidate.id === MOBILE_CATALOGUE_CANDIDATE) {
     return verifyMobileCataloguePostflight(catalogueBefore,
       sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
@@ -579,7 +581,7 @@ export async function releaseReusable({
   const stagePlan = assertStageInputs(candidate, environment, context);
 
   let catalogueWebEvidence;
-  if (candidate.id === 'tablets-v2-catalogue' && environment === 'FairSwapProd') {
+  if (['tablets-v2-catalogue','wearables-v11-catalogue'].includes(candidate.id) && environment === 'FairSwapProd') {
     const receipts = await requireStageEvidence(stagePlan.priorRuns, context, fetcher);
     if (receipts.test_catalogue_run_id.ledgerStatementsSha256 !== context.TABLETS_CANDIDATE_LEDGER_SHA) {
       throw new Error('REUSABLE_RELEASE_TABLETS_TEST_LEDGER_EVIDENCE_REQUIRED');
@@ -684,12 +686,13 @@ export async function releaseReusable({
     const initialLedger = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
     let isAlreadyApplied = false;
     let beforeRemote = null;
+    const catalogueUpdate = candidate.id === 'wearables-v11-catalogue';
     const catalogue = candidate.id === 'tablets-v2-catalogue';
     const tablets = catalogue || candidate.id.startsWith('tablets-v1-');
     const wearables = candidate.id.startsWith('wearables-v1-');
     // Tablets, Wearables and Mobile Catalogue pin the ledger: history is read before apply, must not change, and the installed
     // statements hash is carried Test -> Production through the receipts.
-    const pinned = tablets || wearables || mobileCatalogue;
+    const pinned = tablets || wearables || mobileCatalogue || catalogueUpdate;
     const label = mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
     const foundationVersion = wearables ? '20261104120000' : '20261102165946';
     const readLedger = () => readTabletsLedger(sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
@@ -782,8 +785,9 @@ export async function releaseReusable({
       }
       if (candidate.strict) {
         phase = 'preflight';
+        if (catalogueUpdate) catalogueBefore = runWearablesV11Preflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
         if (catalogue) catalogueBefore = runTabletsV2Preflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
-        const preflight = catalogue ? null : tablets ? runTabletsPreflight : wearables ? runWearablesPreflight : runLivePreflight;
+        const preflight = catalogue || catalogueUpdate ? null : tablets ? runTabletsPreflight : wearables ? runWearablesPreflight : runLivePreflight;
         if (preflight) preflight(candidate, sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
       }
         // 4. Copy candidate migration into workspace
@@ -848,7 +852,7 @@ export async function releaseReusable({
       dryRunPending,
       postflightVerified: true,
       ...(pinned ? {ledgerStatementsSha256} : {}),
-      ...(catalogue ? {webStagingEvidence: catalogueWebEvidence ?? null} : {}),
+      ...(catalogue || catalogueUpdate ? {webStagingEvidence: catalogueWebEvidence ?? null} : {}),
       ...(mobileCatalogue ? {
         postflightScope: MOBILE_CATALOGUE_SCOPE,
         releaseWorkflowAttempt: context.GITHUB_RUN_ATTEMPT,

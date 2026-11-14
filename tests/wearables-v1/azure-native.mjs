@@ -4,6 +4,7 @@
 import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {installPostingFixture} from '../../scripts/ci/posting-v2-fixture.mjs';
@@ -14,7 +15,8 @@ import {verifyRemotePostflight} from '../../scripts/release/reusable-supabase-re
 import {NativeFixture,literal} from '../posting-v212/native-adapter.mjs';
 const webArg=process.argv.slice(4).find(a=>a.startsWith('--web='));
 const web=resolve(webArg?webArg.slice(6):'../FairSwap-Web');
-const catalogue=JSON.parse(readFileSync(resolve(web,'src/lib/listings/wearables/catalogue.generated.json'),'utf8'));
+// This suite installs the immutable V1 foundation; keep its matching V1 reference.
+const catalogue=JSON.parse(readFileSync(new URL('./web-fixture/src/lib/listings/wearables/catalogue.generated.json',import.meta.url),'utf8'));
 const db=new NativeFixture(process.argv[2],process.argv[3]);let checks=0;
 const u=randomUUID(),other=randomUUID(),city=randomUUID(),locality=randomUUID();
 const ctx=(owner=u,name='w_client',role='authenticated')=>({owner,role,name});
