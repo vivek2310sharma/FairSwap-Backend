@@ -420,7 +420,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'wearables-v1-activation', 'wearables-v1-foundation']);
+  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -1085,7 +1085,7 @@ test('workflow verifies the deployed Web release before any database step and us
   }
   assert(yaml.includes("REQUIRE_REAL_PG: '1'"));
   // the Web token must never reach the step that holds database credentials
-  for (const m of yaml.matchAll(/- name: Execute [^\n]*\n[\s\S]*?(?=\n      - |\n  \w|$)/g)) assert(!m[0].includes('WEB_EVIDENCE_TOKEN') || m[0].includes("WEB_EVIDENCE_TOKEN: ${{ inputs.candidate == 'tablets-v2-catalogue' && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}"));
+  for (const m of yaml.matchAll(/- name: Execute [^\n]*\n[\s\S]*?(?=\n      - |\n  \w|$)/g)) assert(!m[0].includes('WEB_EVIDENCE_TOKEN') || m[0].includes("WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue') && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}"));
 });
 
 test('workflow gates Production behind verified evidence and keeps moderation auto-promotion', () => {
@@ -3212,3 +3212,29 @@ test('real PostgreSQL: Mobile Catalogue verifies IDs, listing references, fallba
         'revoke update (name) on public.phone_models from authenticated', /AFTER_INVALID/);
     } finally { pg.stop(); }
   });
+// Catalogue updates reuse the same ledger, receipt and staging Web evidence gates.
+test('Wearables V1.1 registry hash and Test-to-Production evidence fail closed', () => {
+ const candidate=getCandidate('wearables-v11-catalogue');
+ assert.equal(verifyCandidateSha(candidate.id).sha256,candidate.sha256);
+ assert.equal(candidate.strict,true);assert.equal(candidate.autoPromote,false);
+ assert.deepEqual(candidate.requiredLedgerVersions,['20261104120000','20261104230000']);
+ assert.equal(planDispatch({candidateId:candidate.id,target:'test'}).priorRuns.length,0);
+ assert.throws(()=>planDispatch({candidateId:candidate.id,target:'production'}),/EVIDENCE_RUN_REQUIRED/);
+ assert.throws(()=>planDispatch({candidateId:candidate.id,target:'production',inputs:{test_catalogue_run_id:'123'}}),/WEB_STAGING_VERIFICATION_REQUIRED/);
+ const plan=planDispatch({candidateId:candidate.id,target:'production',inputs:{test_catalogue_run_id:'123',web_staging_sha:'a'.repeat(40)}});
+ assert.equal(plan.priorRuns[0].candidateId,candidate.id);assert.equal(plan.priorRuns[0].environment,'test');
+ assert.throws(()=>planDispatch({candidateId:candidate.id,target:'production',inputs:{test_e2e_run_id:WEARABLES_E2E_WAIVER.input}}),/E2E_WAIVER_SCOPE_INVALID/);
+});
+
+test('Wearables V1.1 postflight rejects catalogue, enabled-state and security metadata drift', async () => {
+ const {runWearablesV11Preflight,runWearablesV11Postflight}=await import('../../scripts/release/wearables-v11-release.mjs');
+ const m=JSON.parse(readFileSync('supabase/forward-migrations/wearables-v11/catalogue-manifest.json'));
+ const before={revision:m.oldRevision,digest:m.oldDigest,enabled:true,intact:true,metadata:{functions:['unchanged']}};
+ const after={...before,revision:m.revision,digest:m.digest};const exec=value=>()=>JSON.stringify(value);
+ assert.deepEqual(runWearablesV11Preflight(exec(before)),before);
+ assert.deepEqual(runWearablesV11Postflight(before,exec(after)),{verified:true,revision:m.revision});
+ assert.throws(()=>runWearablesV11Preflight(exec({...before,digest:'changed'})),/BASELINE_DRIFT/);
+ for(const patch of [{revision:'old'},{digest:'changed'},{enabled:false},{intact:false},{metadata:{functions:['drift']}}])
+  assert.throws(()=>runWearablesV11Postflight(before,exec({...after,...patch})),/WEARABLES_V11/);
+ assert.throws(()=>runWearablesV11Postflight(undefined,exec(after)),/PREFLIGHT_REQUIRED/);
+});

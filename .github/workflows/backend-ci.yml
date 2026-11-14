@@ -113,6 +113,16 @@ jobs:
           node scripts/ci/test-wearables-v1.mjs --pglite-module="$PG" --web="$WEB"
           node scripts/ci/test-wearables-tablets-v1.mjs --pglite-module="$PG" --web="$WEB"
 
+      - name: Require Wearables V1.1 frozen-input parity, update, coexistence and release gates
+        timeout-minutes: 12
+        run: |
+          node --test tests/wearables-v11/ci-contract.test.mjs
+          WEB="$GITHUB_WORKSPACE/tests/wearables-v11/web-fixture"
+          PG=tests/ratings/node_modules/@electric-sql/pglite/dist/index.js
+          node scripts/ci/test-wearables-v1.mjs --catalogue-update --pglite-module="$PG" --web="$WEB"
+          node scripts/ci/test-wearables-tablets-v1.mjs --catalogue-update --pglite-module="$PG" --web="$WEB"
+          node --test tests/release/reusable-supabase-release.test.mjs
+
       - name: Require all 115 public search regression checks (pinned PGlite)
         timeout-minutes: 2
         run: |

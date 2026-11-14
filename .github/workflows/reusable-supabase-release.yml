@@ -18,6 +18,7 @@ on:
           - tablets-v1-foundation
           - tablets-v1-activation
           - tablets-v2-catalogue
+          - wearables-v11-catalogue
           - wearables-v1-foundation
           - wearables-v1-activation
       approved_sha:
@@ -46,7 +47,7 @@ on:
         required: false
         type: string
       test_catalogue_run_id:
-        description: 'Tablets V2 Production: successful Test catalogue release run on the same reviewed Backend commit'
+        description: 'Catalogue Production: successful Test catalogue release run on the same reviewed Backend commit'
         required: false
         type: string
       test_foundation_run_id:
@@ -426,7 +427,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           MOBILE_CATALOGUE_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.mobile_catalogue_ledger_sha }}
-          WEB_EVIDENCE_TOKEN: ${{ inputs.candidate == 'tablets-v2-catalogue' && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
+          WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue') && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
           ACCESSORIES_RECHECK_PROD_FOUNDATION: ${{ needs.verify.outputs.accessories_recheck_prod_foundation }}
           ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
           TARGET: ${{ inputs.target }}
