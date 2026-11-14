@@ -5,7 +5,18 @@ import {createHash} from 'node:crypto';
 
 export const MOBILE_CATALOGUE_CANDIDATE = 'mobile-catalogue-india-v1';
 
+export const LISTING_VALIDITY_CANDIDATE = 'listing-validity-365';
+
 export const CANDIDATES = Object.freeze({
+  [LISTING_VALIDITY_CANDIDATE]: Object.freeze({
+    id: LISTING_VALIDITY_CANDIDATE,
+    version: '20261111194340',
+    filename: '20261111194340_listing_validity_365.sql',
+    path: 'supabase/forward-migrations/listing-validity-365/supabase/migrations/20261111194340_listing_validity_365.sql',
+    sha256: 'aa6a399c6cfefcd49ef8321059f0b30342526b3abbcb71f5f14501ff8bbeaecd',
+    description: '365-day classified listing validity',
+    autoPromote: true
+  }),
   [MOBILE_CATALOGUE_CANDIDATE]: Object.freeze({
     id: MOBILE_CATALOGUE_CANDIDATE,
     version: '20261105213015',
