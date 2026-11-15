@@ -53,8 +53,8 @@ only in coordination with the resulting backend policy.
 
 ## Wearables V1.1 reconciliation — 15 November 2026
 
-The unapplied policy migration is now `20261115120000`. SQL bytes and SHA-256
-remain unchanged; only its ledger identity changes. Version `20261111194340`
+The unapplied policy migration is now `20261115120000`. The SQL was subsequently corrected with explicit BEGIN/COMMIT after the failed
+CLI attempt; neither target recorded this migration. Version `20261111194340`
 is retired and must never be applied or repaired into a ledger. Both environments
 require Wearables V1.1 `20261111195641` first. Test already has it per owner
 report; Production must receive and verify V1.1 through its existing protected
@@ -62,3 +62,15 @@ release before the policy dispatch. No include-all bypass or copied ledger.
 The migration's function drift guards remain intact; V1.1 changes catalogue data,
 not these moderation functions. Rollback remains a new forward fix preserving
 already-granted expiries and all applied versions. Glass Jars is unchanged.
+
+## Transaction hotfix — 15 November 2026
+
+The migration owns explicit BEGIN/COMMIT. CLI statement execution does not supply
+an outer transaction; the former test wrapper masked this requirement. SET LOCAL,
+function changes, table lock and backfill now share one transaction. Any statement
+error aborts it; never continue a failed run. The CLI still owns ledger recording.
+A CLI-ledger failure after SQL commit requires guarded recovery, never ledger repair.
+The regression runs statements separately and injects a failure after backfill to
+verify exact function and listing rollback. No hosted apply is part of these tests.
+
+Migration SHA-256: `e798f1c454644027363b31d75a34248a11c3f81eee0cdcb5bad6e2bdcfe20df0`.
