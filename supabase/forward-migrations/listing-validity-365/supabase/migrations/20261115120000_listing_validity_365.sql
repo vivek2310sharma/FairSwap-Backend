@@ -1,4 +1,6 @@
--- Forward only. The release runner owns the transaction and migration ledger.
+-- Forward only. Explicit transaction: CLI statement execution supplies no outer transaction.
+-- The CLI retains migration-ledger ownership, errors must abort this transaction.
+begin;
 -- Keep all environment-specific moderation guards, ownership checks and ACLs.
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
@@ -79,3 +81,5 @@ begin
   end if;
 end;
 $backfill$;
+
+commit;

@@ -13,7 +13,7 @@ export const CANDIDATES = Object.freeze({
     version: '20261115120000',
     filename: '20261115120000_listing_validity_365.sql',
     path: 'supabase/forward-migrations/listing-validity-365/supabase/migrations/20261115120000_listing_validity_365.sql',
-    sha256: 'aa6a399c6cfefcd49ef8321059f0b30342526b3abbcb71f5f14501ff8bbeaecd',
+    sha256: 'e798f1c454644027363b31d75a34248a11c3f81eee0cdcb5bad6e2bdcfe20df0',
     description: '365-day classified listing validity',
     requiredLedgerVersions: Object.freeze(['20261111195641']),
     incompatibleLedgerVersions: Object.freeze(['20261111194340']),

@@ -28,8 +28,19 @@ const protectedExpiry = '2027-11-11 18:49:01.486986+00';
 for (const environment of ['production', 'test']) {
   const db = new PGlite();
   const q = async (sql, args = []) => Object.values((await db.query(sql, args)).rows[0])[0];
-  const apply = async () => {
-    try { await db.exec(`begin;${migration}commit;`); }
+  // Model CLI top-level statement execution without a harness-owned transaction.
+  // Protect dollar-quoted blocks before splitting this fixed migration's statements.
+  const apply = async (sql = migration) => {
+    const blocks = [];
+    const masked = sql.replace(/do \$([a-z_]+)\$[\s\S]*?\$\1\$;/gi, block => {
+      blocks.push(block); return `__BLOCK_${blocks.length - 1}__;`;
+    });
+    try {
+      for (const part of masked.split(';')) {
+        const statement = part.replace(/__BLOCK_(\d+)__/g, (_, index) => blocks[Number(index)]);
+        if (statement.trim()) await db.exec(statement + ';');
+      }
+    }
     catch (e) { await db.exec('rollback'); throw e; }
   };
   const actor = async (id, staff = false, aal = 'aal2') => {
@@ -141,6 +152,15 @@ for (const environment of ['production', 'test']) {
     await db.query("update public.listings set published_at=now() where id=$1", [unlimited]);
     await db.query("insert into public.listings(id,seller_id,category_id,status,published_at,expires_at) values($1,$2,$3,'active','2026-10-12 11:01:31.760406+00',$4)", [protectedId,owner,category,protectedExpiry]);
     const originalRows = (await db.query('select id,expires_at::text from public.listings')).rows;
+    await test(`${environment}: CLI-style execution rolls back functions and backfill on late failure`, async () => {
+      const capture = async () => (await db.query(`select jsonb_build_object(
+        'functions',(select jsonb_agg(pg_get_functiondef(oid) order by oid) from pg_proc where pronamespace in ('app_security'::regnamespace,'public'::regnamespace)),
+        'listings',(select jsonb_agg(to_jsonb(l) order by id) from public.listings l)) as snapshot`)).rows[0].snapshot;
+      const before = await capture();
+      const broken = migration.replace(/commit;\s*$/i, "do $forced$ begin raise exception 'INTENTIONAL_LATE_FAILURE'; end; $forced$; commit;");
+      await assert.rejects(() => apply(broken), /INTENTIONAL_LATE_FAILURE/);
+      assert.deepEqual(await capture(), before);
+    });
     await test(`${environment}: migration executes against captured hosted definitions`, apply);
     await test(`${environment}: only eligible statuses extend, never shorten or resurrect`, async () => {
       for (const {id,status} of existing) {
