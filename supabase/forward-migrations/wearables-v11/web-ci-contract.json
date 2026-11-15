@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "webBase": "c0f2d7fcdb9614a5d762df46b8121ce596267594",
+  "revision": "d5868fe5ffe2e4c5",
+  "files": {
+    "src/lib/listings/wearables/catalogue.generated.json": "82dc2e3248e2898df2d6dc89c98902191e37cb2209e01551c405b28103dbd884",
+    "scripts/wearables/name-key.mjs": "9cab12088583e31d7f0a0899f7f2421674f22aee28ef1c5d5a1ef1bd3a65fb47"
+  }
+}

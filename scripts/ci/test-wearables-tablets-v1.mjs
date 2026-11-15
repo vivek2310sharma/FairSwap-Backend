@@ -5,17 +5,17 @@
 //   node scripts/ci/test-wearables-tablets-v1.mjs [--pglite-module=<path>] [--web=<FairSwap-Web path>]
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-import {readFileSync} from 'node:fs';
+import {readFileSync,readdirSync} from 'node:fs';
 import {resolve,dirname} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {installPostingFixture} from './posting-v2-fixture.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 const opt=n=>process.argv.slice(2).find(a=>a.startsWith(`--${n}=`))?.slice(n.length+3);
-for(const a of process.argv.slice(2))if(!/^--(pglite-module|web)=/.test(a))throw new Error('Use only --pglite-module=<path> and --web=<path>');
+for(const a of process.argv.slice(2))if(a!=="--catalogue-update"&&!/^--(pglite-module|web)=/.test(a))throw new Error('Use only --pglite-module=<path> and --web=<path>');
 const web=resolve(opt('web')??resolve(root,'../FairSwap-Web'));
 const require=createRequire(resolve(web,'package.json'));
 const {PGlite}=opt('pglite-module')?await import(pathToFileURL(resolve(opt('pglite-module'))).href):require('@electric-sql/pglite');
-const catalogue=JSON.parse(readFileSync(resolve(web,'src/lib/listings/wearables/catalogue.generated.json'),'utf8'));
+const catalogue=process.argv.includes('--catalogue-update')?JSON.parse(readFileSync(resolve(web,'src/lib/listings/wearables/catalogue.generated.json'),'utf8')):JSON.parse(readFileSync(resolve(root,'tests/wearables-v1/web-fixture/src/lib/listings/wearables/catalogue.generated.json'),'utf8'));
 const fm=resolve(root,'supabase/forward-migrations');
 const sql=p=>readFileSync(resolve(fm,p),'utf8');
 const FILES={
@@ -45,6 +45,7 @@ async function build(order){
  const phoneBefore=(await db.query("select oid::text oid,md5(prosrc) h from pg_proc where oid='app_security.impl_submit_mobile_v2(jsonb)'::regprocedure")).rows[0];
  if(order==='tablets-first'){await db.exec(sql(FILES.tab));await db.exec(sql(FILES.wear));}
  else{await db.exec(sql(FILES.wear));await db.exec(sql(FILES.tab));}
+ if(process.argv.includes('--catalogue-update')){const dir=resolve(fm,'wearables-v11/supabase/migrations');await db.exec(readFileSync(resolve(dir,readdirSync(dir).find(x=>x.endsWith('.sql'))),'utf8'));}
  await db.query('insert into auth.users values($1),($2)',[A,B]);await db.query("insert into public.user_accounts values($1,'active'),($2,'active')",[A,B]);
  await db.query('insert into public.cities values($1,true)',[city]);await db.query('insert into public.localities values($1,$2,true)',[locality,city]);await db.query("insert into public.postal_pincode_localities values('560034',$1)",[locality]);
  return {db,phoneBefore};

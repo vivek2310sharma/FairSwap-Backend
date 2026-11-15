@@ -50,3 +50,15 @@ After success, forward-fix function bodies or restore reviewed previous bodies
 through a new migration; do not shorten granted listing validity, undo the
 backfill, delete ledger entries or revive expired listings. Revert consumer copy
 only in coordination with the resulting backend policy.
+
+## Wearables V1.1 reconciliation — 15 November 2026
+
+The unapplied policy migration is now `20261115120000`. SQL bytes and SHA-256
+remain unchanged; only its ledger identity changes. Version `20261111194340`
+is retired and must never be applied or repaired into a ledger. Both environments
+require Wearables V1.1 `20261111195641` first. Test already has it per owner
+report; Production must receive and verify V1.1 through its existing protected
+release before the policy dispatch. No include-all bypass or copied ledger.
+The migration's function drift guards remain intact; V1.1 changes catalogue data,
+not these moderation functions. Rollback remains a new forward fix preserving
+already-granted expiries and all applied versions. Glass Jars is unchanged.

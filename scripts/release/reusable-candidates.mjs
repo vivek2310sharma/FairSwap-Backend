@@ -10,11 +10,13 @@ export const LISTING_VALIDITY_CANDIDATE = 'listing-validity-365';
 export const CANDIDATES = Object.freeze({
   [LISTING_VALIDITY_CANDIDATE]: Object.freeze({
     id: LISTING_VALIDITY_CANDIDATE,
-    version: '20261111194340',
-    filename: '20261111194340_listing_validity_365.sql',
-    path: 'supabase/forward-migrations/listing-validity-365/supabase/migrations/20261111194340_listing_validity_365.sql',
+    version: '20261115120000',
+    filename: '20261115120000_listing_validity_365.sql',
+    path: 'supabase/forward-migrations/listing-validity-365/supabase/migrations/20261115120000_listing_validity_365.sql',
     sha256: 'aa6a399c6cfefcd49ef8321059f0b30342526b3abbcb71f5f14501ff8bbeaecd',
     description: '365-day classified listing validity',
+    requiredLedgerVersions: Object.freeze(['20261111195641']),
+    incompatibleLedgerVersions: Object.freeze(['20261111194340']),
     autoPromote: true
   }),
   [MOBILE_CATALOGUE_CANDIDATE]: Object.freeze({
@@ -121,6 +123,16 @@ export const CANDIDATES = Object.freeze({
     requiredLedgerVersions: Object.freeze(['20261102164135', '20261102164137', '20261102165946', '20261102170611']),
     incompatibleLedgerVersions: Object.freeze([])
   }),
+  'wearables-v11-catalogue': Object.freeze({
+    id: 'wearables-v11-catalogue', version: '20261111195641',
+    filename: '20261111195641_wearables_v11_catalogue.sql',
+    path: 'supabase/forward-migrations/wearables-v11/supabase/migrations/20261111195641_wearables_v11_catalogue.sql',
+    sha256: 'de4a8581988ec53e51c34b28836e24228df49b83dade94ef09d025be19900cf3',
+    description: 'Verified India wearables catalogue V1.1; preserves V1 IDs',
+    strict: true, stage: 'catalogue', autoPromote: false,
+    requiredLedgerVersions: Object.freeze(['20261104120000', '20261104230000']),
+    incompatibleLedgerVersions: Object.freeze([])
+  }),
   // Wearables V1: separate foundation (installed disabled) and activation. Only the Accessories foundation is a
   // fixed ledger prerequisite; the Mobile Phones history uses environment-specific hosted versions and is reconciled
   // by wearables-v1-release.mjs (MOBILE_PHONES_HISTORY). Tablets is a coexistence target in either order.
@@ -196,6 +208,7 @@ export const WEB_PINS = Object.freeze({
   'tablets-v1': ACCESSORIES_WEB,
   // V2 staging SHA is supplied by the dispatch and verified against successful staging CI and deployment.
   'tablets-v2': Object.freeze({...ACCESSORIES_WEB, stagingSha: null}),
+  'wearables-v11': Object.freeze({...ACCESSORIES_WEB, stagingSha: null}),
   'wearables-v1': WEARABLES_WEB
 });
 
@@ -350,7 +363,7 @@ export function planDispatch({candidateId, target = 'test', inputs = {}, context
     need(RUN_ID.test(id), `EVIDENCE_RUN_REQUIRED_${key.toUpperCase()}`);
     return {key, runId: id, candidateId: candidateOfRun, environment};
   };
-  if (candidate.id === 'tablets-v2-catalogue') {
+  if (['tablets-v2-catalogue', 'wearables-v11-catalogue'].includes(candidate.id)) {
     const priorRuns = target === 'production' ? [run('test_catalogue_run_id', candidate.id, 'test')] : [];
     const webStagingSha = target === 'production' ? String(inputs.web_staging_sha ?? '') : null;
     need(target !== 'production' || SHA40.test(webStagingSha), 'WEB_STAGING_VERIFICATION_REQUIRED');

@@ -24,7 +24,7 @@ const receipt=()=>{const c=getCandidate('listing-validity-365');return {
 };};
 test('unchanged versioned migration is hash-pinned and uses automatic promotion in existing pipeline',()=>{
  const c=verifyCandidateSha('listing-validity-365',fileURLToPath(new URL('../..',import.meta.url))).candidate;
- assert.equal(c.version,'20261111194340');assert.equal(c.autoPromote,true);
+ assert.equal(c.version,'20261115120000');assert.equal(c.autoPromote,true);
  assert.equal(planDispatch({candidateId:c.id,target:'test'}).candidate,c);
  assert.throws(()=>planDispatch({candidateId:c.id,target:'production'}),/TARGET_NOT_SUPPORTED/);
  assert.throws(()=>planDispatch({candidateId:c.id,target:'adopt'}),/ADOPTION_NOT_REGISTERED/);
@@ -84,6 +84,7 @@ test('existing CLI runner completes Test then Production with pinned ledger and 
   for(const environment of ['FairSwapTest','FairSwapProd']) {
    let applied=false,postflight=false;
    const history=Array.from({length:50},(_,i)=>({version:String(20260101000000+i),name:'historical',hasStatements:true,statementCount:1,statementsSha256:'d'.repeat(64)}));
+   history.push({version:'20261111195641',name:'wearables_v11_catalogue',hasStatements:true,statementCount:1,statementsSha256:'e'.repeat(64)});
    const candidateRow={version:c.version,name:c.filename.slice(15,-4),hasStatements:true,statementCount:1,statementsSha256:'b'.repeat(64)};
    const runner=(cmd,args)=>{
     if(cmd==='psql') {
@@ -138,4 +139,16 @@ test('read-only snapshot query executes on isolated PostgreSQL and excludes the 
   assert.equal(snapshot.rows['11111111-1111-4111-8111-111111111111'].eligible,true);
   assert.equal(snapshot.rows['11111111-1111-4111-8111-111111111111'].fingerprint.length,32);
  } finally {await db.close();}
+});
+
+test('Test and Production require Wearables V1.1 before the resequenced policy and reject the retired unapplied version',async()=>{
+ const {assertLedgerOrdering}=await import('../../scripts/release/accessories-v1-release.mjs');
+ const candidate=getCandidate('listing-validity-365');
+ assert(BigInt(candidate.version)>20261111195641n);
+ const ledger=versions=>'LOCAL | REMOTE | TIME (UTC)\n'+versions.map(v=>`${v} | ${v} | x`).join('\n');
+ for(const environment of ['FairSwapTest','FairSwapProd']) {
+  assert.throws(()=>assertLedgerOrdering(candidate,ledger(['20261104230000'])),/PREREQUISITE_MIGRATION_MISSING/,environment);
+  assert.equal(assertLedgerOrdering(candidate,ledger(['20261111195641'])).state,'absent');
+  assert.throws(()=>assertLedgerOrdering(candidate,ledger(['20261111194340','20261111195641'])),/INCOMPATIBLE_MIGRATION_ORDER/,environment);
+ }
 });
