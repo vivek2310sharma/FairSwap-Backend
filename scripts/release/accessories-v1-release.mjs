@@ -390,7 +390,7 @@ const RECEIPT_CHAIN = {
   'wearables-v1-activation|prod': []
 };
 // Candidates whose receipts must carry the installed-statements ledger hash (Test→Production byte identity).
-export const usesLedgerHash = candidate => ['tablets-v2-catalogue', 'wearables-v11-catalogue'].includes(candidate.id) || /^(tablets|wearables)-v1-/.test(candidate.id);
+export const usesLedgerHash = candidate => ['tablets-v2-catalogue', 'wearables-v11-catalogue', 'taxonomy-v2-foundation'].includes(candidate.id) || /^(tablets|wearables)-v1-/.test(candidate.id);
 
 // Minimal bounded ZIP reader for the single GitHub artifact archive (stored or deflate entries only).
 export function readZipEntries(buf) {
