@@ -43,6 +43,12 @@ jobs:
           corepack pnpm test:unit
           corepack pnpm exec vitest run --config vitest.moderation-azure.config.ts
 
+      # 1b. Validate Azure Bicep templates
+      - name: Validate Azure Bicep templates
+        run: |
+          az bicep build --file infra/azure/moderation/main.bicep
+          az bicep build --file infra/azure/moderation/acr.bicep
+
       # 2. Build & verify Controller container
       - name: Build Controller container
         uses: docker/build-push-action@v5

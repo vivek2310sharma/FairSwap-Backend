@@ -7,7 +7,7 @@ export const ControllerConfigSchema = z.object({
   openAiApiBase: z.string().url().default("https://api.openai.com/v1"),
   nodeVisionServiceUrl: z.string().url().default("http://ca-node-vision:8081"),
   pythonOcrServiceUrl: z.string().url().default("http://ca-python-ocr:8082"),
-  timeoutMs: z.coerce.number().default(5000),
+  timeoutMs: z.coerce.number().default(15000),
   environment: z.enum(["test", "prod"]).default("test"),
   allowedStorageHost: z.string(), // Exact Supabase Project Storage Host (e.g. wpppxlnbzqynvhpeuavd.supabase.co)
 });

@@ -16,6 +16,7 @@ export default defineConfig({
       "src/__tests__/moderation-mode-selector.test.ts",
       "src/__tests__/azure-moderation-orchestrator.test.ts",
       "src/__tests__/azure-worker-security.test.ts",
+      "src/__tests__/azure-ghcr-contract.test.ts",
     ],
   },
 });

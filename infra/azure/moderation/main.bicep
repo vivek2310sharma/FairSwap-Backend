@@ -22,12 +22,30 @@ param moderationSecret string
 @description('Allowed Supabase project storage host (e.g. wpppxlnbzqynvhpeuavd.supabase.co for test, kriuhwppxgxsyyrbjsau.supabase.co for prod)')
 param allowedStorageHost string
 
-@description('Container image tag to deploy')
+@description('Container image tag to deploy (used as fallback when specific image digest/reference is not provided)')
 param imageTag string = 'latest'
+
+@description('GHCR registry server')
+param ghcrServer string = 'ghcr.io'
+
+@description('GHCR username / organization with read access to private packages')
+param ghcrUsername string = 'vivek2310sharma'
+
+@description('Personal Access Token (classic with read:packages) or read-only credential for GHCR')
+@secure()
+param ghcrPullToken string
+
+@description('Full image reference or digest for Moderation Controller')
+param controllerImage string = 'ghcr.io/vivek2310sharma/fairswap-moderation-controller:${imageTag}'
+
+@description('Full image reference or digest for Node Vision')
+param nodeVisionImage string = 'ghcr.io/vivek2310sharma/fairswap-node-vision:${imageTag}'
+
+@description('Full image reference or digest for Python OCR')
+param pythonOcrImage string = 'ghcr.io/vivek2310sharma/fairswap-python-ocr:${imageTag}'
 
 var logAnalyticsWorkspaceName = 'law-fairswap-moderation-${environment}-${suffix}'
 var containerAppEnvName = 'cae-fairswap-moderation-${environment}-${suffix}'
-var acrName = 'crfairswapmod${environment}${suffix}'
 
 // 1. Log Analytics Workspace
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
@@ -41,29 +59,13 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
   }
 }
 
-// 2. Azure Container Registry reference
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: acrName
-}
-
-// 3. User Assigned Managed Identity
+// 2. User Assigned Managed Identity (retained for identity continuity; AcrPull role decoupled)
 resource acaIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'id-fairswap-moderation-${environment}'
   location: location
 }
 
-// Role definition: AcrPull (7f951dda-4ed3-4680-a7ca-43fe172d538d)
-resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(resourceGroup().id, acaIdentity.id, 'AcrPull')
-  scope: acr
-  properties: {
-    principalId: acaIdentity.properties.principalId
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// 4. Container Apps Environment (Consumption Tier)
+// 3. Container Apps Environment (Consumption Tier)
 resource containerAppEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: containerAppEnvName
   location: location
@@ -79,7 +81,7 @@ resource containerAppEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-// 5. Container App: Node Vision Worker
+// 4. Container App: Node Vision Worker
 resource nodeVisionApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: 'ca-node-vision-${environment}'
   location: location
@@ -89,19 +91,21 @@ resource nodeVisionApp 'Microsoft.App/containerApps@2024-03-01' = {
       '${acaIdentity.id}': {}
     }
   }
-  dependsOn: [
-    acrPullRole
-  ]
   properties: {
     managedEnvironmentId: containerAppEnv.id
     configuration: {
       registries: [
         {
-          server: acr.properties.loginServer
-          identity: acaIdentity.id
+          server: ghcrServer
+          username: ghcrUsername
+          passwordSecretRef: 'ghcr-pull-token'
         }
       ]
       secrets: [
+        {
+          name: 'ghcr-pull-token'
+          value: ghcrPullToken
+        }
         {
           name: 'mod-secret'
           value: moderationSecret
@@ -117,7 +121,7 @@ resource nodeVisionApp 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [
         {
           name: 'node-vision'
-          image: '${acr.properties.loginServer}/node-vision:${imageTag}'
+          image: nodeVisionImage
           resources: {
             cpu: json('0.5')
             memory: '1.0Gi'
@@ -157,7 +161,7 @@ resource nodeVisionApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-// 6. Container App: Python OCR Worker
+// 5. Container App: Python OCR Worker
 resource pythonOcrApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: 'ca-python-ocr-${environment}'
   location: location
@@ -167,19 +171,21 @@ resource pythonOcrApp 'Microsoft.App/containerApps@2024-03-01' = {
       '${acaIdentity.id}': {}
     }
   }
-  dependsOn: [
-    acrPullRole
-  ]
   properties: {
     managedEnvironmentId: containerAppEnv.id
     configuration: {
       registries: [
         {
-          server: acr.properties.loginServer
-          identity: acaIdentity.id
+          server: ghcrServer
+          username: ghcrUsername
+          passwordSecretRef: 'ghcr-pull-token'
         }
       ]
       secrets: [
+        {
+          name: 'ghcr-pull-token'
+          value: ghcrPullToken
+        }
         {
           name: 'mod-secret'
           value: moderationSecret
@@ -195,7 +201,7 @@ resource pythonOcrApp 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [
         {
           name: 'python-ocr'
-          image: '${acr.properties.loginServer}/python-ocr:${imageTag}'
+          image: pythonOcrImage
           resources: {
             cpu: json('0.5')
             memory: '1.0Gi'
@@ -235,7 +241,7 @@ resource pythonOcrApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-// 7. Container App: Controller (External Ingress for Supabase Edge Worker)
+// 6. Container App: Controller (External Ingress for Supabase Edge Worker)
 resource controllerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: 'ca-moderation-controller-${environment}'
   location: location
@@ -245,19 +251,21 @@ resource controllerApp 'Microsoft.App/containerApps@2024-03-01' = {
       '${acaIdentity.id}': {}
     }
   }
-  dependsOn: [
-    acrPullRole
-  ]
   properties: {
     managedEnvironmentId: containerAppEnv.id
     configuration: {
       registries: [
         {
-          server: acr.properties.loginServer
-          identity: acaIdentity.id
+          server: ghcrServer
+          username: ghcrUsername
+          passwordSecretRef: 'ghcr-pull-token'
         }
       ]
       secrets: [
+        {
+          name: 'ghcr-pull-token'
+          value: ghcrPullToken
+        }
         {
           name: 'openai-key'
           value: openAiApiKey
@@ -278,7 +286,7 @@ resource controllerApp 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [
         {
           name: 'moderation-controller'
-          image: '${acr.properties.loginServer}/moderation-controller:${imageTag}'
+          image: controllerImage
           resources: {
             cpu: json('0.5')
             memory: '1.0Gi'
@@ -303,6 +311,10 @@ resource controllerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'MODERATION_SECRET'
               secretRef: 'mod-secret'
+            }
+            {
+              name: 'TIMEOUT_MS'
+              value: '15000'
             }
             {
               name: 'NODE_VISION_SERVICE_URL'
@@ -335,5 +347,7 @@ resource controllerApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output controllerFqdn string = controllerApp.properties.configuration.ingress.fqdn
-output acrName string = acr.name
-output acrLoginServer string = acr.properties.loginServer
+output containerAppEnvName string = containerAppEnv.name
+output controllerAppId string = controllerApp.id
+output nodeVisionAppId string = nodeVisionApp.id
+output pythonOcrAppId string = pythonOcrApp.id

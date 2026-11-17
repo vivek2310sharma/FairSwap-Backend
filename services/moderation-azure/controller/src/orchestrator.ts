@@ -100,159 +100,161 @@ export async function orchestrateModerationJob(
   let extractedTexts: string[] = [];
   let qrPayloads: string[] = [];
 
-  // 1. Vision Services: NSFW + Category
+  // Concurrently execute independent downstream worker requests (Node Vision + Python OCR)
   if (job.media.length > 0) {
-    try {
-      const visionPayload = {
-        listingId: job.listingId,
-        media: job.media.map((m) => ({
-          mediaId: m.id,
-          scopedSignedUrl: m.scopedSignedUrl,
-          mediaSha256: m.mediaSha256,
-        })),
-        categorySlug: job.categorySlug,
-      };
+    const runVision = async () => {
+      try {
+        const visionPayload = {
+          listingId: job.listingId,
+          media: job.media.map((m) => ({
+            mediaId: m.id,
+            scopedSignedUrl: m.scopedSignedUrl,
+            mediaSha256: m.mediaSha256,
+          })),
+          categorySlug: job.categorySlug,
+        };
 
-      const visionRes = await fetch(`${config.nodeVisionServiceUrl}/scan`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-moderation-internal-secret": config.moderationSecret,
-        },
-        body: JSON.stringify(visionPayload),
-        signal: AbortSignal.timeout(config.timeoutMs),
-      });
+        const visionRes = await fetch(`${config.nodeVisionServiceUrl}/scan`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-moderation-internal-secret": config.moderationSecret,
+          },
+          body: JSON.stringify(visionPayload),
+          signal: AbortSignal.timeout(config.timeoutMs),
+        });
 
-      if (!visionRes.ok) {
-        failedChecks.push("check_vision_nsfw", "check_vision_category");
-      } else {
-        const rawVisionData = await visionRes.json();
-        const parsedVision = NodeVisionScanResponseSchema.safeParse(rawVisionData);
-
-        if (!parsedVision.success) {
+        if (!visionRes.ok) {
           failedChecks.push("check_vision_nsfw", "check_vision_category");
         } else {
-          const vData = parsedVision.data;
-          const expectedMediaIds = new Set(job.media.map((m) => m.id));
-          const seenVisionIds = new Set<string>();
-          let visionAllGood = vData.status === "completed" && vData.results.length === job.media.length;
+          const rawVisionData = await visionRes.json();
+          const parsedVision = NodeVisionScanResponseSchema.safeParse(rawVisionData);
 
-          for (const item of vData.results) {
-            if (!expectedMediaIds.has(item.mediaId) || seenVisionIds.has(item.mediaId)) {
-              visionAllGood = false;
-              break;
-            }
-            seenVisionIds.add(item.mediaId);
-
-            const current = perImageMap.get(item.mediaId);
-            if (current) {
-              current.visionStatus = item.status;
-              current.hashVerified = current.hashVerified || item.sha256Verified;
-            }
-            if (item.status !== "success" || !item.sha256Verified) {
-              visionAllGood = false;
-            }
-          }
-
-          if (seenVisionIds.size !== expectedMediaIds.size) {
-            visionAllGood = false;
-          }
-
-          if (visionAllGood) {
-            completedChecks.push("check_vision_nsfw", "check_vision_category");
-            for (const flag of vData.flags) {
-              flags.push({
-                check: flag.check,
-                field: flag.field,
-                code: flag.code,
-                reason: flag.reason,
-                severity: flag.severity,
-                boundedEvidence: flag.boundedEvidence,
-              });
-            }
-          } else {
+          if (!parsedVision.success) {
             failedChecks.push("check_vision_nsfw", "check_vision_category");
+          } else {
+            const vData = parsedVision.data;
+            const expectedMediaIds = new Set(job.media.map((m) => m.id));
+            const seenVisionIds = new Set<string>();
+            let visionAllGood = vData.status === "completed" && vData.results.length === job.media.length;
+
+            for (const item of vData.results) {
+              if (!expectedMediaIds.has(item.mediaId) || seenVisionIds.has(item.mediaId)) {
+                visionAllGood = false;
+                break;
+              }
+              seenVisionIds.add(item.mediaId);
+
+              const current = perImageMap.get(item.mediaId);
+              if (current) {
+                current.visionStatus = item.status;
+                current.hashVerified = current.hashVerified || item.sha256Verified;
+              }
+              if (item.status !== "success" || !item.sha256Verified) {
+                visionAllGood = false;
+              }
+            }
+
+            if (seenVisionIds.size !== expectedMediaIds.size) {
+              visionAllGood = false;
+            }
+
+            if (visionAllGood) {
+              completedChecks.push("check_vision_nsfw", "check_vision_category");
+              for (const flag of vData.flags) {
+                flags.push({
+                  check: flag.check,
+                  field: flag.field,
+                  code: flag.code,
+                  reason: flag.reason,
+                  severity: flag.severity,
+                  boundedEvidence: flag.boundedEvidence,
+                });
+              }
+            } else {
+              failedChecks.push("check_vision_nsfw", "check_vision_category");
+            }
           }
         }
+      } catch {
+        failedChecks.push("check_vision_nsfw", "check_vision_category");
       }
-    } catch {
-      failedChecks.push("check_vision_nsfw", "check_vision_category");
-    }
-  } else {
-    failedChecks.push("check_vision_nsfw", "check_vision_category");
-  }
+    };
 
-  // 2. Python OCR + QR Service
-  if (job.media.length > 0) {
-    try {
-      const ocrPayload = {
-        listingId: job.listingId,
-        media: job.media.map((m) => ({
-          mediaId: m.id,
-          scopedSignedUrl: m.scopedSignedUrl,
-          mediaSha256: m.mediaSha256,
-        })),
-      };
+    const runOcr = async () => {
+      try {
+        const ocrPayload = {
+          listingId: job.listingId,
+          media: job.media.map((m) => ({
+            mediaId: m.id,
+            scopedSignedUrl: m.scopedSignedUrl,
+            mediaSha256: m.mediaSha256,
+          })),
+        };
 
-      const ocrRes = await fetch(`${config.pythonOcrServiceUrl}/scan`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-moderation-internal-secret": config.moderationSecret,
-        },
-        body: JSON.stringify(ocrPayload),
-        signal: AbortSignal.timeout(config.timeoutMs),
-      });
+        const ocrRes = await fetch(`${config.pythonOcrServiceUrl}/scan`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-moderation-internal-secret": config.moderationSecret,
+          },
+          body: JSON.stringify(ocrPayload),
+          signal: AbortSignal.timeout(config.timeoutMs),
+        });
 
-      if (!ocrRes.ok) {
-        failedChecks.push("check_ocr_qr");
-      } else {
-        const rawOcrData = await ocrRes.json();
-        const parsedOcr = PythonOcrScanResponseSchema.safeParse(rawOcrData);
-
-        if (!parsedOcr.success) {
+        if (!ocrRes.ok) {
           failedChecks.push("check_ocr_qr");
         } else {
-          const oData = parsedOcr.data;
-          const expectedMediaIds = new Set(job.media.map((m) => m.id));
-          const seenOcrIds = new Set<string>();
-          let ocrAllGood = oData.status === "completed" && oData.results.length === job.media.length;
+          const rawOcrData = await ocrRes.json();
+          const parsedOcr = PythonOcrScanResponseSchema.safeParse(rawOcrData);
 
-          for (const item of oData.results) {
-            if (!expectedMediaIds.has(item.mediaId) || seenOcrIds.has(item.mediaId)) {
-              ocrAllGood = false;
-              break;
-            }
-            seenOcrIds.add(item.mediaId);
-
-            const current = perImageMap.get(item.mediaId);
-            if (current) {
-              current.ocrStatus = item.status;
-              current.hashVerified = current.hashVerified && item.sha256Verified;
-            }
-            if (item.status !== "success" || !item.sha256Verified) {
-              ocrAllGood = false;
-            }
-          }
-
-          if (seenOcrIds.size !== expectedMediaIds.size) {
-            ocrAllGood = false;
-          }
-
-          if (ocrAllGood) {
-            completedChecks.push("check_ocr_qr");
-            extractedTexts = oData.extractedTexts || [];
-            qrPayloads = oData.qrPayloads || [];
-          } else {
+          if (!parsedOcr.success) {
             failedChecks.push("check_ocr_qr");
+          } else {
+            const oData = parsedOcr.data;
+            const expectedMediaIds = new Set(job.media.map((m) => m.id));
+            const seenOcrIds = new Set<string>();
+            let ocrAllGood = oData.status === "completed" && oData.results.length === job.media.length;
+
+            for (const item of oData.results) {
+              if (!expectedMediaIds.has(item.mediaId) || seenOcrIds.has(item.mediaId)) {
+                ocrAllGood = false;
+                break;
+              }
+              seenOcrIds.add(item.mediaId);
+
+              const current = perImageMap.get(item.mediaId);
+              if (current) {
+                current.ocrStatus = item.status;
+                current.hashVerified = current.hashVerified && item.sha256Verified;
+              }
+              if (item.status !== "success" || !item.sha256Verified) {
+                ocrAllGood = false;
+              }
+            }
+
+            if (seenOcrIds.size !== expectedMediaIds.size) {
+              ocrAllGood = false;
+            }
+
+            if (ocrAllGood) {
+              completedChecks.push("check_ocr_qr");
+              extractedTexts = oData.extractedTexts || [];
+              qrPayloads = oData.qrPayloads || [];
+            } else {
+              failedChecks.push("check_ocr_qr");
+            }
           }
         }
+      } catch {
+        failedChecks.push("check_ocr_qr");
       }
-    } catch {
-      failedChecks.push("check_ocr_qr");
-    }
+    };
+
+    // Concurrently execute independent downstream worker requests
+    await Promise.all([runVision(), runOcr()]);
   } else {
-    failedChecks.push("check_ocr_qr");
+    failedChecks.push("check_vision_nsfw", "check_vision_category", "check_ocr_qr");
   }
 
   // Aggregate verdict for Azure's 3 checks

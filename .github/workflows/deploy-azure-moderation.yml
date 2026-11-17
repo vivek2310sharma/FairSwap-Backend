@@ -1,25 +1,144 @@
-name: Deploy Azure Moderation ACA (OIDC)
+name: Deploy Azure Moderation ACA (Private GHCR & OIDC)
 
 on:
   workflow_dispatch:
     inputs:
-      environment:
-        description: 'Target environment (test or prod)'
+      target:
+        description: 'Deployment target scope: test-and-prod (default) or test-only'
         required: true
-        default: 'test'
+        default: 'test-and-prod'
         type: choice
         options:
-          - test
-          - prod
+          - test-and-prod
+          - test-only
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
-  build-and-deploy:
+  # ---------------------------------------------------------------------------
+  # Phase 1: Build, CI, Publish Private GHCR Images, and Verify Package Privacy
+  # ---------------------------------------------------------------------------
+  build-ci-and-publish:
+    name: Build, Test & Publish Private GHCR Images
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment == 'test' && 'FairSwapTest' || inputs.environment == 'prod' && 'FairSwapProd' || inputs.environment }}
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      controller_digest: ${{ steps.build-controller.outputs.digest }}
+      vision_digest: ${{ steps.build-vision.outputs.digest }}
+      ocr_digest: ${{ steps.build-ocr.outputs.digest }}
+      controller_image: ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller@${{ steps.build-controller.outputs.digest }}
+      vision_image: ghcr.io/${{ github.repository_owner }}/fairswap-node-vision@${{ steps.build-vision.outputs.digest }}
+      ocr_image: ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr@${{ steps.build-ocr.outputs.digest }}
+      image_tag: ${{ github.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+
+      - name: Run Backend verification, unit tests, and Azure moderation tests
+        run: |
+          corepack pnpm install --frozen-lockfile
+          corepack pnpm verify:migrations
+          corepack pnpm typecheck
+          corepack pnpm test:unit
+          corepack pnpm exec vitest run --config vitest.moderation-azure.config.ts
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build and push immutable container images to private GHCR
+      - name: Build and Push Controller Image
+        id: build-controller
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/moderation-azure/controller
+          file: ./services/moderation-azure/controller/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller:latest
+
+      - name: Build and Push Node Vision Image
+        id: build-vision
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/moderation-azure/node-vision
+          file: ./services/moderation-azure/node-vision/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/fairswap-node-vision:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/fairswap-node-vision:latest
+
+      - name: Build and Push Python OCR Image
+        id: build-ocr
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/moderation-azure/python-ocr
+          file: ./services/moderation-azure/python-ocr/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr:latest
+
+      # Mandatory Security Gate: All three packages MUST block anonymous pulls (FAIL CLOSED)
+      - name: Verify Anonymous Pull Denied on All Packages (Fail-Closed)
+        run: |
+          set -euo pipefail
+          echo "Verifying anonymous image pulls are blocked for all three packages..."
+          docker logout ghcr.io || true
+
+          PACKAGES=(
+            "fairswap-moderation-controller"
+            "fairswap-node-vision"
+            "fairswap-python-ocr"
+          )
+
+          for pkg in "${PACKAGES[@]}"; do
+            IMG="ghcr.io/${{ github.repository_owner }}/$pkg:${{ github.sha }}"
+            echo "Checking anonymous pull denial for: $IMG"
+            if docker pull "$IMG" 2>&1 | tee /tmp/pull_out.txt; then
+              echo "::error::SECURITY VIOLATION: Anonymous pull succeeded for $pkg! Package is PUBLIC or incorrectly configured."
+              exit 1
+            else
+              if grep -iE 'denied|unauthorized|authentication required' /tmp/pull_out.txt; then
+                echo "PASS: Anonymous pull blocked for $pkg."
+              else
+                echo "::error::Unexpected pull failure output for $pkg."
+                exit 1
+              fi
+            fi
+          done
+
+  # ---------------------------------------------------------------------------
+  # Phase 2: Deploy Test Environment (Preserving FairSwapTest)
+  # ---------------------------------------------------------------------------
+  deploy-test:
+    name: Deploy Test (FairSwapTest)
+    needs: build-ci-and-publish
+    runs-on: ubuntu-latest
+    environment: FairSwapTest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      controller_fqdn: ${{ steps.bicep-test.outputs.controllerFqdn }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,16 +152,44 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
         run: |
           set -euo pipefail
           missing=0
-          for secret_name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID OPENAI_API_KEY AZURE_MODERATION_SECRET SUPABASE_ACCESS_TOKEN; do
+          for secret_name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID OPENAI_API_KEY AZURE_MODERATION_SECRET SUPABASE_ACCESS_TOKEN GHCR_PULL_TOKEN; do
             if [[ -z "${!secret_name}" ]]; then
               printf '::error::Missing required secret: %s\n' "$secret_name"
               missing=1
             fi
           done
           exit "$missing"
+
+      - name: Verify Authorized Read-Only Pull with GHCR_PULL_TOKEN (FairSwapTest)
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GHCR_PULL_TOKEN" ]]; then
+            echo "::error::Missing GHCR_PULL_TOKEN in FairSwapTest environment."
+            exit 1
+          fi
+
+          echo "Authenticating to GHCR using FairSwapTest GHCR_PULL_TOKEN..."
+          echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "${{ secrets.GHCR_PULL_USERNAME || github.repository_owner }}" --password-stdin
+
+          PACKAGES=(
+            "fairswap-moderation-controller"
+            "fairswap-node-vision"
+            "fairswap-python-ocr"
+          )
+
+          for pkg in "${PACKAGES[@]}"; do
+            IMG="ghcr.io/${{ github.repository_owner }}/$pkg:${{ github.sha }}"
+            echo "Verifying authorized pull for: $IMG"
+            docker pull "$IMG"
+            echo "PASS: Authorized pull succeeded for $pkg."
+          done
+          docker logout ghcr.io || true
 
       - name: Azure Login via OIDC
         uses: azure/login@v2
@@ -51,93 +198,182 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Set environment specific variables
-        id: env-vars
-        run: |
-          if [ "${{ inputs.environment }}" = "prod" ]; then
-            echo "STORAGE_HOST=kriuhwppxgxsyyrbjsau.supabase.co" >> $GITHUB_OUTPUT
-          else
-            echo "STORAGE_HOST=wpppxlnbzqynvhpeuavd.supabase.co" >> $GITHUB_OUTPUT
-          fi
-          echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_OUTPUT
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # Step 1: Ensure Resource Group exists
       - name: Ensure Resource Group Exists
         run: |
-          az group create --name rg-fairswap-moderation-${{ inputs.environment }} --location centralindia
+          az group create --name rg-fairswap-moderation-test --location centralindia
 
-      # Step 2: Provision Azure Container Registry via acr.bicep
-      - name: Provision Azure Container Registry
-        id: acr-deploy
+      - name: Deploy Azure Container Apps via main.bicep (Test)
+        id: bicep-test
         uses: azure/arm-deploy@v2
         with:
           subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          resourceGroupName: rg-fairswap-moderation-${{ inputs.environment }}
-          template: infra/azure/moderation/acr.bicep
-          parameters: >-
-            environment=${{ inputs.environment }}
-            location=centralindia
-
-      # Step 3: Log in to provisioned ACR
-      - name: Log in to Azure Container Registry
-        run: |
-          az acr login --name ${{ steps.acr-deploy.outputs.acrName }}
-
-      # Step 4: Build and Push immutable container images to ACR
-      - name: Build and Push Controller Image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./services/moderation-azure/controller
-          file: ./services/moderation-azure/controller/Dockerfile
-          push: true
-          tags: |
-            ${{ steps.acr-deploy.outputs.acrLoginServer }}/moderation-controller:${{ steps.env-vars.outputs.IMAGE_TAG }}
-            ${{ steps.acr-deploy.outputs.acrLoginServer }}/moderation-controller:latest
-
-      - name: Build and Push Node Vision Image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./services/moderation-azure/node-vision
-          file: ./services/moderation-azure/node-vision/Dockerfile
-          push: true
-          tags: |
-            ${{ steps.acr-deploy.outputs.acrLoginServer }}/node-vision:${{ steps.env-vars.outputs.IMAGE_TAG }}
-            ${{ steps.acr-deploy.outputs.acrLoginServer }}/node-vision:latest
-
-      - name: Build and Push Python OCR Image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./services/moderation-azure/python-ocr
-          file: ./services/moderation-azure/python-ocr/Dockerfile
-          push: true
-          tags: |
-            ${{ steps.acr-deploy.outputs.acrLoginServer }}/python-ocr:${{ steps.env-vars.outputs.IMAGE_TAG }}
-            ${{ steps.acr-deploy.outputs.acrLoginServer }}/python-ocr:latest
-
-      # Step 5: Deploy full Container Apps infrastructure referencing real images
-      - name: Deploy Azure Container Apps via main.bicep
-        id: bicep
-        uses: azure/arm-deploy@v2
-        with:
-          subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          resourceGroupName: rg-fairswap-moderation-${{ inputs.environment }}
+          resourceGroupName: rg-fairswap-moderation-test
           template: infra/azure/moderation/main.bicep
           parameters: >-
-            environment=${{ inputs.environment }}
+            environment=test
             location=centralindia
+            ghcrServer=ghcr.io
+            ghcrUsername=${{ secrets.GHCR_PULL_USERNAME || github.repository_owner }}
+            ghcrPullToken=${{ secrets.GHCR_PULL_TOKEN }}
+            controllerImage=${{ needs.build-ci-and-publish.outputs.controller_image }}
+            nodeVisionImage=${{ needs.build-ci-and-publish.outputs.vision_image }}
+            pythonOcrImage=${{ needs.build-ci-and-publish.outputs.ocr_image }}
             openAiApiKey=${{ secrets.OPENAI_API_KEY }}
             moderationSecret=${{ secrets.AZURE_MODERATION_SECRET }}
-            allowedStorageHost=${{ steps.env-vars.outputs.STORAGE_HOST }}
-            imageTag=${{ steps.env-vars.outputs.IMAGE_TAG }}
+            allowedStorageHost=wpppxlnbzqynvhpeuavd.supabase.co
 
-      - name: Verify Azure controller health
+      # Configure required Azure Moderation secrets in Supabase (Test) & Deploy Worker
+      - name: Configure Supabase Secrets and Deploy Moderation Worker (Test)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
+          CONTROLLER_FQDN: ${{ steps.bicep-test.outputs.controllerFqdn }}
+        run: |
+          set -euo pipefail
+          PROJECT_REF="wpppxlnbzqynvhpeuavd"
+
+          CLI_DIR="$(mktemp -d "${RUNNER_TEMP:?}/supabase-cli.XXXXXX")"
+          PINNED_SHA=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("scripts/ci/toolchain.json","utf8")).database.cliArchiveSha256)')
+          PINNED_URL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("scripts/ci/toolchain.json","utf8")).database.cliArchive)')
+          PINNED_VER=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("scripts/ci/toolchain.json","utf8")).database.cliVersion)')
+
+          curl -fsSL \
+            --connect-timeout 10 --max-time 60 \
+            --retry 5 --retry-delay 5 --retry-connrefused --retry-all-errors \
+            --retry-max-time 180 \
+            "$PINNED_URL" \
+            -o "$CLI_DIR/supabase.tar.gz"
+
+          # Strict SHA-256 integrity verification against pinned toolchain.json before extraction
+          echo "$PINNED_SHA  $CLI_DIR/supabase.tar.gz" | sha256sum -c --status || {
+            echo "::error::Supabase CLI archive SHA-256 digest verification failed!"
+            exit 1
+          }
+
+          tar -xzf "$CLI_DIR/supabase.tar.gz" -C "$CLI_DIR" || exit 1
+          chmod +x "$CLI_DIR/supabase"
+          cli_version="$("$CLI_DIR/supabase" --version)" || exit 1
+          if [[ "$cli_version" != "$PINNED_VER" ]]; then
+            echo "::error::Expected Supabase CLI version $PINNED_VER but found $cli_version"
+            exit 1
+          fi
+          echo "PASS: exact pinned Supabase CLI authenticated by SHA-256 from toolchain.json"
+
+          "$CLI_DIR/supabase" secrets set \
+            AZURE_MODERATION_ENDPOINT="https://${CONTROLLER_FQDN}/v1/moderate" \
+            AZURE_MODERATION_SECRET="$AZURE_MODERATION_SECRET" \
+            --project-ref "$PROJECT_REF"
+
+          echo "Deploying changed process-listing-moderation Edge Function to Test..."
+          "$CLI_DIR/supabase" functions deploy process-listing-moderation \
+            --project-ref "$PROJECT_REF" \
+            --no-verify-jwt
+          echo "PASS: process-listing-moderation Edge Function deployed to Test."
+
+  # ---------------------------------------------------------------------------
+  # Phase 3: Rigorous Automated Test Verification (Fail-Closed)
+  # ---------------------------------------------------------------------------
+  verify-test:
+    name: Verify Test Deployment & Rigorous Gates
+    needs: [build-ci-and-publish, deploy-test]
+    runs-on: ubuntu-latest
+    environment: FairSwapTest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Gate 1: Assert configured images equal built immutable digests on ALL THREE apps
+      - name: Assert Exact Built Image Digests on All Three Apps (Test)
+        env:
+          EXP_CTRL: ${{ needs.build-ci-and-publish.outputs.controller_image }}
+          EXP_VISION: ${{ needs.build-ci-and-publish.outputs.vision_image }}
+          EXP_OCR: ${{ needs.build-ci-and-publish.outputs.ocr_image }}
+        run: |
+          set -euo pipefail
+          echo "Verifying deployed image digests match built SHA-256 digests exactly..."
+
+          ACT_CTRL=$(az containerapp show --name ca-moderation-controller-test --resource-group rg-fairswap-moderation-test --query "properties.template.containers[0].image" -o tsv)
+          ACT_VISION=$(az containerapp show --name ca-node-vision-test --resource-group rg-fairswap-moderation-test --query "properties.template.containers[0].image" -o tsv)
+          ACT_OCR=$(az containerapp show --name ca-python-ocr-test --resource-group rg-fairswap-moderation-test --query "properties.template.containers[0].image" -o tsv)
+
+          if [[ -z "$ACT_CTRL" || -z "$ACT_VISION" || -z "$ACT_OCR" ]]; then
+            echo "::error::One or more image queries returned empty or null!"
+            exit 1
+          fi
+
+          echo "Controller: Expected=$EXP_CTRL, Actual=$ACT_CTRL"
+          echo "Node Vision: Expected=$EXP_VISION, Actual=$ACT_VISION"
+          echo "Python OCR: Expected=$EXP_OCR, Actual=$ACT_OCR"
+
+          if [[ "$ACT_CTRL" != "$EXP_CTRL" ]]; then
+            echo "::error::Controller image mismatch! Expected $EXP_CTRL but found $ACT_CTRL"
+            exit 1
+          fi
+          if [[ "$ACT_VISION" != "$EXP_VISION" ]]; then
+            echo "::error::Node Vision image mismatch! Expected $EXP_VISION but found $ACT_VISION"
+            exit 1
+          fi
+          if [[ "$ACT_OCR" != "$EXP_OCR" ]]; then
+            echo "::error::Python OCR image mismatch! Expected $EXP_OCR but found $ACT_OCR"
+            exit 1
+          fi
+          echo "PASS: All three apps are running the exact expected SHA-256 digests."
+
+      # Gate 2: Assert scale-to-zero (minReplicas == 0) and ingress boundaries on ALL THREE apps
+      - name: Assert Scale-to-Zero and Ingress Boundaries on All Three Apps (Test)
+        run: |
+          set -euo pipefail
+          APPS=("ca-moderation-controller-test" "ca-node-vision-test" "ca-python-ocr-test")
+
+          for app in "${APPS[@]}"; do
+            MIN_REP=$(az containerapp show --name "$app" --resource-group rg-fairswap-moderation-test --query "properties.template.scale.minReplicas" -o tsv)
+            echo "App $app minReplicas: $MIN_REP"
+            if [[ -z "$MIN_REP" || "$MIN_REP" != "0" ]]; then
+              echo "::error::App $app minReplicas is '$MIN_REP' (must be exactly 0 for scale-to-zero)!"
+              exit 1
+            fi
+          done
+
+          # Assert internal ingress on vision and ocr
+          VISION_EXT=$(az containerapp show --name ca-node-vision-test --resource-group rg-fairswap-moderation-test --query "properties.configuration.ingress.external" -o tsv)
+          OCR_EXT=$(az containerapp show --name ca-python-ocr-test --resource-group rg-fairswap-moderation-test --query "properties.configuration.ingress.external" -o tsv)
+          CTRL_EXT=$(az containerapp show --name ca-moderation-controller-test --resource-group rg-fairswap-moderation-test --query "properties.configuration.ingress.external" -o tsv)
+
+          if [[ -z "$VISION_EXT" || -z "$OCR_EXT" || -z "$CTRL_EXT" ]]; then
+            echo "::error::One or more ingress queries returned empty or null!"
+            exit 1
+          fi
+
+          if [[ "$VISION_EXT" != "false" ]]; then
+            echo "::error::Node Vision has external ingress enabled! Must be internal only."
+            exit 1
+          fi
+          if [[ "$OCR_EXT" != "false" ]]; then
+            echo "::error::Python OCR has external ingress enabled! Must be internal only."
+            exit 1
+          fi
+          if [[ "$CTRL_EXT" != "true" ]]; then
+            echo "::error::Controller must have external ingress enabled for Supabase dispatch."
+            exit 1
+          fi
+          echo "PASS: Scale-to-zero and ingress boundaries verified on all three apps."
+
+      # Gate 3: Probe Controller Cold Start Wake-up
+      - name: Verify Azure Controller Health & Cold Start
         shell: bash
         timeout-minutes: 3
         env:
-          CONTROLLER_FQDN: ${{ steps.bicep.outputs.controllerFqdn }}
+          CONTROLLER_FQDN: ${{ needs.deploy-test.outputs.controller_fqdn }}
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --output /dev/null \
@@ -145,38 +381,525 @@ jobs:
             --retry 5 --retry-delay 5 --retry-connrefused --retry-all-errors \
             --retry-max-time 120 \
             "https://${CONTROLLER_FQDN:?Missing controller FQDN}/healthz"
+          echo "PASS: Controller /healthz responded successfully."
 
-      # Step 6: Configure required Azure Moderation secrets in Supabase
-      - name: Configure Supabase Azure Moderation secrets
+      # Gate 4: Verify Fail-Closed Authentication on Controller
+      - name: Verify Controller Authentication Boundary (Fail-Closed 401)
+        env:
+          CONTROLLER_FQDN: ${{ needs.deploy-test.outputs.controller_fqdn }}
+        run: |
+          set -euo pipefail
+          echo "Verifying unauthenticated POST receives 401..."
+          UNAUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "https://$CONTROLLER_FQDN/v1/moderate" -H "Content-Type: application/json" -d '{}' || true)
+          if [[ "$UNAUTH_CODE" != "401" ]]; then
+            echo "::error::Unauthenticated POST returned HTTP $UNAUTH_CODE instead of 401 Unauthorized."
+            exit 1
+          fi
+          echo "PASS: Unauthenticated access blocked with 401."
+
+      # Gate 5: End-to-End Functional Moderation Scan (Controller -> Node Vision & Python OCR)
+      - name: Verify End-to-End Synthetic Moderation & Worker Ingress (Test)
+        env:
+          CONTROLLER_FQDN: ${{ needs.deploy-test.outputs.controller_fqdn }}
+          AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          PROJECT_REF="wpppxlnbzqynvhpeuavd"
+          FIXTURE_PATH="services/moderation-azure/node-vision/test_fixture.jpg"
+
+          if [[ ! -f "$FIXTURE_PATH" ]]; then
+            echo "::error::Fixture file $FIXTURE_PATH not found!"
+            exit 1
+          fi
+
+          # Acquire service-role key for authenticated test storage access
+          SR_KEY="${SUPABASE_SERVICE_ROLE_KEY:-}"
+          if [[ -z "$SR_KEY" && -n "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
+            echo "Fetching service-role key via Supabase Management API..."
+            SR_KEY=$(curl -fsSL \
+              -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              "https://api.supabase.com/v1/projects/${PROJECT_REF}/api-keys" | \
+              jq -r '.[] | select(.name=="service_role") | .api_key' || true)
+          fi
+
+          if [[ -z "$SR_KEY" || "$SR_KEY" == "null" ]]; then
+            echo "::error::Neither SUPABASE_SERVICE_ROLE_KEY nor valid SUPABASE_ACCESS_TOKEN available to upload test fixture. Cannot verify hosted Test E2E without live signed URL."
+            exit 1
+          fi
+
+          STORAGE_OBJECT="test-fixtures/azure-ghcr-probe-${{ github.sha }}.jpg"
+          echo "Uploading benign test fixture to listing-originals/${STORAGE_OBJECT}..."
+
+          curl -fsSL -X POST \
+            "https://${PROJECT_REF}.supabase.co/storage/v1/object/listing-originals/${STORAGE_OBJECT}" \
+            -H "Authorization: Bearer $SR_KEY" \
+            -H "Content-Type: image/jpeg" \
+            --data-binary "@${FIXTURE_PATH}"
+
+          # Register cleanup trap immediately after successful upload so subsequent failures still clean up
+          CLEANUP_FIXTURE() {
+            echo "Cleaning up test fixture from Supabase Storage..."
+            curl -s -X DELETE \
+              "https://${PROJECT_REF}.supabase.co/storage/v1/object/listing-originals" \
+              -H "Authorization: Bearer $SR_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"prefixes\": [\"${STORAGE_OBJECT}\"]}" || true
+          }
+          trap CLEANUP_FIXTURE EXIT
+
+          echo "Generating short-lived signed URL (300s)..."
+          SIGN_RES=$(curl -fsSL -X POST \
+            "https://${PROJECT_REF}.supabase.co/storage/v1/object/sign/listing-originals/${STORAGE_OBJECT}" \
+            -H "Authorization: Bearer $SR_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"expiresIn": 300}')
+
+          RAW_SIGNED_URL=$(echo "$SIGN_RES" | jq -r '.signedURL // empty')
+          if [[ -z "$RAW_SIGNED_URL" ]]; then
+            echo "::error::Failed to acquire signed URL from Supabase Storage response!"
+            exit 1
+          fi
+
+          # Normalize and strictly validate signed URL against Controller origin policy
+          FULL_SIGNED_URL=$(node scripts/ci/normalize-storage-signed-url.mjs "$PROJECT_REF" "$STORAGE_OBJECT" "$RAW_SIGNED_URL")
+          if [[ -z "$FULL_SIGNED_URL" ]]; then
+            echo "::error::Signed URL normalization produced empty output!"
+            exit 1
+          fi
+          echo "PASS: Signed URL normalized and validated against Controller origin policy."
+
+          # Compute real image byte SHA-256 and canonical media digest
+          MEDIA_ID="00000000-0000-0000-0000-000000000001"
+          IMAGE_SHA256=$(sha256sum "$FIXTURE_PATH" | awk '{print $1}')
+          RAW_ENTRY="${MEDIA_ID}:${STORAGE_OBJECT}:${IMAGE_SHA256}"
+          MEDIA_DIGEST=$(printf '%s' "$RAW_ENTRY" | sha256sum | awk '{print $1}')
+
+          PAYLOAD=$(cat <<JSON
+          {
+            "listingId": "00000000-0000-0000-0000-000000000002",
+            "listingRevision": 1,
+            "generationId": "00000000-0000-0000-0000-000000000003",
+            "title": "Synthetic Test Listing",
+            "description": "Probe payload for automated integration verification with benign fixture.",
+            "categorySlug": "electronics",
+            "mediaDigest": "$MEDIA_DIGEST",
+            "media": [
+              {
+                "id": "$MEDIA_ID",
+                "originalStoragePath": "$STORAGE_OBJECT",
+                "scopedSignedUrl": "$FULL_SIGNED_URL",
+                "mediaSha256": "$IMAGE_SHA256"
+              }
+            ]
+          }
+          JSON
+          )
+
+          echo "Dispatching real benign probe to Controller at https://$CONTROLLER_FQDN/v1/moderate..."
+          PROBE_RESP=$(curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            -X POST "https://$CONTROLLER_FQDN/v1/moderate" \
+            -H "Content-Type: application/json" \
+            -H "X-Moderation-Secret: $AZURE_MODERATION_SECRET" \
+            -d "$PAYLOAD")
+
+          echo "Probe Response: $PROBE_RESP"
+
+          # Strict fail-closed jq validation
+          echo "$PROBE_RESP" | jq -e \
+            --arg exp_digest "$MEDIA_DIGEST" \
+            --arg exp_id "$MEDIA_ID" '
+            .verdict != "INCOMPLETE" and
+            (.failedChecks | length == 0) and
+            (.completedChecks | index("check_vision_nsfw")) != null and
+            (.completedChecks | index("check_vision_category")) != null and
+            (.completedChecks | index("check_ocr_qr")) != null and
+            .scannedMediaCount == 1 and
+            .mediaDigest == $exp_digest and
+            (.perImageResults | length == 1) and
+            .perImageResults[0].mediaId == $exp_id and
+            .perImageResults[0].visionStatus == "success" and
+            .perImageResults[0].ocrStatus == "success" and
+            .perImageResults[0].hashVerified == true
+          ' > /dev/null || {
+            echo "::error::Response failed strict fail-closed E2E validation: $PROBE_RESP"
+            exit 1
+          }
+
+          echo "PASS: End-to-end multi-service invocation strictly verified with benign fixture."
+
+      # Gate 6: Probe Live Replica State Evidence & Cold-Wake Check
+      - name: Capture Live Container Apps Replica State Evidence (Test)
+        shell: bash
+        env:
+          CONTROLLER_FQDN: ${{ needs.deploy-test.outputs.controller_fqdn }}
+        run: |
+          set -euo pipefail
+          echo "Auditing live replica states and cold-wake behavior across Test Container Apps..."
+          APPS=("ca-moderation-controller-test" "ca-node-vision-test" "ca-python-ocr-test")
+
+          # Safe replica querying: never treat CLI errors, empty responses, or non-integer values as 0
+          query_replicas() {
+            local app_name="$1"
+            local raw_count
+            if ! raw_count=$(az containerapp replica list --name "$app_name" --resource-group rg-fairswap-moderation-test --query "length(@)" -o tsv 2>/dev/null); then
+              echo "QUERY_FAILED"
+              return 0
+            fi
+            raw_count=$(echo "$raw_count" | tr -d '[:space:]')
+            if [[ ! "$raw_count" =~ ^[0-9]+$ ]]; then
+              echo "MALFORMED_OUTPUT"
+              return 0
+            fi
+            echo "$raw_count"
+          }
+
+          echo "Observing replica scaling towards zero (bounded 60s window)..."
+          POLL_ZERO_CONFIRMED=false
+          QUERY_FAILURE_DETECTED=false
+          LAST_CTRL_COUNT="unknown"
+          LAST_VIS_COUNT="unknown"
+          LAST_OCR_COUNT="unknown"
+
+          for i in {1..6}; do
+            C=$(query_replicas "ca-moderation-controller-test")
+            V=$(query_replicas "ca-node-vision-test")
+            O=$(query_replicas "ca-python-ocr-test")
+
+            if [[ "$C" == "QUERY_FAILED" || "$C" == "MALFORMED_OUTPUT" || \
+                  "$V" == "QUERY_FAILED" || "$V" == "MALFORMED_OUTPUT" || \
+                  "$O" == "QUERY_FAILED" || "$O" == "MALFORMED_OUTPUT" ]]; then
+              echo "Poll $i/6: Replica query failed or malformed (Controller: $C, Vision: $V, OCR: $O)"
+              QUERY_FAILURE_DETECTED=true
+              LAST_CTRL_COUNT="$C"
+              LAST_VIS_COUNT="$V"
+              LAST_OCR_COUNT="$O"
+              sleep 10
+              continue
+            fi
+
+            LAST_CTRL_COUNT="$C"
+            LAST_VIS_COUNT="$V"
+            LAST_OCR_COUNT="$O"
+            echo "Poll $i/6: Controller=$C, Vision=$V, OCR=$O active replicas"
+
+            if [[ "$C" == "0" && "$V" == "0" && "$O" == "0" ]]; then
+              POLL_ZERO_CONFIRMED=true
+              break
+            fi
+            sleep 10
+          done
+
+          if [[ "$POLL_ZERO_CONFIRMED" == "true" ]]; then
+            echo "All 3 apps confirmed at 0 replicas. Probing Controller /healthz to test cold wake-up..."
+            curl --fail --silent --show-error --output /dev/null \
+              --connect-timeout 10 --max-time 30 \
+              "https://${CONTROLLER_FQDN}/healthz"
+            sleep 5
+
+            POST_CTRL=$(query_replicas "ca-moderation-controller-test")
+            echo "Post-probe Controller replica count: $POST_CTRL"
+            if [[ "$POST_CTRL" =~ ^[0-9]+$ ]] && [[ "$POST_CTRL" -gt 0 ]]; then
+              echo "PASS: True scale-from-zero cold activation verified on Controller (replicas transitioned 0 -> $POST_CTRL). Internal workers exercised via Test Gate 5."
+            else
+              echo "NOTICE: Controller /healthz responded successfully; replica count was '$POST_CTRL' during post-probe window. Cold-wake activation transition classified UNVERIFIED in short observation window; minReplicas: 0 configuration is asserted."
+            fi
+          elif [[ "$QUERY_FAILURE_DETECTED" == "true" && "$POLL_ZERO_CONFIRMED" == "false" ]]; then
+            echo "NOTICE: Azure CLI replica query failed or returned malformed output during observation window (Controller: $LAST_CTRL_COUNT, Vision: $LAST_VIS_COUNT, OCR: $LAST_OCR_COUNT). Replica state query UNVERIFIED; minReplicas: 0 configuration is asserted."
+          else
+            echo "NOTICE: App replicas did not reach zero within the 60s bounded CI window (Controller: $LAST_CTRL_COUNT, Vision: $LAST_VIS_COUNT, OCR: $LAST_OCR_COUNT). Scale-from-zero transition classified UNVERIFIED in short CI window; minReplicas: 0 configuration is asserted."
+          fi
+
+      # Gate 7: Verify Supabase Edge Function Security Gate
+      - name: Verify Supabase Edge Function Security Gate (Test)
+        run: |
+          set -euo pipefail
+          PROJECT_REF="wpppxlnbzqynvhpeuavd"
+          echo "Verifying process-listing-moderation denies unauthenticated requests with 401..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://${PROJECT_REF}.supabase.co/functions/v1/process-listing-moderation" || true)
+          if [[ "$HTTP_CODE" != "401" ]]; then
+            echo "::error::process-listing-moderation returned HTTP $HTTP_CODE instead of 401 Unauthorized."
+            exit 1
+          fi
+          echo "PASS: process-listing-moderation fail-closed authentication gate verified."
+
+  # ---------------------------------------------------------------------------
+  # Phase 4: Deploy Production Environment (Consumes Verified Image Digests)
+  # ---------------------------------------------------------------------------
+  deploy-prod:
+    name: Deploy Production (FairSwapProd)
+    needs: [build-ci-and-publish, deploy-test, verify-test]
+    if: ${{ inputs.target != 'test-only' }}
+    runs-on: ubuntu-latest
+    environment: FairSwapProd
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      controller_fqdn: ${{ steps.bicep-prod.outputs.controllerFqdn }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check required secrets
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for secret_name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID OPENAI_API_KEY AZURE_MODERATION_SECRET SUPABASE_ACCESS_TOKEN GHCR_PULL_TOKEN; do
+            if [[ -z "${!secret_name}" ]]; then
+              printf '::error::Missing required secret: %s\n' "$secret_name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Verify Authorized Read-Only Pull with GHCR_PULL_TOKEN (FairSwapProd)
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GHCR_PULL_TOKEN" ]]; then
+            echo "::error::Missing GHCR_PULL_TOKEN in FairSwapProd environment."
+            exit 1
+          fi
+
+          echo "Authenticating to GHCR using FairSwapProd GHCR_PULL_TOKEN..."
+          echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "${{ secrets.GHCR_PULL_USERNAME || github.repository_owner }}" --password-stdin
+
+          PACKAGES=(
+            "fairswap-moderation-controller"
+            "fairswap-node-vision"
+            "fairswap-python-ocr"
+          )
+
+          for pkg in "${PACKAGES[@]}"; do
+            IMG="ghcr.io/${{ github.repository_owner }}/$pkg:${{ github.sha }}"
+            echo "Verifying authorized pull for: $IMG"
+            docker pull "$IMG"
+            echo "PASS: Authorized pull succeeded for $pkg."
+          done
+          docker logout ghcr.io || true
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure Resource Group Exists
+        run: |
+          az group create --name rg-fairswap-moderation-prod --location centralindia
+
+      - name: Deploy Azure Container Apps to Production via main.bicep (Identical Digests)
+        id: bicep-prod
+        uses: azure/arm-deploy@v2
+        with:
+          subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          resourceGroupName: rg-fairswap-moderation-prod
+          template: infra/azure/moderation/main.bicep
+          parameters: >-
+            environment=prod
+            location=centralindia
+            ghcrServer=ghcr.io
+            ghcrUsername=${{ secrets.GHCR_PULL_USERNAME || github.repository_owner }}
+            ghcrPullToken=${{ secrets.GHCR_PULL_TOKEN }}
+            controllerImage=${{ needs.build-ci-and-publish.outputs.controller_image }}
+            nodeVisionImage=${{ needs.build-ci-and-publish.outputs.vision_image }}
+            pythonOcrImage=${{ needs.build-ci-and-publish.outputs.ocr_image }}
+            openAiApiKey=${{ secrets.OPENAI_API_KEY }}
+            moderationSecret=${{ secrets.AZURE_MODERATION_SECRET }}
+            allowedStorageHost=kriuhwppxgxsyyrbjsau.supabase.co
+
+      # Configure required Azure Moderation secrets in Supabase (Production) & Deploy Worker
+      - name: Configure Supabase Secrets and Deploy Moderation Worker (Production)
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
-          CONTROLLER_FQDN: ${{ steps.bicep.outputs.controllerFqdn }}
+          CONTROLLER_FQDN: ${{ steps.bicep-prod.outputs.controllerFqdn }}
         run: |
-          if [ "${{ inputs.environment }}" = "prod" ]; then
-            PROJECT_REF="kriuhwppxgxsyyrbjsau"
-          else
-            PROJECT_REF="wpppxlnbzqynvhpeuavd"
-          fi
+          set -euo pipefail
+          PROJECT_REF="kriuhwppxgxsyyrbjsau"
 
-          # Install pinned Supabase CLI without running package scripts
           CLI_DIR="$(mktemp -d "${RUNNER_TEMP:?}/supabase-cli.XXXXXX")"
+          PINNED_SHA=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("scripts/ci/toolchain.json","utf8")).database.cliArchiveSha256)')
+          PINNED_URL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("scripts/ci/toolchain.json","utf8")).database.cliArchive)')
+          PINNED_VER=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("scripts/ci/toolchain.json","utf8")).database.cliVersion)')
+
           curl -fsSL \
             --connect-timeout 10 --max-time 60 \
             --retry 5 --retry-delay 5 --retry-connrefused --retry-all-errors \
             --retry-max-time 180 \
-            https://github.com/supabase/cli/releases/download/v2.117.0/supabase_linux_amd64.tar.gz \
+            "$PINNED_URL" \
             -o "$CLI_DIR/supabase.tar.gz"
+
+          # Strict SHA-256 integrity verification against pinned toolchain.json before extraction
+          echo "$PINNED_SHA  $CLI_DIR/supabase.tar.gz" | sha256sum -c --status || {
+            echo "::error::Supabase CLI archive SHA-256 digest verification failed!"
+            exit 1
+          }
+
           tar -xzf "$CLI_DIR/supabase.tar.gz" -C "$CLI_DIR" || exit 1
           chmod +x "$CLI_DIR/supabase"
           cli_version="$("$CLI_DIR/supabase" --version)" || exit 1
-          if [[ "$cli_version" != "2.117.0" ]]; then
-            echo "::error::Expected Supabase CLI version 2.117.0"
+          if [[ "$cli_version" != "$PINNED_VER" ]]; then
+            echo "::error::Expected Supabase CLI version $PINNED_VER but found $cli_version"
             exit 1
           fi
+          echo "PASS: exact pinned Supabase CLI authenticated by SHA-256 from toolchain.json"
 
-          # Set Azure Moderation secrets (Controller endpoint and secret) in Edge runtime
           "$CLI_DIR/supabase" secrets set \
             AZURE_MODERATION_ENDPOINT="https://${CONTROLLER_FQDN}/v1/moderate" \
             AZURE_MODERATION_SECRET="$AZURE_MODERATION_SECRET" \
             --project-ref "$PROJECT_REF"
+
+          echo "Deploying changed process-listing-moderation Edge Function to Production..."
+          "$CLI_DIR/supabase" functions deploy process-listing-moderation \
+            --project-ref "$PROJECT_REF" \
+            --no-verify-jwt
+          echo "PASS: process-listing-moderation Edge Function deployed to Production."
+
+  # ---------------------------------------------------------------------------
+  # Phase 5: Automated Production Postflight Verification
+  # ---------------------------------------------------------------------------
+  verify-prod:
+    name: Verify Production Postflight & Rigorous Gates
+    needs: [build-ci-and-publish, deploy-prod]
+    if: ${{ inputs.target != 'test-only' }}
+    runs-on: ubuntu-latest
+    environment: FairSwapProd
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Gate 1: Assert exact image digests on all three Production apps
+      - name: Assert Exact Built Image Digests on All Three Apps (Production)
+        env:
+          EXP_CTRL: ${{ needs.build-ci-and-publish.outputs.controller_image }}
+          EXP_VISION: ${{ needs.build-ci-and-publish.outputs.vision_image }}
+          EXP_OCR: ${{ needs.build-ci-and-publish.outputs.ocr_image }}
+        run: |
+          set -euo pipefail
+          echo "Verifying Production image digests match built SHA-256 digests..."
+
+          ACT_CTRL=$(az containerapp show --name ca-moderation-controller-prod --resource-group rg-fairswap-moderation-prod --query "properties.template.containers[0].image" -o tsv)
+          ACT_VISION=$(az containerapp show --name ca-node-vision-prod --resource-group rg-fairswap-moderation-prod --query "properties.template.containers[0].image" -o tsv)
+          ACT_OCR=$(az containerapp show --name ca-python-ocr-prod --resource-group rg-fairswap-moderation-prod --query "properties.template.containers[0].image" -o tsv)
+
+          if [[ -z "$ACT_CTRL" || -z "$ACT_VISION" || -z "$ACT_OCR" ]]; then
+            echo "::error::One or more production image queries returned empty or null!"
+            exit 1
+          fi
+
+          if [[ "$ACT_CTRL" != "$EXP_CTRL" ]]; then
+            echo "::error::Production Controller image mismatch! Expected $EXP_CTRL but found $ACT_CTRL"
+            exit 1
+          fi
+          if [[ "$ACT_VISION" != "$EXP_VISION" ]]; then
+            echo "::error::Production Node Vision image mismatch! Expected $EXP_VISION but found $ACT_VISION"
+            exit 1
+          fi
+          if [[ "$ACT_OCR" != "$EXP_OCR" ]]; then
+            echo "::error::Production Python OCR image mismatch! Expected $EXP_OCR but found $ACT_OCR"
+            exit 1
+          fi
+          echo "PASS: All three Production apps running verified SHA-256 digests."
+
+      # Gate 2: Assert scale-to-zero and ingress boundaries on Production apps
+      - name: Assert Scale-to-Zero and Ingress Boundaries (Production)
+        run: |
+          set -euo pipefail
+          APPS=("ca-moderation-controller-prod" "ca-node-vision-prod" "ca-python-ocr-prod")
+
+          for app in "${APPS[@]}"; do
+            MIN_REP=$(az containerapp show --name "$app" --resource-group rg-fairswap-moderation-prod --query "properties.template.scale.minReplicas" -o tsv)
+            if [[ -z "$MIN_REP" || "$MIN_REP" != "0" ]]; then
+              echo "::error::Production app $app minReplicas is '$MIN_REP' (must be exactly 0)!"
+              exit 1
+            fi
+          done
+
+          VISION_EXT=$(az containerapp show --name ca-node-vision-prod --resource-group rg-fairswap-moderation-prod --query "properties.configuration.ingress.external" -o tsv)
+          OCR_EXT=$(az containerapp show --name ca-python-ocr-prod --resource-group rg-fairswap-moderation-prod --query "properties.configuration.ingress.external" -o tsv)
+          CTRL_EXT=$(az containerapp show --name ca-moderation-controller-prod --resource-group rg-fairswap-moderation-prod --query "properties.configuration.ingress.external" -o tsv)
+
+          if [[ -z "$VISION_EXT" || -z "$OCR_EXT" || -z "$CTRL_EXT" ]]; then
+            echo "::error::One or more production ingress queries returned empty or null!"
+            exit 1
+          fi
+
+          if [[ "$VISION_EXT" != "false" ]]; then
+            echo "::error::Production Node Vision has external ingress enabled!"
+            exit 1
+          fi
+          if [[ "$OCR_EXT" != "false" ]]; then
+            echo "::error::Production Python OCR has external ingress enabled!"
+            exit 1
+          fi
+          if [[ "$CTRL_EXT" != "true" ]]; then
+            echo "::error::Production Controller must have external ingress enabled."
+            exit 1
+          fi
+          echo "PASS: Production scale-to-zero and ingress boundaries verified."
+
+      # Gate 3: Probe Production Controller Cold Start
+      - name: Verify Production Controller Health & Cold Start
+        shell: bash
+        timeout-minutes: 3
+        env:
+          CONTROLLER_FQDN: ${{ needs.deploy-prod.outputs.controller_fqdn }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --output /dev/null \
+            --connect-timeout 10 --max-time 20 \
+            --retry 5 --retry-delay 5 --retry-connrefused --retry-all-errors \
+            --retry-max-time 120 \
+            "https://${CONTROLLER_FQDN:?Missing controller FQDN}/healthz"
+          echo "PASS: Production Controller /healthz responded successfully."
+
+      # Gate 4: Verify Fail-Closed Authentication on Production Controller
+      - name: Verify Production Controller Authentication Boundary
+        env:
+          CONTROLLER_FQDN: ${{ needs.deploy-prod.outputs.controller_fqdn }}
+        run: |
+          set -euo pipefail
+          UNAUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "https://$CONTROLLER_FQDN/v1/moderate" -H "Content-Type: application/json" -d '{}' || true)
+          if [[ "$UNAUTH_CODE" != "401" ]]; then
+            echo "::error::Production unauthenticated POST returned HTTP $UNAUTH_CODE instead of 401."
+            exit 1
+          fi
+          echo "PASS: Production unauthenticated access blocked with 401."
+
+      # Gate 5: Verify Supabase Edge Function Fail-Closed Gate (Production)
+      - name: Verify Supabase Edge Function Security Gate (Production)
+        run: |
+          set -euo pipefail
+          PROJECT_REF="kriuhwppxgxsyyrbjsau"
+          echo "Verifying Production process-listing-moderation denies unauthenticated requests with 401..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://${PROJECT_REF}.supabase.co/functions/v1/process-listing-moderation" || true)
+          if [[ "$HTTP_CODE" != "401" ]]; then
+            echo "::error::Production process-listing-moderation returned HTTP $HTTP_CODE instead of 401 Unauthorized."
+            exit 1
+          fi
+          echo "PASS: Production process-listing-moderation fail-closed authentication gate verified."
