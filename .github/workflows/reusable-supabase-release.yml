@@ -14,6 +14,7 @@ on:
           - moderation-switching-v1
           - mobile-catalogue-india-v1
           - listing-validity-365
+          - taxonomy-v2-foundation
           - accessories-v1-foundation
           - accessories-v1-activation
           - tablets-v1-foundation
@@ -128,6 +129,13 @@ jobs:
           REQUIRE_REAL_PG: '1'
           FSW_PGLITE_MODULE: tests/ratings/node_modules/@electric-sql/pglite/dist/index.js
         run: node --test tests/release/reusable-supabase-release.test.mjs
+
+      - name: Verify Taxonomy V2 SQL, pins and release contracts
+        if: ${{ inputs.candidate == 'taxonomy-v2-foundation' }}
+        run: |
+          node tests/taxonomy-v2/run.mjs --category-count=53
+          node tests/taxonomy-v2/run.mjs --category-count=55
+          node --test tests/taxonomy-v2/integration.test.mjs tests/release/taxonomy-v2-release.test.mjs
 
       - name: Verify candidate registry and candidate SQL SHA-256
         env:
@@ -315,6 +323,7 @@ jobs:
   verify_test:
     needs: [verify, test]
     outputs:
+      taxonomy_ledger_sha: ${{ steps.taxonomy_proof.outputs.ledger_sha }}
       listing_validity_ledger_sha: ${{ steps.listing_validity_proof.outputs.ledger_sha }}
       mobile_catalogue_ledger_sha: ${{ steps.mobile_catalogue_proof.outputs.ledger_sha }}
     if: ${{ needs.test.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
@@ -344,6 +353,18 @@ jobs:
           cd test-evidence
           sha256sum --check SHA256SUMS_fairswaptest
           printf '%s  %s-fairswaptest.json\n' "$EXPECTED_SHA" "$CANDIDATE" | sha256sum --check --status
+
+      - name: Verify Taxonomy V2 Test postflight receipt
+        id: taxonomy_proof
+        if: ${{ inputs.candidate == 'taxonomy-v2-foundation' }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {appendFileSync, readFileSync} from 'node:fs';
+          import {verifyTaxonomyTestReceipt} from './scripts/release/taxonomy-v2-release.mjs';
+          const receipt = JSON.parse(readFileSync('test-evidence/taxonomy-v2-foundation-fairswaptest.json', 'utf8'));
+          const digest = verifyTaxonomyTestReceipt(receipt, process.env);
+          appendFileSync(process.env.GITHUB_OUTPUT, `ledger_sha=${digest}\n`);
+          NODE
 
       - name: Verify listing validity Test postflight receipt
         id: listing_validity_proof
@@ -377,8 +398,9 @@ jobs:
       ${{ always() && needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
       ((inputs.target == 'test' && needs.verify.outputs.auto_promote == 'true' && needs.test.result == 'success' && needs.verify_test.result == 'success' &&
       (inputs.candidate != 'mobile-catalogue-india-v1' || needs.verify_test.outputs.mobile_catalogue_ledger_sha != '') &&
-      (inputs.candidate != 'listing-validity-365' || needs.verify_test.outputs.listing_validity_ledger_sha != '')) ||
-      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'listing-validity-365') ||
+      (inputs.candidate != 'listing-validity-365' || needs.verify_test.outputs.listing_validity_ledger_sha != '') &&
+      (inputs.candidate != 'taxonomy-v2-foundation' || needs.verify_test.outputs.taxonomy_ledger_sha != '')) ||
+      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation') ||
       (inputs.target == 'adopt' && inputs.candidate == 'accessories-v1-foundation' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped')) }}
     environment: FairSwapProd
     runs-on: ubuntu-24.04
@@ -441,6 +463,7 @@ jobs:
       - name: Execute Production release and automated read-only verification
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          TAXONOMY_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.taxonomy_ledger_sha }}
           LISTING_VALIDITY_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.listing_validity_ledger_sha }}
           MOBILE_CATALOGUE_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.mobile_catalogue_ledger_sha }}
           WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue') && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}

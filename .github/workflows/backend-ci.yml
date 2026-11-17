@@ -138,6 +138,13 @@ jobs:
             node scripts/ci/test-listing-validity-365.mjs --pglite-module=tests/ratings/node_modules/@electric-sql/pglite/dist/index.js
           node --test tests/release/listing-validity-365-release.test.mjs
 
+      - name: Require Taxonomy V2 foundation SQL and release contract regressions
+        timeout-minutes: 3
+        run: |
+          node tests/taxonomy-v2/run.mjs --category-count=53
+          node tests/taxonomy-v2/run.mjs --category-count=55
+          node --test tests/taxonomy-v2/integration.test.mjs tests/release/taxonomy-v2-release.test.mjs
+
       - name: Run validator regression checks
         timeout-minutes: 1
         run: node --test scripts/ci/verification.test.mjs
@@ -273,6 +280,12 @@ jobs:
         run: |
           env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
             bash tests/wearables-v1/run-native.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin" --web="$GITHUB_WORKSPACE/tests/wearables-v1/web-fixture"
+
+      - name: Require Taxonomy V2 native PG17 SQL and independent-connection races
+        timeout-minutes: 4
+        run: |
+          node tests/taxonomy-v2/run.mjs --category-count=53 --native-bin="$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+          node tests/taxonomy-v2/run.mjs --category-count=55 --native-bin="$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
 
       - name: Require Accessories V1 release guards on native PostgreSQL 17
         timeout-minutes: 4
