@@ -28,10 +28,23 @@ export async function orchestrateModerationJob(
   const completedChecks: string[] = [];
   const failedChecks: string[] = [];
   const flags: ModerationDecisionRecord["flags"] = [];
-  const perImageMap = new Map<string, { visionStatus: string; ocrStatus: string; hashVerified: boolean }>();
+
+  interface ImageTracking {
+    visionStatus: string;
+    ocrStatus: string;
+    visionHashVerified: boolean;
+    ocrHashVerified: boolean;
+  }
+
+  const perImageTracking = new Map<string, ImageTracking>();
 
   for (const m of job.media) {
-    perImageMap.set(m.id, { visionStatus: "pending", ocrStatus: "pending", hashVerified: false });
+    perImageTracking.set(m.id, {
+      visionStatus: "pending",
+      ocrStatus: "pending",
+      visionHashVerified: false,
+      ocrHashVerified: false,
+    });
   }
 
   // Verify canonical media manifest digest
@@ -105,20 +118,20 @@ export async function orchestrateModerationJob(
     const runVision = async () => {
       try {
         const visionPayload = {
-          listingId: job.listingId,
           media: job.media.map((m) => ({
-            mediaId: m.id,
+            id: m.id,
+            originalStoragePath: m.originalStoragePath,
             scopedSignedUrl: m.scopedSignedUrl,
             mediaSha256: m.mediaSha256,
           })),
-          categorySlug: job.categorySlug,
+          expectedCategory: job.categorySlug,
         };
 
         const visionRes = await fetch(`${config.nodeVisionServiceUrl}/scan`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-moderation-internal-secret": config.moderationSecret,
+            "x-internal-secret": config.moderationSecret,
           },
           body: JSON.stringify(visionPayload),
           signal: AbortSignal.timeout(config.timeoutMs),
@@ -145,10 +158,10 @@ export async function orchestrateModerationJob(
               }
               seenVisionIds.add(item.mediaId);
 
-              const current = perImageMap.get(item.mediaId);
-              if (current) {
-                current.visionStatus = item.status;
-                current.hashVerified = current.hashVerified || item.sha256Verified;
+              const track = perImageTracking.get(item.mediaId);
+              if (track) {
+                track.visionStatus = item.status;
+                track.visionHashVerified = item.sha256Verified === true;
               }
               if (item.status !== "success" || !item.sha256Verified) {
                 visionAllGood = false;
@@ -184,9 +197,9 @@ export async function orchestrateModerationJob(
     const runOcr = async () => {
       try {
         const ocrPayload = {
-          listingId: job.listingId,
           media: job.media.map((m) => ({
-            mediaId: m.id,
+            id: m.id,
+            originalStoragePath: m.originalStoragePath,
             scopedSignedUrl: m.scopedSignedUrl,
             mediaSha256: m.mediaSha256,
           })),
@@ -196,7 +209,7 @@ export async function orchestrateModerationJob(
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-moderation-internal-secret": config.moderationSecret,
+            "x-internal-secret": config.moderationSecret,
           },
           body: JSON.stringify(ocrPayload),
           signal: AbortSignal.timeout(config.timeoutMs),
@@ -223,10 +236,10 @@ export async function orchestrateModerationJob(
               }
               seenOcrIds.add(item.mediaId);
 
-              const current = perImageMap.get(item.mediaId);
-              if (current) {
-                current.ocrStatus = item.status;
-                current.hashVerified = current.hashVerified && item.sha256Verified;
+              const track = perImageTracking.get(item.mediaId);
+              if (track) {
+                track.ocrStatus = item.status;
+                track.ocrHashVerified = item.sha256Verified === true;
               }
               if (item.status !== "success" || !item.sha256Verified) {
                 ocrAllGood = false;
@@ -257,6 +270,26 @@ export async function orchestrateModerationJob(
     failedChecks.push("check_vision_nsfw", "check_vision_category", "check_ocr_qr");
   }
 
+  // Calculate final deterministic per-image verification: visionHashVerified && ocrHashVerified
+  const perImageResults = job.media.map((m) => {
+    const track = perImageTracking.get(m.id);
+    const visionHashVerified = track?.visionHashVerified === true;
+    const ocrHashVerified = track?.ocrHashVerified === true;
+    const hashVerified = visionHashVerified && ocrHashVerified;
+
+    return {
+      mediaId: m.id,
+      visionStatus: track?.visionStatus ?? "pending",
+      ocrStatus: track?.ocrStatus ?? "pending",
+      hashVerified,
+    };
+  });
+
+  const allImagesHashVerified =
+    job.media.length > 0 &&
+    perImageResults.length === job.media.length &&
+    perImageResults.every((r) => r.hashVerified === true);
+
   // Aggregate verdict for Azure's 3 checks
   const requiredAzureChecks = [
     "check_vision_nsfw",
@@ -267,7 +300,12 @@ export async function orchestrateModerationJob(
   const allRequiredCompleted = requiredAzureChecks.every((c) => completedChecks.includes(c));
   let verdict: ModerationDecisionRecord["verdict"];
 
-  if (!allRequiredCompleted || failedChecks.length > 0 || job.media.length === 0) {
+  if (
+    !allRequiredCompleted ||
+    failedChecks.length > 0 ||
+    job.media.length === 0 ||
+    !allImagesHashVerified
+  ) {
     verdict = "INCOMPLETE";
   } else if (flags.some((f) => f.severity === "critical")) {
     verdict = "REJECT";
@@ -276,13 +314,6 @@ export async function orchestrateModerationJob(
   } else {
     verdict = "APPROVE";
   }
-
-  const perImageResults = Array.from(perImageMap.entries()).map(([id, info]) => ({
-    mediaId: id,
-    visionStatus: info.visionStatus,
-    ocrStatus: info.ocrStatus,
-    hashVerified: info.hashVerified,
-  }));
 
   const manifest = job.media.map((m) => ({
     mediaId: m.id,

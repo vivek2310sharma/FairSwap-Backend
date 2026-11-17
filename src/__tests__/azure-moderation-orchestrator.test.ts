@@ -336,4 +336,335 @@ describe("Azure Moderation V1 - Orchestration, Integrity & Security Scenarios", 
       globalThis.fetch = originalFetch;
     }
   });
+
+  describe("Controller-to-Worker API Contracts & Headers Verification", () => {
+    it("sends x-internal-secret header and exact media fields (id, originalStoragePath, scopedSignedUrl, mediaSha256) to both workers", async () => {
+      const originalFetch = globalThis.fetch;
+      const capturedRequests: Record<string, { headers: Record<string, string>; body: any }> = {};
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        const body = init?.body ? JSON.parse(init.body as string) : null;
+        const headers = (init?.headers as Record<string, string>) || {};
+
+        if (url.includes("node-vision")) {
+          capturedRequests.vision = { headers, body };
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                status: "completed",
+                scannedCount: 1,
+                results: [{ mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: true, status: "success" }],
+                flags: [],
+              }),
+              { status: 200 }
+            )
+          );
+        }
+
+        if (url.includes("python-ocr")) {
+          capturedRequests.ocr = { headers, body };
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                status: "completed",
+                scannedCount: 1,
+                results: [{ mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: true, status: "success" }],
+                extractedTexts: ["Valid Product Text"],
+                qrPayloads: [],
+              }),
+              { status: 200 }
+            )
+          );
+        }
+
+        return Promise.reject(new Error("Unhandled route"));
+      });
+
+      try {
+        const { createHash } = await import("node:crypto");
+        const digest = createHash("sha256")
+          .update("33333333-3333-3333-3333-333333333333:listings/photo.jpg:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+          .digest("hex");
+
+        const jobWithCategory: ModerationJobRequest = {
+          ...baseJob,
+          categorySlug: "electronics",
+          mediaDigest: digest,
+        };
+
+        const res = await orchestrateModerationJob(jobWithCategory, mockConfig);
+        expect(res.verdict).toBe("APPROVE");
+
+        // 1. Assert Node Vision contract
+        expect(capturedRequests.vision).toBeDefined();
+        expect(capturedRequests.vision.headers["x-internal-secret"]).toBe(mockConfig.moderationSecret);
+        expect(capturedRequests.vision.headers["Content-Type"]).toBe("application/json");
+        expect(capturedRequests.vision.body.expectedCategory).toBe("electronics");
+        expect(capturedRequests.vision.body.media).toHaveLength(1);
+        expect(capturedRequests.vision.body.media[0]).toEqual({
+          id: "33333333-3333-3333-3333-333333333333",
+          originalStoragePath: "listings/photo.jpg",
+          scopedSignedUrl: "https://wpppxlnbzqynvhpeuavd.supabase.co/storage/v1/object/sign/listing-originals/listings/photo.jpg?token=abc",
+          mediaSha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        });
+        // mediaId must not be used as property name in worker request payload
+        expect((capturedRequests.vision.body.media[0] as any).mediaId).toBeUndefined();
+
+        // 2. Assert Python OCR contract
+        expect(capturedRequests.ocr).toBeDefined();
+        expect(capturedRequests.ocr.headers["x-internal-secret"]).toBe(mockConfig.moderationSecret);
+        expect(capturedRequests.ocr.headers["Content-Type"]).toBe("application/json");
+        expect(capturedRequests.ocr.body.media).toHaveLength(1);
+        expect(capturedRequests.ocr.body.media[0]).toEqual({
+          id: "33333333-3333-3333-3333-333333333333",
+          originalStoragePath: "listings/photo.jpg",
+          scopedSignedUrl: "https://wpppxlnbzqynvhpeuavd.supabase.co/storage/v1/object/sign/listing-originals/listings/photo.jpg?token=abc",
+          mediaSha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        });
+        expect((capturedRequests.ocr.body.media[0] as any).mediaId).toBeUndefined();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe("Concurrent Deterministic Hash Verification & Order Independence", () => {
+    it("Order 1: OCR mismatch completes before Vision success -> hashVerified is FALSE and verdict is INCOMPLETE", async () => {
+      const originalFetch = globalThis.fetch;
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes("python-ocr")) {
+          // OCR completes faster (0ms) with hash mismatch
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                status: "incomplete",
+                scannedCount: 1,
+                results: [{ mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: false, status: "hash_mismatch" }],
+                extractedTexts: [],
+                qrPayloads: [],
+              }),
+              { status: 200 }
+            )
+          );
+        }
+
+        if (url.includes("node-vision")) {
+          // Vision completes slower with success
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(
+                new Response(
+                  JSON.stringify({
+                    status: "completed",
+                    scannedCount: 1,
+                    results: [{ mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: true, status: "success" }],
+                    flags: [],
+                  }),
+                  { status: 200 }
+                )
+              );
+            }, 25);
+          });
+        }
+
+        return Promise.reject(new Error("Unhandled route"));
+      });
+
+      try {
+        const { createHash } = await import("node:crypto");
+        const digest = createHash("sha256")
+          .update("33333333-3333-3333-3333-333333333333:listings/photo.jpg:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+          .digest("hex");
+
+        const res = await orchestrateModerationJob({ ...baseJob, mediaDigest: digest }, mockConfig);
+        expect(res.perImageResults[0].hashVerified).toBe(false);
+        expect(res.perImageResults[0].ocrStatus).toBe("hash_mismatch");
+        expect(res.perImageResults[0].visionStatus).toBe("success");
+        expect(res.failedChecks).toContain("check_ocr_qr");
+        expect(res.verdict).toBe("INCOMPLETE");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("Order 2: Vision success completes before OCR mismatch -> hashVerified is FALSE and verdict is INCOMPLETE", async () => {
+      const originalFetch = globalThis.fetch;
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes("node-vision")) {
+          // Vision completes faster (0ms) with success
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                status: "completed",
+                scannedCount: 1,
+                results: [{ mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: true, status: "success" }],
+                flags: [],
+              }),
+              { status: 200 }
+            )
+          );
+        }
+
+        if (url.includes("python-ocr")) {
+          // OCR completes slower with hash mismatch
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(
+                new Response(
+                  JSON.stringify({
+                    status: "incomplete",
+                    scannedCount: 1,
+                    results: [{ mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: false, status: "hash_mismatch" }],
+                    extractedTexts: [],
+                    qrPayloads: [],
+                  }),
+                  { status: 200 }
+                )
+              );
+            }, 25);
+          });
+        }
+
+        return Promise.reject(new Error("Unhandled route"));
+      });
+
+      try {
+        const { createHash } = await import("node:crypto");
+        const digest = createHash("sha256")
+          .update("33333333-3333-3333-3333-333333333333:listings/photo.jpg:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+          .digest("hex");
+
+        const res = await orchestrateModerationJob({ ...baseJob, mediaDigest: digest }, mockConfig);
+        expect(res.perImageResults[0].hashVerified).toBe(false);
+        expect(res.perImageResults[0].visionStatus).toBe("success");
+        expect(res.perImageResults[0].ocrStatus).toBe("hash_mismatch");
+        expect(res.failedChecks).toContain("check_ocr_qr");
+        expect(res.verdict).toBe("INCOMPLETE");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("Order 3: Vision mismatch completes before OCR success -> hashVerified is FALSE and verdict is INCOMPLETE", async () => {
+      const originalFetch = globalThis.fetch;
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes("node-vision")) {
+          // Vision completes faster (0ms) with hash mismatch
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                status: "incomplete",
+                scannedCount: 1,
+                results: [{ mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: false, status: "hash_mismatch" }],
+                flags: [],
+              }),
+              { status: 200 }
+            )
+          );
+        }
+
+        if (url.includes("python-ocr")) {
+          // OCR completes slower with success
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(
+                new Response(
+                  JSON.stringify({
+                    status: "completed",
+                    scannedCount: 1,
+                    results: [{ mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: true, status: "success" }],
+                    extractedTexts: ["Valid Text"],
+                    qrPayloads: [],
+                  }),
+                  { status: 200 }
+                )
+              );
+            }, 25);
+          });
+        }
+
+        return Promise.reject(new Error("Unhandled route"));
+      });
+
+      try {
+        const { createHash } = await import("node:crypto");
+        const digest = createHash("sha256")
+          .update("33333333-3333-3333-3333-333333333333:listings/photo.jpg:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+          .digest("hex");
+
+        const res = await orchestrateModerationJob({ ...baseJob, mediaDigest: digest }, mockConfig);
+        expect(res.perImageResults[0].hashVerified).toBe(false);
+        expect(res.perImageResults[0].visionStatus).toBe("hash_mismatch");
+        expect(res.perImageResults[0].ocrStatus).toBe("success");
+        expect(res.failedChecks).toContain("check_vision_nsfw");
+        expect(res.failedChecks).toContain("check_vision_category");
+        expect(res.verdict).toBe("INCOMPLETE");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("Order 4: OCR success completes before Vision mismatch -> hashVerified is FALSE and verdict is INCOMPLETE", async () => {
+      const originalFetch = globalThis.fetch;
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes("python-ocr")) {
+          // OCR completes faster (0ms) with success
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                status: "completed",
+                scannedCount: 1,
+                results: [{ mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: true, status: "success" }],
+                extractedTexts: ["Valid Text"],
+                qrPayloads: [],
+              }),
+              { status: 200 }
+            )
+          );
+        }
+
+        if (url.includes("node-vision")) {
+          // Vision completes slower with hash mismatch
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(
+                new Response(
+                  JSON.stringify({
+                    status: "incomplete",
+                    scannedCount: 1,
+                    results: [{ mediaId: "33333333-3333-3333-3333-333333333333", sha256Verified: false, status: "hash_mismatch" }],
+                    flags: [],
+                  }),
+                  { status: 200 }
+                )
+              );
+            }, 25);
+          });
+        }
+
+        return Promise.reject(new Error("Unhandled route"));
+      });
+
+      try {
+        const { createHash } = await import("node:crypto");
+        const digest = createHash("sha256")
+          .update("33333333-3333-3333-3333-333333333333:listings/photo.jpg:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+          .digest("hex");
+
+        const res = await orchestrateModerationJob({ ...baseJob, mediaDigest: digest }, mockConfig);
+        expect(res.perImageResults[0].hashVerified).toBe(false);
+        expect(res.perImageResults[0].ocrStatus).toBe("success");
+        expect(res.perImageResults[0].visionStatus).toBe("hash_mismatch");
+        expect(res.failedChecks).toContain("check_vision_nsfw");
+        expect(res.failedChecks).toContain("check_vision_category");
+        expect(res.verdict).toBe("INCOMPLETE");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
 });

@@ -36,6 +36,28 @@ export const ModerationJobRequestSchema = z.object({
 
 export type ModerationJobRequest = z.infer<typeof ModerationJobRequestSchema>;
 
+export const WorkerMediaItemSchema = z.object({
+  id: z.string().uuid(),
+  originalStoragePath: z.string().min(1),
+  scopedSignedUrl: z.string().url(),
+  mediaSha256: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+export type WorkerMediaItem = z.infer<typeof WorkerMediaItemSchema>;
+
+export const NodeVisionScanRequestSchema = z.object({
+  media: z.array(WorkerMediaItemSchema),
+  expectedCategory: z.string().optional(),
+});
+
+export type NodeVisionScanRequest = z.infer<typeof NodeVisionScanRequestSchema>;
+
+export const PythonOcrScanRequestSchema = z.object({
+  media: z.array(WorkerMediaItemSchema),
+});
+
+export type PythonOcrScanRequest = z.infer<typeof PythonOcrScanRequestSchema>;
+
 export const WorkerMediaResultSchema = z.object({
   mediaId: z.string().uuid(),
   sha256Verified: z.boolean(),

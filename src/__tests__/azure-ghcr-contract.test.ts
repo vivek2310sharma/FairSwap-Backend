@@ -381,4 +381,65 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
       normalizeStorageSignedUrl(projectRef, storageObject, `/object/sign/listing-originals/wrong-object.jpg?token=valid-secret-token-123`)
     ).toThrow(/does not match expected key/);
   });
+
+  it("enforces V1.5 Controller-to-Worker API compatibility and deterministic concurrent hash aggregation", async () => {
+    const orchestratorPath = join(rootDir, "services/moderation-azure/controller/src/orchestrator.ts");
+    const orchestratorCode = readFileSync(orchestratorPath, "utf-8");
+
+    // 1. Must use x-internal-secret header for both workers
+    expect(orchestratorCode).toContain('"x-internal-secret": config.moderationSecret');
+    expect(orchestratorCode).not.toContain('"x-moderation-internal-secret"');
+
+    // 2. Must map exact required media fields: id, originalStoragePath, scopedSignedUrl, mediaSha256
+    expect(orchestratorCode).toContain("id: m.id");
+    expect(orchestratorCode).toContain("originalStoragePath: m.originalStoragePath");
+    expect(orchestratorCode).toContain("scopedSignedUrl: m.scopedSignedUrl");
+    expect(orchestratorCode).toContain("mediaSha256: m.mediaSha256");
+
+    // 3. Must send expectedCategory to Node Vision
+    expect(orchestratorCode).toContain("expectedCategory: job.categorySlug");
+
+    // 4. Must eliminate order-dependent shared hashVerified mutation
+    expect(orchestratorCode).not.toContain("current.hashVerified || item.sha256Verified");
+    expect(orchestratorCode).not.toContain("current.hashVerified && item.sha256Verified");
+
+    // 5. Must track vision and OCR hash verification independently and aggregate as visionHashVerified && ocrHashVerified
+    expect(orchestratorCode).toContain("track.visionHashVerified = item.sha256Verified === true");
+    expect(orchestratorCode).toContain("track.ocrHashVerified = item.sha256Verified === true");
+    expect(orchestratorCode).toContain("const hashVerified = visionHashVerified && ocrHashVerified");
+
+    // 6. Test Worker request schemas from types.ts
+    const { NodeVisionScanRequestSchema, PythonOcrScanRequestSchema } = await import(
+      "../../services/moderation-azure/controller/src/types"
+    );
+
+    const validMediaItem = {
+      id: "11111111-1111-1111-1111-111111111111",
+      originalStoragePath: "listings/photo.jpg",
+      scopedSignedUrl: "https://wpppxlnbzqynvhpeuavd.supabase.co/storage/v1/object/sign/listing-originals/listings/photo.jpg?token=abc",
+      mediaSha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    };
+
+    const validVisionReq = NodeVisionScanRequestSchema.safeParse({
+      media: [validMediaItem],
+      expectedCategory: "electronics",
+    });
+    expect(validVisionReq.success).toBe(true);
+
+    const validOcrReq = PythonOcrScanRequestSchema.safeParse({
+      media: [validMediaItem],
+    });
+    expect(validOcrReq.success).toBe(true);
+
+    // Schema must reject if mediaId is sent instead of id
+    const invalidReq = NodeVisionScanRequestSchema.safeParse({
+      media: [{
+        mediaId: "11111111-1111-1111-1111-111111111111",
+        originalStoragePath: "listings/photo.jpg",
+        scopedSignedUrl: "https://wpppxlnbzqynvhpeuavd.supabase.co/storage/v1/object/sign/listing-originals/listings/photo.jpg?token=abc",
+        mediaSha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      }],
+    });
+    expect(invalidReq.success).toBe(false);
+  });
 });
