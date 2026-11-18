@@ -1,4 +1,4 @@
-name: Deploy Azure Moderation ACA (Private GHCR & OIDC)
+name: Deploy Azure Moderation ACA (Public GHCR & OIDC)
 
 on:
   workflow_dispatch:
@@ -17,10 +17,10 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Phase 1: Build, CI, Publish Private GHCR Images, and Verify Package Privacy
+  # Phase 1: Build, CI, Publish Public GHCR Images, and Verify Package Availability
   # ---------------------------------------------------------------------------
   build-ci-and-publish:
-    name: Build, Test & Publish Private GHCR Images
+    name: Build, Test & Publish Public GHCR Images
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,9 +29,9 @@ jobs:
       controller_digest: ${{ steps.build-controller.outputs.digest }}
       vision_digest: ${{ steps.build-vision.outputs.digest }}
       ocr_digest: ${{ steps.build-ocr.outputs.digest }}
-      controller_image: ghcr.io/${{ github.repository_owner }}/fairswap-private-moderation-controller-v2@${{ steps.build-controller.outputs.digest }}
-      vision_image: ghcr.io/${{ github.repository_owner }}/fairswap-private-node-vision-v2@${{ steps.build-vision.outputs.digest }}
-      ocr_image: ghcr.io/${{ github.repository_owner }}/fairswap-private-python-ocr-v2@${{ steps.build-ocr.outputs.digest }}
+      controller_image: ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller@${{ steps.build-controller.outputs.digest }}
+      vision_image: ghcr.io/${{ github.repository_owner }}/fairswap-node-vision@${{ steps.build-vision.outputs.digest }}
+      ocr_image: ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr@${{ steps.build-ocr.outputs.digest }}
       image_tag: ${{ github.sha }}
     steps:
       - name: Checkout repository
@@ -53,23 +53,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Verify GHCR Publish Secret Preflight
-        run: |
-          set -euo pipefail
-          if [[ -z "${{ secrets.GHCR_PUBLISH_TOKEN }}" ]]; then
-            echo "::error::Missing repository secret GHCR_PUBLISH_TOKEN. A classic PAT with write:packages is required to publish private GHCR packages."
-            exit 1
-          fi
-          echo "PASS: GHCR_PUBLISH_TOKEN secret is configured."
-
       - name: Log in to GitHub Container Registry (GHCR)
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GHCR_PUBLISH_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build and push immutable container images to private GHCR
+      # Build and push immutable container images to public GHCR
       - name: Build and Push Controller Image
         id: build-controller
         uses: docker/build-push-action@v5
@@ -79,8 +70,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/fairswap-private-moderation-controller-v2:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/fairswap-private-moderation-controller-v2:latest
+            ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller:latest
 
       - name: Build and Push Node Vision Image
         id: build-vision
@@ -91,8 +82,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/fairswap-private-node-vision-v2:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/fairswap-private-node-vision-v2:latest
+            ghcr.io/${{ github.repository_owner }}/fairswap-node-vision:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/fairswap-node-vision:latest
 
       - name: Build and Push Python OCR Image
         id: build-ocr
@@ -103,38 +94,34 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/fairswap-private-python-ocr-v2:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/fairswap-private-python-ocr-v2:latest
+            ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr:latest
 
-      # Mandatory Security Gate: All three packages MUST block anonymous pulls (FAIL CLOSED)
-      - name: Verify Anonymous Pull Denied on All Packages (Fail-Closed)
+      # Mandatory Security Gate: All three packages MUST be accessible for anonymous unauthenticated pull (FAIL CLOSED)
+      - name: Verify Anonymous Pull Succeeds on All Three Public Packages (Fail-Closed)
         run: |
           set -euo pipefail
-          echo "Verifying anonymous image pulls are blocked for all three packages..."
+          echo "Verifying anonymous image pulls succeed for all three public packages..."
           ANON_DOCKER_CONFIG="$(mktemp -d /tmp/docker-anon-XXXXXX)"
           trap 'rm -rf "$ANON_DOCKER_CONFIG"' EXIT
           export DOCKER_CONFIG="$ANON_DOCKER_CONFIG"
           docker logout ghcr.io || true
 
           PACKAGES=(
-            "fairswap-private-moderation-controller-v2"
-            "fairswap-private-node-vision-v2"
-            "fairswap-private-python-ocr-v2"
+            "fairswap-moderation-controller"
+            "fairswap-node-vision"
+            "fairswap-python-ocr"
           )
 
           for pkg in "${PACKAGES[@]}"; do
             IMG="ghcr.io/${{ github.repository_owner }}/$pkg:${{ github.sha }}"
-            echo "Checking anonymous pull denial for: $IMG"
+            echo "Checking anonymous pull success for: $IMG"
             if docker pull "$IMG" 2>&1 | tee /tmp/pull_out.txt; then
-              echo "::error::SECURITY VIOLATION: Anonymous pull succeeded for $pkg! Package is PUBLIC or incorrectly configured."
-              exit 1
+              echo "PASS: Anonymous pull succeeded for $pkg ($IMG)."
             else
-              if grep -iE 'denied|unauthorized|authentication required' /tmp/pull_out.txt; then
-                echo "PASS: Anonymous pull blocked for $pkg."
-              else
-                echo "::error::Unexpected pull failure output for $pkg (must be permission denied / unauthorized to verify privacy)."
-                exit 1
-              fi
+              echo "::error::SECURITY / AVAILABILITY VIOLATION: Anonymous pull failed for public package $pkg!"
+              cat /tmp/pull_out.txt || true
+              exit 1
             fi
           done
 
@@ -164,11 +151,10 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
         run: |
           set -euo pipefail
           missing=0
-          for secret_name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID OPENAI_API_KEY AZURE_MODERATION_SECRET SUPABASE_ACCESS_TOKEN GHCR_PULL_TOKEN; do
+          for secret_name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID OPENAI_API_KEY AZURE_MODERATION_SECRET SUPABASE_ACCESS_TOKEN; do
             if [[ -z "${!secret_name}" ]]; then
               printf '::error::Missing required secret: %s\n' "$secret_name"
               missing=1
@@ -176,32 +162,32 @@ jobs:
           done
           exit "$missing"
 
-      - name: Verify Authorized Read-Only Pull with GHCR_PULL_TOKEN (FairSwapTest)
-        env:
-          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+      - name: Verify Public Image Pulls in Test Environment (Fail-Closed)
         run: |
           set -euo pipefail
-          if [[ -z "$GHCR_PULL_TOKEN" ]]; then
-            echo "::error::Missing GHCR_PULL_TOKEN in FairSwapTest environment."
-            exit 1
-          fi
-
-          echo "Authenticating to GHCR using FairSwapTest GHCR_PULL_TOKEN..."
-          echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "${{ secrets.GHCR_PULL_USERNAME || github.repository_owner }}" --password-stdin
+          echo "Verifying public image pull capability in Test runner without credentials..."
+          TEST_DOCKER_CONFIG="$(mktemp -d /tmp/docker-test-XXXXXX)"
+          trap 'rm -rf "$TEST_DOCKER_CONFIG"' EXIT
+          export DOCKER_CONFIG="$TEST_DOCKER_CONFIG"
+          docker logout ghcr.io || true
 
           PACKAGES=(
-            "fairswap-private-moderation-controller-v2"
-            "fairswap-private-node-vision-v2"
-            "fairswap-private-python-ocr-v2"
+            "fairswap-moderation-controller"
+            "fairswap-node-vision"
+            "fairswap-python-ocr"
           )
 
           for pkg in "${PACKAGES[@]}"; do
             IMG="ghcr.io/${{ github.repository_owner }}/$pkg:${{ github.sha }}"
-            echo "Verifying authorized pull for: $IMG"
-            docker pull "$IMG"
-            echo "PASS: Authorized pull succeeded for $pkg."
+            echo "Verifying unauthenticated pull for: $IMG"
+            if docker pull "$IMG" 2>&1 | tee /tmp/test_pull_out.txt; then
+              echo "PASS: Public pull succeeded for $pkg."
+            else
+              echo "::error::Public image pull failed for $pkg in Test runner!"
+              cat /tmp/test_pull_out.txt || true
+              exit 1
+            fi
           done
-          docker logout ghcr.io || true
 
       - name: Azure Login via OIDC
         uses: azure/login@v2
@@ -225,8 +211,6 @@ jobs:
             environment=test
             location=centralindia
             ghcrServer=ghcr.io
-            ghcrUsername=${{ secrets.GHCR_PULL_USERNAME || github.repository_owner }}
-            ghcrPullToken=${{ secrets.GHCR_PULL_TOKEN }}
             controllerImage=${{ needs.build-ci-and-publish.outputs.controller_image }}
             nodeVisionImage=${{ needs.build-ci-and-publish.outputs.vision_image }}
             pythonOcrImage=${{ needs.build-ci-and-publish.outputs.ocr_image }}
@@ -664,11 +648,10 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
         run: |
           set -euo pipefail
           missing=0
-          for secret_name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID OPENAI_API_KEY AZURE_MODERATION_SECRET SUPABASE_ACCESS_TOKEN GHCR_PULL_TOKEN; do
+          for secret_name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID OPENAI_API_KEY AZURE_MODERATION_SECRET SUPABASE_ACCESS_TOKEN; do
             if [[ -z "${!secret_name}" ]]; then
               printf '::error::Missing required secret: %s\n' "$secret_name"
               missing=1
@@ -676,32 +659,32 @@ jobs:
           done
           exit "$missing"
 
-      - name: Verify Authorized Read-Only Pull with GHCR_PULL_TOKEN (FairSwapProd)
-        env:
-          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+      - name: Verify Public Image Pulls in Production Environment (Fail-Closed)
         run: |
           set -euo pipefail
-          if [[ -z "$GHCR_PULL_TOKEN" ]]; then
-            echo "::error::Missing GHCR_PULL_TOKEN in FairSwapProd environment."
-            exit 1
-          fi
-
-          echo "Authenticating to GHCR using FairSwapProd GHCR_PULL_TOKEN..."
-          echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "${{ secrets.GHCR_PULL_USERNAME || github.repository_owner }}" --password-stdin
+          echo "Verifying public image pull capability in Production runner without credentials..."
+          PROD_DOCKER_CONFIG="$(mktemp -d /tmp/docker-prod-XXXXXX)"
+          trap 'rm -rf "$PROD_DOCKER_CONFIG"' EXIT
+          export DOCKER_CONFIG="$PROD_DOCKER_CONFIG"
+          docker logout ghcr.io || true
 
           PACKAGES=(
-            "fairswap-private-moderation-controller-v2"
-            "fairswap-private-node-vision-v2"
-            "fairswap-private-python-ocr-v2"
+            "fairswap-moderation-controller"
+            "fairswap-node-vision"
+            "fairswap-python-ocr"
           )
 
           for pkg in "${PACKAGES[@]}"; do
             IMG="ghcr.io/${{ github.repository_owner }}/$pkg:${{ github.sha }}"
-            echo "Verifying authorized pull for: $IMG"
-            docker pull "$IMG"
-            echo "PASS: Authorized pull succeeded for $pkg."
+            echo "Verifying unauthenticated pull for: $IMG"
+            if docker pull "$IMG" 2>&1 | tee /tmp/prod_pull_out.txt; then
+              echo "PASS: Public pull succeeded for $pkg."
+            else
+              echo "::error::Public image pull failed for $pkg in Production runner!"
+              cat /tmp/prod_pull_out.txt || true
+              exit 1
+            fi
           done
-          docker logout ghcr.io || true
 
       - name: Azure Login via OIDC
         uses: azure/login@v2
@@ -725,8 +708,6 @@ jobs:
             environment=prod
             location=centralindia
             ghcrServer=ghcr.io
-            ghcrUsername=${{ secrets.GHCR_PULL_USERNAME || github.repository_owner }}
-            ghcrPullToken=${{ secrets.GHCR_PULL_TOKEN }}
             controllerImage=${{ needs.build-ci-and-publish.outputs.controller_image }}
             nodeVisionImage=${{ needs.build-ci-and-publish.outputs.vision_image }}
             pythonOcrImage=${{ needs.build-ci-and-publish.outputs.ocr_image }}

@@ -1,19 +1,19 @@
 # FairSwap Azure Moderation — Cost Estimate & GHCR Migration Analysis (Central India)
 
 **Region:** Central India (`centralindia`)
-**Architecture:** Azure Container Apps (Consumption Tier) + Private GitHub Container Registry (GHCR) + Log Analytics (PerGB2018)
+**Architecture:** Azure Container Apps (Consumption Tier) + Public GitHub Container Registry (GHCR) + Log Analytics (PerGB2018)
 **Currency Reference:** USD ($) and INR (₹ at current baseline ~₹85 / $1 USD)
-**Last Updated:** November 2026 (Post-GHCR Migration)
+**Last Updated:** November 2026 (Public GHCR Architecture)
 
 ---
 
 ## 1. Executive Summary
 
-By migrating image hosting from two billable Azure Container Registries (Basic tier in Test and Production) to private GitHub Container Registry (GHCR), FairSwap completely eliminates recurring fixed infrastructure overhead for container storage in Azure, whilst retaining full zero-replica scale-to-zero capabilities and strict environment isolation.
+By migrating image hosting from two billable Azure Container Registries (Basic tier in Test and Production) to public GitHub Container Registry (GHCR), FairSwap eliminates recurring fixed infrastructure overhead for container storage in Azure (~₹850 / month), whilst retaining full zero-replica scale-to-zero capabilities and strict runtime moderation security boundaries.
 
-| Dimension | Before (Azure Container Registry) | After (Private GHCR) | Monthly Delta / Savings |
+| Dimension | Before (Azure Container Registry) | After (Public GHCR) | Monthly Delta / Savings |
 |---|---|---|---|
-| **Container Registry Storage** | ~$10.00 / month (~₹850) for 2 Basic ACRs | ~$0.00 – $0.50 / month (~₹0 – ₹45) in GHCR | **-₹800 to -₹850 / month saved** |
+| **Container Registry Storage** | ~$10.00 / month (~₹850) for 2 Basic ACRs | ₹0.00 / month (Free for public GHCR packages) | **-₹850 / month saved (upon ACR decommissioning)** |
 | **Idle Compute (Zero Replicas)** | ₹0.00 (within ACA 180k vCPU-s free tier) | ₹0.00 (within ACA 180k vCPU-s free tier) | ₹0.00 (Unchanged) |
 | **Log Analytics (30-day retention)** | ~$2.30 – $5.00 / month (~₹195 – ₹425) | ~$2.30 – $5.00 / month (~₹195 – ₹425) | Unchanged (essential for auditability) |
 | **Network Egress (Azure)** | < ₹10 / month (first 100 GB Azure egress free) | < ₹10 / month | Unchanged |
@@ -23,15 +23,16 @@ By migrating image hosting from two billable Azure Container Registries (Basic t
 
 ## 2. Component-by-Component Cost Breakdown
 
-### 2.1 Container Registry (ACR vs. Private GHCR)
+### 2.1 Container Registry (ACR vs. Public GHCR)
 
 - **Prior Azure Container Registry (Basic Tier):**
   - Cost: ~$5.00 per registry / month (~₹425/mo) in Central India.
   - Across 2 environments (`rg-fairswap-moderation-test` and `rg-fairswap-moderation-prod`): ~$10.00 / month (~₹850/mo fixed, even when 0 requests are processed).
-- **New Private GHCR:**
-  - Storage: GitHub Free accounts include 500 MB private package storage; GitHub Pro includes 2 GB. Beyond that, private package storage is billed at $0.25 / GB / month (~₹21 / GB).
-  - Data Transfer: 1 GB / month free (Free) or 10 GB / month free (Pro). Because Azure Container Apps caches image layers on container hosts, image pulls occur only during new release rollouts or cold node provisioning. Additional egress is $0.05 / GB (~₹4.25 / GB).
-  - Estimated GHCR Monthly Cost: **₹0 to ₹45 / month ($0.00 to $0.50)**.
+  - Note: Both ACRs are retained until post-migration verification succeeds in both environments, after which they can be decommissioned upon owner approval.
+- **New Public GHCR:**
+  - Storage & Data Transfer: According to [GitHub Packages billing documentation](https://docs.github.com/en/billing/concepts/product-billing/github-packages), GitHub Packages is completely free for public packages. Container registry storage and bandwidth for public packages are currently free of charge (subject to future GitHub policy).
+  - Authentication: No personal access tokens (PATs) or pull tokens required for Azure Container Apps image pulls.
+  - Estimated GHCR Monthly Cost: **₹0.00 ($0.00)**.
 
 ### 2.2 Azure Container Apps Compute (Central India)
 
@@ -74,7 +75,7 @@ All three services (`ca-moderation-controller`, `ca-node-vision`, and `ca-python
 |---|---|---|
 | **Container App Scale** | `minReplicas: 0`, `maxReplicas: 2` | `minReplicas: 0`, `maxReplicas: 5` |
 | **Idle Cost** | ~₹100 – ₹150 / month (Log Analytics only) | ~₹100 – ₹200 / month (Log Analytics only) |
-| **Images Consumed** | SHA-256 digest from private GHCR | Identical SHA-256 digest verified in Test |
+| **Images Consumed** | SHA-256 digest from public GHCR | Identical SHA-256 digest verified in Test |
 | **Supabase Integration** | `wpppxlnbzqynvhpeuavd` | `kriuhwppxgxsyyrbjsau` |
 | **Baseline Provider State** | `moderation_azure_enabled = false` | `moderation_azure_enabled = false` |
 
@@ -84,9 +85,9 @@ All three services (`ca-moderation-controller`, `ca-node-vision`, and `ca-python
 
 To maintain operational integrity and Indian classifieds marketplace standards, the following costs cannot reach absolute zero:
 
-1. **Log Analytics Ingestion:** Essential for security audits, cold-start tracing, and dispute evidence. Minimal ingestion cannot be avoided while maintaining visibility.
-2. **GHCR Storage (if exceeding 500 MB / 2 GB quota):** Storing multiple historical multi-architecture image layers may incur ~$0.25 to $0.50 / month (~₹20 to ₹45 / month).
-3. **Statutory Taxes:** Indian GST (18%) applicable to Azure cloud services for Indian billing profiles.
+1. **Log Analytics Ingestion:** Essential for security audits, cold-start tracing, and dispute evidence. Minimal ingestion cannot be avoided while maintaining visibility (~₹100 to ₹300 / month).
+2. **Statutory Taxes:** Indian GST (18%) applicable to Azure cloud services for Indian billing profiles.
+3. **Active Compute (High Volume):** If moderation throughput exceeds the Azure free allowance (180,000 vCPU-seconds), standard ACA Consumption pricing applies.
 
 ---
 
