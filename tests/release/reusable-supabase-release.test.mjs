@@ -420,7 +420,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-foundation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
+  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {

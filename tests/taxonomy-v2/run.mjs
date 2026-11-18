@@ -18,8 +18,9 @@ for(const [file,want] of Object.entries(pins.files)) {
 }
 console.log(`PASS: ${Object.keys(pins.files).length} prerequisites match GitHub main ${pins.commit}`);
 const args=process.argv.slice(2);
-assert(args.every(x=>/^--(modules|native-bin|category-count)=.+/.test(x)),'Only --modules=<existing package directory> and --native-bin=<PG17 bin> allowed');
+assert(args.every(x=>/^--(modules|native-bin|category-count|package)=.+/.test(x)),'Only --modules=<existing package directory> and --native-bin=<PG17 bin> allowed');
 const option=name=>args.find(x=>x.startsWith(`--${name}=`))?.slice(name.length+3);
+assert([undefined,'2'].includes(option('package')),'Use --package=2 or omit it for the foundation suite');
 const require=createRequire(resolve(option('modules')??resolve(root,'tests/ratings'),'package.json'));
 const native=option('native-bin');
 const categoryCount=Number(option('category-count')??53);
@@ -101,6 +102,7 @@ try {
  assert.equal((await q('select count(*)::int as n from public.generic_product_brands'))[0].n,0);
  assert.equal((await q('select count(*)::int as n from public.generic_product_models'))[0].n,0);
  console.log('PASS: fixture transaction rolled back; both generic lookup tables remain empty');
+ if(option('package')==='2') await (await import('./catalogue/run.mjs')).verifyPackage2(db,{read,categoryCount});
  if(native) await (await import('./native-races.mjs')).verifyRaces(db);
 } catch (error) {
  console.error('FAIL:',error.message,'SQLSTATE:',error.code??'n/a');

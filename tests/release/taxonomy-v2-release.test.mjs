@@ -65,7 +65,7 @@ test('existing workflow requires successful Test, hash-verified receipt and taxo
  assert.match(w,/- taxonomy-v2-foundation\n/);
  assert(w.indexOf('sha256sum --check --status')<w.indexOf('Verify Taxonomy V2 Test postflight receipt'));
  assert(w.includes("inputs.candidate != 'taxonomy-v2-foundation' || needs.verify_test.outputs.taxonomy_ledger_sha != ''"));
- assert(w.includes("inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation')"));
+ assert(w.includes("inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue')"));
  assert.match(w,/TAXONOMY_TEST_LEDGER_SHA: \$\{\{ needs.verify_test.outputs.taxonomy_ledger_sha/);
  assert.match(w,/environment: FairSwapTest/);assert.match(w,/environment: FairSwapProd/);
 });
