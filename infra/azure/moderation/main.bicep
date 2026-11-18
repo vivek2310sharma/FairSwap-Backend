@@ -28,21 +28,14 @@ param imageTag string = 'latest'
 @description('GHCR registry server')
 param ghcrServer string = 'ghcr.io'
 
-@description('GHCR username / organization with read access to private packages')
-param ghcrUsername string = 'vivek2310sharma'
-
-@description('Personal Access Token (classic with read:packages) or read-only credential for GHCR')
-@secure()
-param ghcrPullToken string
-
 @description('Full image reference or digest for Moderation Controller')
-param controllerImage string = 'ghcr.io/vivek2310sharma/fairswap-private-moderation-controller-v2:${imageTag}'
+param controllerImage string = 'ghcr.io/vivek2310sharma/fairswap-moderation-controller:${imageTag}'
 
 @description('Full image reference or digest for Node Vision')
-param nodeVisionImage string = 'ghcr.io/vivek2310sharma/fairswap-private-node-vision-v2:${imageTag}'
+param nodeVisionImage string = 'ghcr.io/vivek2310sharma/fairswap-node-vision:${imageTag}'
 
 @description('Full image reference or digest for Python OCR')
-param pythonOcrImage string = 'ghcr.io/vivek2310sharma/fairswap-private-python-ocr-v2:${imageTag}'
+param pythonOcrImage string = 'ghcr.io/vivek2310sharma/fairswap-python-ocr:${imageTag}'
 
 var logAnalyticsWorkspaceName = 'law-fairswap-moderation-${environment}-${suffix}'
 var containerAppEnvName = 'cae-fairswap-moderation-${environment}-${suffix}'
@@ -97,15 +90,9 @@ resource nodeVisionApp 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: ghcrServer
-          username: ghcrUsername
-          passwordSecretRef: 'ghcr-pull-token'
         }
       ]
       secrets: [
-        {
-          name: 'ghcr-pull-token'
-          value: ghcrPullToken
-        }
         {
           name: 'mod-secret'
           value: moderationSecret
@@ -177,15 +164,9 @@ resource pythonOcrApp 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: ghcrServer
-          username: ghcrUsername
-          passwordSecretRef: 'ghcr-pull-token'
         }
       ]
       secrets: [
-        {
-          name: 'ghcr-pull-token'
-          value: ghcrPullToken
-        }
         {
           name: 'mod-secret'
           value: moderationSecret
@@ -257,15 +238,9 @@ resource controllerApp 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: ghcrServer
-          username: ghcrUsername
-          passwordSecretRef: 'ghcr-pull-token'
         }
       ]
       secrets: [
-        {
-          name: 'ghcr-pull-token'
-          value: ghcrPullToken
-        }
         {
           name: 'openai-key'
           value: openAiApiKey
