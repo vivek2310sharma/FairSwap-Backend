@@ -140,6 +140,13 @@ verify_jwt = true
 [functions.idv-withdraw]
 verify_jwt = true
 
+# FairSwap DigiLocker direct account-link V1 (authenticated user gateway; flag FAIRSWAP_DIGILOCKER_ENABLED defaults off)
+[functions.idv-digilocker-start]
+verify_jwt = true
+
+[functions.idv-digilocker-complete]
+verify_jwt = true
+
 # FairSwap IDV-V1: Scheduled / authorized revocation worker gateway policy
 [functions.idv-revocation-worker]
 verify_jwt = false

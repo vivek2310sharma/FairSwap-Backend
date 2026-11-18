@@ -8,11 +8,32 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 
 const sources = [
   'tests/idv-pg17/fixture.sql',
+  'tests/idv-pg17/fixture-digilocker.sql',
   'supabase/forward-migrations/idv/20261026183000_idv_digilocker_foundation.sql',
   'tests/idv-pg17/assertions.sql',
+  'supabase/forward-migrations/idv/20261117090000_idv_digilocker_direct_v1.sql',
+  'tests/idv-pg17/assertions-digilocker.sql',
 ];
 
-const sql = sources.map((p) => readFileSync(path.join(root, p), 'utf8')).join('\n');
+// DigiLocker fraud-suspension integration runs against the REAL account-status implementation (not a stub):
+// extract it verbatim from the immutable baseline migration and load it after the fixtures.
+const accountStatusMigration = 'supabase/migrations/20260914000016_staff_user_moderation_and_hardening.sql';
+function extractFunction(text, qualifiedName) {
+  const re = new RegExp(`CREATE OR REPLACE FUNCTION ${qualifiedName.replace('.', '\\.')}\\([\\s\\S]*?\\n\\$\\$;`);
+  const m = text.match(re);
+  if (!m) throw new Error(`Cannot extract ${qualifiedName} from ${accountStatusMigration}`);
+  return m[0];
+}
+const accountStatusText = readFileSync(path.join(root, accountStatusMigration), 'utf8');
+const realAccountStatusSql = [
+  `-- Extracted verbatim from ${accountStatusMigration}`,
+  extractFunction(accountStatusText, 'app_security.impl_update_user_account_status'),
+  extractFunction(accountStatusText, 'public.admin_update_user_account_status'),
+].join('\n\n');
+
+const sql = sources
+  .map((p) => readFileSync(path.join(root, p), 'utf8') + (p === 'tests/idv-pg17/fixture-digilocker.sql' ? '\n' + realAccountStatusSql : ''))
+  .join('\n');
 
 const nativePortArg = process.argv.find((x) => x.startsWith('--native-port='));
 const pgBinArg = process.argv.find((x) => x.startsWith('--pg-bin='));

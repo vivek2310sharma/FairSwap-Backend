@@ -28,6 +28,7 @@
     "supabase/functions/_shared/idv/*.ts",
     "supabase/functions/idv-*/*.ts",
     "tests/idv/idv-setu.test.ts",
+    "tests/idv/idv-digilocker.test.ts",
     "vitest.config.ts",
     "vitest.idv.config.ts"
   ],
