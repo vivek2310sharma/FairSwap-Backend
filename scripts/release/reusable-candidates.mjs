@@ -16,7 +16,9 @@ export const CANDIDATES = Object.freeze({
     path: 'supabase/forward-migrations/idv/20261117090000_idv_digilocker_direct_v1.sql',
     sha256: 'c51fbc4f24d6085d3c1b022d2fea114e59b911c2aea772f125b4e798f304b62d',
     description: 'IDV DigiLocker V1 direct account linking; dark (identity gate OFF, no Edge deployment)',
-    autoPromote: true
+    // Staging/Test only until the owner completes manual Stage testing: never promoted or dispatched to Production.
+    autoPromote: false,
+    testOnly: true
   }),
   'taxonomy-v2-catalogue': Object.freeze({
     id: 'taxonomy-v2-catalogue', version: '20261118092010',
@@ -364,6 +366,7 @@ function need(ok, code) {
 export function planDispatch({candidateId, target = 'test', inputs = {}, context = {}}) {
   const candidate = getCandidate(candidateId);
   need(target === 'test' || target === 'production' || target === 'adopt', 'INVALID_TARGET');
+  need(!candidate.testOnly || target === 'test', 'TEST_ONLY_CANDIDATE');
   const waiver = WEARABLES_E2E_WAIVER;
   const waiveE2e = inputs.test_e2e_run_id === waiver.input;
   if (waiveE2e) {

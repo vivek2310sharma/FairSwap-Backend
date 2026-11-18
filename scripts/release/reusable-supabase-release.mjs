@@ -588,6 +588,10 @@ export async function releaseReusable({
     throw new Error(`REUSABLE_RELEASE_INVALID_ENVIRONMENT: ${environment}`);
   }
   const candidate = getCandidate(candidateId);
+  // Test-only candidates can never reach Production, whatever the workflow inputs or job conditions.
+  if (candidate.testOnly && environment !== 'FairSwapTest') {
+    throw new Error('REUSABLE_RELEASE_TEST_ONLY_CANDIDATE');
+  }
   const projectRef = REFS[environment];
   const taxonomyCatalogue = candidateId === CATALOGUE_CANDIDATE;
   const taxonomy = taxonomyCatalogue || candidateId === TAXONOMY_CANDIDATE;
