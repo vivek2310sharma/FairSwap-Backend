@@ -8,6 +8,16 @@ export const MOBILE_CATALOGUE_CANDIDATE = 'mobile-catalogue-india-v1';
 export const LISTING_VALIDITY_CANDIDATE = 'listing-validity-365';
 
 export const CANDIDATES = Object.freeze({
+  // Dark launch. The environment-specific foundation prerequisite and the reviewed out-of-order Taxonomy V2 tail are
+  // enforced by idv-digilocker-v1-release.mjs before any dry run; identity_verification_required must stay 'false'.
+  'idv-digilocker-v1': Object.freeze({
+    id: 'idv-digilocker-v1', version: '20261117090000',
+    filename: '20261117090000_idv_digilocker_direct_v1.sql',
+    path: 'supabase/forward-migrations/idv/20261117090000_idv_digilocker_direct_v1.sql',
+    sha256: 'c51fbc4f24d6085d3c1b022d2fea114e59b911c2aea772f125b4e798f304b62d',
+    description: 'IDV DigiLocker V1 direct account linking; dark (identity gate OFF, no Edge deployment)',
+    autoPromote: true
+  }),
   'taxonomy-v2-catalogue': Object.freeze({
     id: 'taxonomy-v2-catalogue', version: '20261118092010',
     filename: '20261118092010_taxonomy_v2_catalogue.sql',
