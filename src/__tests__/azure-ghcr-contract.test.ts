@@ -105,8 +105,9 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(workflow).toContain("Verify Public Image Pulls in Test Environment (Fail-Closed)");
     expect(workflow).toContain("Verify Public Image Pulls in Production Environment (Fail-Closed)");
 
-    // Changed Supabase Worker process-listing-moderation deployment
-    expect(workflow).toContain("functions deploy process-listing-moderation");
+    // Supabase worker deployment and secret updates are decoupled from Azure deployment
+    expect(workflow).not.toContain("functions deploy process-listing-moderation");
+    expect(workflow).not.toContain("secrets set AZURE_MODERATION_ENDPOINT");
 
     // Rigorous automated postflight checks
     expect(workflow).toContain("Assert Exact Built Image Digests on All Three Apps (Test)");
@@ -254,7 +255,7 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(validateProbeResponse(validResponse, expDigest, expId)).toBe(true);
   });
 
-  it("enforces Blocker C fix: Supabase CLI archive SHA-256 integrity verification", () => {
+  it("enforces decoupling of Supabase CLI secrets updates and edge function deployment from Azure workflow", () => {
     const workflow = readFileSync(deployWorkflowPath, "utf-8");
     const toolchainPath = join(rootDir, "scripts/ci/toolchain.json");
     expect(existsSync(toolchainPath)).toBe(true);
@@ -263,10 +264,11 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(pinnedSha).toBeDefined();
     expect(pinnedSha.length).toBe(64);
 
-    // Verification must occur before tar extraction in both deploy-test and deploy-prod
+    // Deploy jobs must not invoke Supabase CLI or deploy process-listing-moderation
+    expect(workflow).not.toContain("secrets set AZURE_MODERATION_ENDPOINT");
+    expect(workflow).not.toContain("functions deploy process-listing-moderation");
     const matches = workflow.match(/echo "\$PINNED_SHA\s+\$CLI_DIR\/supabase\.tar\.gz" \| sha256sum -c --status/g);
-    expect(matches).not.toBeNull();
-    expect(matches?.length).toBe(2);
+    expect(matches).toBeNull();
   });
 
   it("enforces functional cold-wake readiness check with bounded polling and prevents false zero fabrication (Finding B)", () => {

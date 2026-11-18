@@ -150,11 +150,10 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
           missing=0
-          for secret_name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID OPENAI_API_KEY AZURE_MODERATION_SECRET SUPABASE_ACCESS_TOKEN; do
+          for secret_name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID OPENAI_API_KEY AZURE_MODERATION_SECRET; do
             if [[ -z "${!secret_name}" ]]; then
               printf '::error::Missing required secret: %s\n' "$secret_name"
               missing=1
@@ -216,54 +215,6 @@ jobs:
             openAiApiKey=${{ secrets.OPENAI_API_KEY }}
             moderationSecret=${{ secrets.AZURE_MODERATION_SECRET }}
             allowedStorageHost=wpppxlnbzqynvhpeuavd.supabase.co
-
-      # Configure required Azure Moderation secrets in Supabase (Test) & Deploy Worker
-      - name: Configure Supabase Secrets and Deploy Moderation Worker (Test)
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
-          CONTROLLER_FQDN: ${{ steps.bicep-test.outputs.controllerFqdn }}
-        run: |
-          set -euo pipefail
-          PROJECT_REF="wpppxlnbzqynvhpeuavd"
-
-          CLI_DIR="$(mktemp -d "${RUNNER_TEMP:?}/supabase-cli.XXXXXX")"
-          PINNED_SHA=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("scripts/ci/toolchain.json","utf8")).database.cliArchiveSha256)')
-          PINNED_URL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("scripts/ci/toolchain.json","utf8")).database.cliArchive)')
-          PINNED_VER=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("scripts/ci/toolchain.json","utf8")).database.cliVersion)')
-
-          curl -fsSL \
-            --connect-timeout 10 --max-time 60 \
-            --retry 5 --retry-delay 5 --retry-connrefused --retry-all-errors \
-            --retry-max-time 180 \
-            "$PINNED_URL" \
-            -o "$CLI_DIR/supabase.tar.gz"
-
-          # Strict SHA-256 integrity verification against pinned toolchain.json before extraction
-          echo "$PINNED_SHA  $CLI_DIR/supabase.tar.gz" | sha256sum -c --status || {
-            echo "::error::Supabase CLI archive SHA-256 digest verification failed!"
-            exit 1
-          }
-
-          tar -xzf "$CLI_DIR/supabase.tar.gz" -C "$CLI_DIR" || exit 1
-          chmod +x "$CLI_DIR/supabase"
-          cli_version="$("$CLI_DIR/supabase" --version)" || exit 1
-          if [[ "$cli_version" != "$PINNED_VER" ]]; then
-            echo "::error::Expected Supabase CLI version $PINNED_VER but found $cli_version"
-            exit 1
-          fi
-          echo "PASS: exact pinned Supabase CLI authenticated by SHA-256 from toolchain.json"
-
-          "$CLI_DIR/supabase" secrets set \
-            AZURE_MODERATION_ENDPOINT="https://${CONTROLLER_FQDN}/v1/moderate" \
-            AZURE_MODERATION_SECRET="$AZURE_MODERATION_SECRET" \
-            --project-ref "$PROJECT_REF"
-
-          echo "Deploying changed process-listing-moderation Edge Function to Test..."
-          "$CLI_DIR/supabase" functions deploy process-listing-moderation \
-            --project-ref "$PROJECT_REF" \
-            --no-verify-jwt
-          echo "PASS: process-listing-moderation Edge Function deployed to Test."
 
   # ---------------------------------------------------------------------------
   # Phase 3: Rigorous Automated Test Verification (Fail-Closed)
@@ -646,11 +597,10 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
           missing=0
-          for secret_name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID OPENAI_API_KEY AZURE_MODERATION_SECRET SUPABASE_ACCESS_TOKEN; do
+          for secret_name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID OPENAI_API_KEY AZURE_MODERATION_SECRET; do
             if [[ -z "${!secret_name}" ]]; then
               printf '::error::Missing required secret: %s\n' "$secret_name"
               missing=1
@@ -712,54 +662,6 @@ jobs:
             openAiApiKey=${{ secrets.OPENAI_API_KEY }}
             moderationSecret=${{ secrets.AZURE_MODERATION_SECRET }}
             allowedStorageHost=kriuhwppxgxsyyrbjsau.supabase.co
-
-      # Configure required Azure Moderation secrets in Supabase (Production) & Deploy Worker
-      - name: Configure Supabase Secrets and Deploy Moderation Worker (Production)
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          AZURE_MODERATION_SECRET: ${{ secrets.AZURE_MODERATION_SECRET }}
-          CONTROLLER_FQDN: ${{ steps.bicep-prod.outputs.controllerFqdn }}
-        run: |
-          set -euo pipefail
-          PROJECT_REF="kriuhwppxgxsyyrbjsau"
-
-          CLI_DIR="$(mktemp -d "${RUNNER_TEMP:?}/supabase-cli.XXXXXX")"
-          PINNED_SHA=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("scripts/ci/toolchain.json","utf8")).database.cliArchiveSha256)')
-          PINNED_URL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("scripts/ci/toolchain.json","utf8")).database.cliArchive)')
-          PINNED_VER=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("scripts/ci/toolchain.json","utf8")).database.cliVersion)')
-
-          curl -fsSL \
-            --connect-timeout 10 --max-time 60 \
-            --retry 5 --retry-delay 5 --retry-connrefused --retry-all-errors \
-            --retry-max-time 180 \
-            "$PINNED_URL" \
-            -o "$CLI_DIR/supabase.tar.gz"
-
-          # Strict SHA-256 integrity verification against pinned toolchain.json before extraction
-          echo "$PINNED_SHA  $CLI_DIR/supabase.tar.gz" | sha256sum -c --status || {
-            echo "::error::Supabase CLI archive SHA-256 digest verification failed!"
-            exit 1
-          }
-
-          tar -xzf "$CLI_DIR/supabase.tar.gz" -C "$CLI_DIR" || exit 1
-          chmod +x "$CLI_DIR/supabase"
-          cli_version="$("$CLI_DIR/supabase" --version)" || exit 1
-          if [[ "$cli_version" != "$PINNED_VER" ]]; then
-            echo "::error::Expected Supabase CLI version $PINNED_VER but found $cli_version"
-            exit 1
-          fi
-          echo "PASS: exact pinned Supabase CLI authenticated by SHA-256 from toolchain.json"
-
-          "$CLI_DIR/supabase" secrets set \
-            AZURE_MODERATION_ENDPOINT="https://${CONTROLLER_FQDN}/v1/moderate" \
-            AZURE_MODERATION_SECRET="$AZURE_MODERATION_SECRET" \
-            --project-ref "$PROJECT_REF"
-
-          echo "Deploying changed process-listing-moderation Edge Function to Production..."
-          "$CLI_DIR/supabase" functions deploy process-listing-moderation \
-            --project-ref "$PROJECT_REF" \
-            --no-verify-jwt
-          echo "PASS: process-listing-moderation Edge Function deployed to Production."
 
   # ---------------------------------------------------------------------------
   # Phase 5: Automated Production Postflight Verification
