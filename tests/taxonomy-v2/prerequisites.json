@@ -1,6 +1,6 @@
 {
   "repository": "vivek2310sharma/FairSwap-Backend",
-  "commit": "1d475c3ff1326d2f2de3bb8e96b6947baaf77484",
+  "commit": "8e6769b3bf7acd756a353174181b9bac0bb6920b",
   "files": {
     "supabase/forward-migrations/accessories-v1/foundation/supabase/migrations/20261102164135_accessories_v1.sql": {
       "sha256": "790f6e2e06fb049d84903b42fad9bf8efd359a248ac0ecfcdd69f1e897142e9a",
@@ -26,6 +26,10 @@
       "sha256": "42bcab058e68e5cb4352a92212f4bbe836cf2ae28626950cf54574c57508ed95",
       "gitBlob": "f63795b9ffeff9343aa62dda9692effa7dfd4bf9"
     },
+    "supabase/forward-migrations/taxonomy-v2/supabase/migrations/20261117185218_taxonomy_v2_foundation.sql": {
+      "sha256": "85e6e501e009dc56bc7ba4e28fb72b8b827e35c031fff7f283d0a373b92bbc25",
+      "gitBlob": "0188b4c60c282b7df223b0a8acf017087fadfc86"
+    },
     "supabase/forward-migrations/wearables-v1/supabase/migrations/20261104120000_posting_v2_wearables.sql": {
       "sha256": "41122396afe11952126eaf474d272e88e81444863e97d0b2e646ee4cbac48b06",
       "gitBlob": "1875f34c0b5ee4739a800e7ee74a89f50b84e863"
@@ -49,6 +53,10 @@
     "supabase/migrations/20261010064518_car_draft_v1.sql": {
       "sha256": "dbfdf55304cd26c161cb792f487ce4f5034985f10094d2fe761aee50914c88ca",
       "gitBlob": "c526dff572b7608cf061562ec43e91c213ac6dc5"
+    },
+    "supabase/migrations/20261010084523_property_rental_draft_v1.sql": {
+      "sha256": "c0dd1b704d33ba366e077fcde432e7f5faaed240b24ef84b830125e8e1855497",
+      "gitBlob": "61c78b1e467b7ded2444115cd246704a512d871b"
     },
     "supabase/migrations/20261013192336_post_ad_listing_insert_category_guard.sql": {
       "sha256": "db38ece22fddcaedb229a55a2637e2b91b148255687825506909563db7e94163",

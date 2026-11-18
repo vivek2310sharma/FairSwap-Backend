@@ -6,8 +6,8 @@ const read=p=>readFileSync(new URL('../../'+p,import.meta.url),'utf8');
 
 test('all SQL/native/dependency prerequisites are pinned to current tracked main blobs',()=>{
  const pins=JSON.parse(read('tests/taxonomy-v2/prerequisites.json'));
- assert.equal(pins.commit,'1d475c3ff1326d2f2de3bb8e96b6947baaf77484');
- assert.equal(Object.keys(pins.files).length,18);
+ assert.equal(pins.commit,'8e6769b3bf7acd756a353174181b9bac0bb6920b');
+ assert.equal(Object.keys(pins.files).length,20);
  for(const [path,pin] of Object.entries(pins.files)){
   const bytes=readFileSync(new URL('../../'+path,import.meta.url));
   assert.equal(createHash('sha256').update(bytes).digest('hex'),pin.sha256,path);

@@ -157,3 +157,10 @@ On failure stop and investigate. Before commit, transaction rollback leaves no
 partial migration. After application, use reviewed forward compensating SQL;
 retain user data and applied history. Never drop populated identity/catalogue
 records to roll back. Existing clients continue using the retained legacy contract.
+
+## Package 2 follow-up
+
+The separate [canonical catalogue candidate](catalogue/README.md) seeds the 78-node
+tree and conservatively maps three specialist identities. It supersedes the
+foundation-only empty-reader expectation after its own release; foundation SQL
+bytes and its historical release gate remain unchanged.

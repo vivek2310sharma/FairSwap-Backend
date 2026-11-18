@@ -75,12 +75,12 @@ export function verifyTaxonomyPostflight(before,after,checks) {
 export function runTaxonomyPostflight(before,query) {
  return verifyTaxonomyPostflight(before,readTaxonomySnapshot(query),parse(query(postflightSql)));
 }
-export function verifyTaxonomyTestReceipt(receipt,context) {
- const c=getCandidate(TAXONOMY_CANDIDATE);
+export function verifyTaxonomyTestReceipt(receipt,context,candidateId=TAXONOMY_CANDIDATE,scope=TAXONOMY_SCOPE) {
+ const c=getCandidate(candidateId);
  if(!/^[a-f0-9]{40}$/.test(context.GITHUB_SHA??'') || !/^[1-9]\d*$/.test(context.GITHUB_RUN_ID??'') || !/^[1-9]\d*$/.test(context.GITHUB_RUN_ATTEMPT??'') ||
   receipt?.environment!=='FairSwapTest' || receipt.projectRef!==PROJECT_REFS.FairSwapTest || receipt.candidateId!==c.id || receipt.migrationVersion!==c.version || receipt.migrationFile!==c.filename ||
   receipt.migrationSha256!==c.sha256 || receipt.reviewedCommit!==context.GITHUB_SHA || receipt.releaseWorkflowRun!==context.GITHUB_RUN_ID || receipt.releaseWorkflowAttempt!==context.GITHUB_RUN_ATTEMPT ||
-  receipt.status!=='APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED' || receipt.postflightVerified!==true || receipt.postflightScope!==TAXONOMY_SCOPE ||
+  receipt.status!=='APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED' || receipt.postflightVerified!==true || receipt.postflightScope!==scope ||
   !Array.isArray(receipt.dryRunPending) || receipt.dryRunPending.length!==1 || receipt.dryRunPending[0]!==c.filename || !/^[a-f0-9]{64}$/.test(receipt.ledgerStatementsSha256??'')) fail('TEST_RECEIPT_INVALID');
  return receipt.ledgerStatementsSha256;
 }

@@ -143,7 +143,9 @@ jobs:
         run: |
           node tests/taxonomy-v2/run.mjs --category-count=53
           node tests/taxonomy-v2/run.mjs --category-count=55
-          node --test tests/taxonomy-v2/integration.test.mjs tests/release/taxonomy-v2-release.test.mjs
+          node --test tests/taxonomy-v2/integration.test.mjs tests/release/taxonomy-v2-release.test.mjs tests/release/taxonomy-v2-catalogue-release.test.mjs
+          node tests/taxonomy-v2/run.mjs --category-count=53 --package=2
+          node tests/taxonomy-v2/run.mjs --category-count=55 --package=2
 
       - name: Run validator regression checks
         timeout-minutes: 1
@@ -286,6 +288,8 @@ jobs:
         run: |
           node tests/taxonomy-v2/run.mjs --category-count=53 --native-bin="$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
           node tests/taxonomy-v2/run.mjs --category-count=55 --native-bin="$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+          node tests/taxonomy-v2/run.mjs --category-count=53 --package=2 --native-bin="$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+          node tests/taxonomy-v2/run.mjs --category-count=55 --package=2 --native-bin="$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
 
       - name: Require Accessories V1 release guards on native PostgreSQL 17
         timeout-minutes: 4

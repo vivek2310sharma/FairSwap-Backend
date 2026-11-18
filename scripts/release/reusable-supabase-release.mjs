@@ -18,6 +18,7 @@ import {runTabletsV2Preflight, runTabletsV2Postflight, verifyTabletsV2Web} from 
 import {readTabletsLedger, runTabletsPostflight, runTabletsPreflight, verifyTabletsLedger} from './tablets-v1-release.mjs';
 import {ADOPTED_STATUS, assertCliSupportsIncludeAll, assertLedgerTail, assertMobilePhonesProvenance, assertSwitchingPrerequisite, runWearablesPostflight, runWearablesPreflight} from './wearables-v1-release.mjs';
 
+import {CATALOGUE_CANDIDATE,CATALOGUE_SCOPE,runCataloguePreflight,runCataloguePostflight} from './taxonomy-v2-catalogue-release.mjs';
 import {TAXONOMY_CANDIDATE,TAXONOMY_SCOPE,runTaxonomyPreflight,runTaxonomyPostflight} from './taxonomy-v2-release.mjs';
 import {readValiditySnapshot, verifyValidityPostflight, VALIDITY_SCOPE} from './listing-validity-365-release.mjs';
 
@@ -529,6 +530,9 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
     }
     return check;
   }
+  if (candidate.id === CATALOGUE_CANDIDATE) {
+    return runCataloguePostflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+  }
   if (candidate.id === TAXONOMY_CANDIDATE) {
     return runTaxonomyPostflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
   }
@@ -579,7 +583,8 @@ export async function releaseReusable({
   }
   const candidate = getCandidate(candidateId);
   const projectRef = REFS[environment];
-  const taxonomy = candidateId === TAXONOMY_CANDIDATE;
+  const taxonomyCatalogue = candidateId === CATALOGUE_CANDIDATE;
+  const taxonomy = taxonomyCatalogue || candidateId === TAXONOMY_CANDIDATE;
   const taxonomyTestLedger = context.TAXONOMY_TEST_LEDGER_SHA;
   if (taxonomy && environment === 'FairSwapProd' && (context.TARGET !== 'test' || !SHA256.test(taxonomyTestLedger ?? ''))) {
     throw new Error('REUSABLE_RELEASE_TAXONOMY_TEST_EVIDENCE_REQUIRED');
@@ -799,7 +804,7 @@ export async function releaseReusable({
       // Standard path: candidate-only dry run, migration apply, ledger verification and postflight
       if (taxonomy) {
         phase = 'preflight';
-        catalogueBefore = runTaxonomyPreflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
+        catalogueBefore = (taxonomyCatalogue ? runCataloguePreflight : runTaxonomyPreflight)(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
       }
       if (listingValidity) {
         phase = 'preflight';
@@ -880,7 +885,7 @@ export async function releaseReusable({
       ...(pinned ? {ledgerStatementsSha256} : {}),
       ...(catalogue || catalogueUpdate ? {webStagingEvidence: catalogueWebEvidence ?? null} : {}),
       ...(taxonomy ? {
-        postflightScope: TAXONOMY_SCOPE,
+        postflightScope: taxonomyCatalogue ? CATALOGUE_SCOPE : TAXONOMY_SCOPE,
         releaseWorkflowAttempt: context.GITHUB_RUN_ATTEMPT,
         ...(environment === 'FairSwapProd' ? {testLedgerStatementsSha256: taxonomyTestLedger} : {})
       } : {}),
