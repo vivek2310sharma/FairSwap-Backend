@@ -29,9 +29,9 @@ jobs:
       controller_digest: ${{ steps.build-controller.outputs.digest }}
       vision_digest: ${{ steps.build-vision.outputs.digest }}
       ocr_digest: ${{ steps.build-ocr.outputs.digest }}
-      controller_image: ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller@${{ steps.build-controller.outputs.digest }}
-      vision_image: ghcr.io/${{ github.repository_owner }}/fairswap-node-vision@${{ steps.build-vision.outputs.digest }}
-      ocr_image: ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr@${{ steps.build-ocr.outputs.digest }}
+      controller_image: ghcr.io/${{ github.repository_owner }}/fairswap-private-moderation-controller-v1@${{ steps.build-controller.outputs.digest }}
+      vision_image: ghcr.io/${{ github.repository_owner }}/fairswap-private-node-vision-v1@${{ steps.build-vision.outputs.digest }}
+      ocr_image: ghcr.io/${{ github.repository_owner }}/fairswap-private-python-ocr-v1@${{ steps.build-ocr.outputs.digest }}
       image_tag: ${{ github.sha }}
     steps:
       - name: Checkout repository
@@ -70,8 +70,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller:latest
+            ghcr.io/${{ github.repository_owner }}/fairswap-private-moderation-controller-v1:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/fairswap-private-moderation-controller-v1:latest
 
       - name: Build and Push Node Vision Image
         id: build-vision
@@ -82,8 +82,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/fairswap-node-vision:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/fairswap-node-vision:latest
+            ghcr.io/${{ github.repository_owner }}/fairswap-private-node-vision-v1:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/fairswap-private-node-vision-v1:latest
 
       - name: Build and Push Python OCR Image
         id: build-ocr
@@ -94,20 +94,23 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr:latest
+            ghcr.io/${{ github.repository_owner }}/fairswap-private-python-ocr-v1:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/fairswap-private-python-ocr-v1:latest
 
       # Mandatory Security Gate: All three packages MUST block anonymous pulls (FAIL CLOSED)
       - name: Verify Anonymous Pull Denied on All Packages (Fail-Closed)
         run: |
           set -euo pipefail
           echo "Verifying anonymous image pulls are blocked for all three packages..."
+          ANON_DOCKER_CONFIG="$(mktemp -d /tmp/docker-anon-XXXXXX)"
+          trap 'rm -rf "$ANON_DOCKER_CONFIG"' EXIT
+          export DOCKER_CONFIG="$ANON_DOCKER_CONFIG"
           docker logout ghcr.io || true
 
           PACKAGES=(
-            "fairswap-moderation-controller"
-            "fairswap-node-vision"
-            "fairswap-python-ocr"
+            "fairswap-private-moderation-controller-v1"
+            "fairswap-private-node-vision-v1"
+            "fairswap-private-python-ocr-v1"
           )
 
           for pkg in "${PACKAGES[@]}"; do
@@ -120,7 +123,7 @@ jobs:
               if grep -iE 'denied|unauthorized|authentication required' /tmp/pull_out.txt; then
                 echo "PASS: Anonymous pull blocked for $pkg."
               else
-                echo "::error::Unexpected pull failure output for $pkg."
+                echo "::error::Unexpected pull failure output for $pkg (must be permission denied / unauthorized to verify privacy)."
                 exit 1
               fi
             fi
@@ -178,9 +181,9 @@ jobs:
           echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "${{ secrets.GHCR_PULL_USERNAME || github.repository_owner }}" --password-stdin
 
           PACKAGES=(
-            "fairswap-moderation-controller"
-            "fairswap-node-vision"
-            "fairswap-python-ocr"
+            "fairswap-private-moderation-controller-v1"
+            "fairswap-private-node-vision-v1"
+            "fairswap-private-python-ocr-v1"
           )
 
           for pkg in "${PACKAGES[@]}"; do
@@ -678,9 +681,9 @@ jobs:
           echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "${{ secrets.GHCR_PULL_USERNAME || github.repository_owner }}" --password-stdin
 
           PACKAGES=(
-            "fairswap-moderation-controller"
-            "fairswap-node-vision"
-            "fairswap-python-ocr"
+            "fairswap-private-moderation-controller-v1"
+            "fairswap-private-node-vision-v1"
+            "fairswap-private-python-ocr-v1"
           )
 
           for pkg in "${PACKAGES[@]}"; do

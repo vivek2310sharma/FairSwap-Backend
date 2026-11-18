@@ -36,13 +36,13 @@ param ghcrUsername string = 'vivek2310sharma'
 param ghcrPullToken string
 
 @description('Full image reference or digest for Moderation Controller')
-param controllerImage string = 'ghcr.io/vivek2310sharma/fairswap-moderation-controller:${imageTag}'
+param controllerImage string = 'ghcr.io/vivek2310sharma/fairswap-private-moderation-controller-v1:${imageTag}'
 
 @description('Full image reference or digest for Node Vision')
-param nodeVisionImage string = 'ghcr.io/vivek2310sharma/fairswap-node-vision:${imageTag}'
+param nodeVisionImage string = 'ghcr.io/vivek2310sharma/fairswap-private-node-vision-v1:${imageTag}'
 
 @description('Full image reference or digest for Python OCR')
-param pythonOcrImage string = 'ghcr.io/vivek2310sharma/fairswap-python-ocr:${imageTag}'
+param pythonOcrImage string = 'ghcr.io/vivek2310sharma/fairswap-private-python-ocr-v1:${imageTag}'
 
 var logAnalyticsWorkspaceName = 'law-fairswap-moderation-${environment}-${suffix}'
 var containerAppEnvName = 'cae-fairswap-moderation-${environment}-${suffix}'
