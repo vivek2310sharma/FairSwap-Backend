@@ -25,9 +25,6 @@ param allowedStorageHost string
 @description('Container image tag to deploy (used as fallback when specific image digest/reference is not provided)')
 param imageTag string = 'latest'
 
-@description('GHCR registry server')
-param ghcrServer string = 'ghcr.io'
-
 @description('Full image reference or digest for Moderation Controller')
 param controllerImage string = 'ghcr.io/vivek2310sharma/fairswap-moderation-controller:${imageTag}'
 
@@ -87,11 +84,7 @@ resource nodeVisionApp 'Microsoft.App/containerApps@2024-03-01' = {
   properties: {
     managedEnvironmentId: containerAppEnv.id
     configuration: {
-      registries: [
-        {
-          server: ghcrServer
-        }
-      ]
+      registries: []
       secrets: [
         {
           name: 'mod-secret'
@@ -161,11 +154,7 @@ resource pythonOcrApp 'Microsoft.App/containerApps@2024-03-01' = {
   properties: {
     managedEnvironmentId: containerAppEnv.id
     configuration: {
-      registries: [
-        {
-          server: ghcrServer
-        }
-      ]
+      registries: []
       secrets: [
         {
           name: 'mod-secret'
@@ -235,11 +224,7 @@ resource controllerApp 'Microsoft.App/containerApps@2024-03-01' = {
   properties: {
     managedEnvironmentId: containerAppEnv.id
     configuration: {
-      registries: [
-        {
-          server: ghcrServer
-        }
-      ]
+      registries: []
       secrets: [
         {
           name: 'openai-key'
