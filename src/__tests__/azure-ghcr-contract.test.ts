@@ -28,9 +28,12 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     // GHCR parameters present
     expect(bicep).toContain("param ghcrServer string = 'ghcr.io'");
     expect(bicep).toContain("@secure()\nparam ghcrPullToken string");
-    expect(bicep).toContain("param controllerImage string");
-    expect(bicep).toContain("param nodeVisionImage string");
-    expect(bicep).toContain("param pythonOcrImage string");
+    expect(bicep).toContain("param controllerImage string = 'ghcr.io/vivek2310sharma/fairswap-private-moderation-controller-v1:${imageTag}'");
+    expect(bicep).toContain("param nodeVisionImage string = 'ghcr.io/vivek2310sharma/fairswap-private-node-vision-v1:${imageTag}'");
+    expect(bicep).toContain("param pythonOcrImage string = 'ghcr.io/vivek2310sharma/fairswap-private-python-ocr-v1:${imageTag}'");
+    expect(bicep).not.toContain("fairswap-moderation-controller");
+    expect(bicep).not.toContain("fairswap-node-vision");
+    expect(bicep).not.toContain("fairswap-python-ocr");
 
     // Private registry authentication in Container Apps
     expect(bicep).toContain("server: ghcrServer");
@@ -73,9 +76,14 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(workflow).toContain("environment: FairSwapProd");
 
     // Target packages match GHCR specifications
-    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller");
-    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-node-vision");
-    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr");
+    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-private-moderation-controller-v1");
+    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-private-node-vision-v1");
+    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-private-python-ocr-v1");
+
+    // Old public packages must be absent from active deployment workflow
+    expect(workflow).not.toContain("fairswap-moderation-controller");
+    expect(workflow).not.toContain("fairswap-node-vision");
+    expect(workflow).not.toContain("fairswap-python-ocr");
 
     // Immutable digests promoted to both Test and Prod
     expect(workflow).toContain("controllerImage=${{ needs.build-ci-and-publish.outputs.controller_image }}");
@@ -441,5 +449,42 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
       }],
     });
     expect(invalidReq.success).toBe(false);
+  });
+
+  it("enforces V1.6 private package name recovery and isolated DOCKER_CONFIG anonymous pull gate", () => {
+    const workflow = readFileSync(deployWorkflowPath, "utf-8");
+    const bicep = readFileSync(mainBicepPath, "utf-8");
+
+    // All active package references must use private names
+    const privatePackages = [
+      "fairswap-private-moderation-controller-v1",
+      "fairswap-private-node-vision-v1",
+      "fairswap-private-python-ocr-v1",
+    ];
+
+    for (const pkg of privatePackages) {
+      expect(workflow).toContain(pkg);
+      expect(bicep).toContain(pkg);
+    }
+
+    // Old public package names must NOT be present in active deploy workflow or Bicep
+    const oldPublicPackages = [
+      "fairswap-moderation-controller",
+      "fairswap-node-vision",
+      "fairswap-python-ocr",
+    ];
+
+    for (const oldPkg of oldPublicPackages) {
+      expect(workflow).not.toContain(oldPkg);
+      expect(bicep).not.toContain(oldPkg);
+    }
+
+    // Anonymous pull gate must use isolated, clean DOCKER_CONFIG with trap cleanup
+    expect(workflow).toContain("mktemp -d /tmp/docker-anon-XXXXXX");
+    expect(workflow).toContain('trap \'rm -rf "$ANON_DOCKER_CONFIG"\' EXIT');
+    expect(workflow).toContain('export DOCKER_CONFIG="$ANON_DOCKER_CONFIG"');
+    expect(workflow).toContain("docker logout ghcr.io || true");
+    expect(workflow).toContain("SECURITY VIOLATION: Anonymous pull succeeded for $pkg!");
+    expect(workflow).toContain("Unexpected pull failure output for $pkg (must be permission denied / unauthorized to verify privacy).");
   });
 });
