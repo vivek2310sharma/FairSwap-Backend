@@ -16,6 +16,7 @@ on:
           - listing-validity-365
           - taxonomy-v2-foundation
           - taxonomy-v2-catalogue
+          - idv-digilocker-v1
           - accessories-v1-foundation
           - accessories-v1-activation
           - tablets-v1-foundation
@@ -331,6 +332,7 @@ jobs:
       taxonomy_ledger_sha: ${{ steps.taxonomy_proof.outputs.ledger_sha }}
       listing_validity_ledger_sha: ${{ steps.listing_validity_proof.outputs.ledger_sha }}
       mobile_catalogue_ledger_sha: ${{ steps.mobile_catalogue_proof.outputs.ledger_sha }}
+      idv_digilocker_ledger_sha: ${{ steps.idv_digilocker_proof.outputs.ledger_sha }}
     if: ${{ needs.test.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -400,18 +402,31 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `ledger_sha=${digest}\n`);
           NODE
 
+      - name: Verify IDV DigiLocker V1 Test postflight receipt
+        id: idv_digilocker_proof
+        if: ${{ inputs.candidate == 'idv-digilocker-v1' }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {appendFileSync, readFileSync} from 'node:fs';
+          import {verifyIdvDigilockerTestReceipt} from './scripts/release/idv-digilocker-v1-release.mjs';
+          const receipt = JSON.parse(readFileSync('test-evidence/idv-digilocker-v1-fairswaptest.json', 'utf8'));
+          const digest = verifyIdvDigilockerTestReceipt(receipt, process.env);
+          appendFileSync(process.env.GITHUB_OUTPUT, `ledger_sha=${digest}\n`);
+          NODE
+
   production:
-    # Moderation, Mobile Catalogue, Listing Validity and Taxonomy: automatic after verified Test. Accessories and Tablets: only a dedicated target=production
+    # Moderation, Mobile Catalogue, IDV DigiLocker V1, Listing Validity and Taxonomy: automatic after verified Test. Accessories and Tablets: only a dedicated target=production
     # dispatch, whose Web and earlier-stage Test/Production evidence was already enforced by the verify job.
     needs: [verify, test, verify_test]
     if: >-
       ${{ always() && needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
       ((inputs.target == 'test' && needs.verify.outputs.auto_promote == 'true' && needs.test.result == 'success' && needs.verify_test.result == 'success' &&
       (inputs.candidate != 'mobile-catalogue-india-v1' || needs.verify_test.outputs.mobile_catalogue_ledger_sha != '') &&
+      (inputs.candidate != 'idv-digilocker-v1' || needs.verify_test.outputs.idv_digilocker_ledger_sha != '') &&
       (inputs.candidate != 'listing-validity-365' || needs.verify_test.outputs.listing_validity_ledger_sha != '') &&
       (inputs.candidate != 'taxonomy-v2-foundation' || needs.verify_test.outputs.taxonomy_ledger_sha != '') &&
       (inputs.candidate != 'taxonomy-v2-catalogue' || needs.verify_test.outputs.taxonomy_ledger_sha != '')) ||
-      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue') ||
+      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue') ||
       (inputs.target == 'adopt' && inputs.candidate == 'accessories-v1-foundation' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped')) }}
     environment: FairSwapProd
     runs-on: ubuntu-24.04
@@ -477,6 +492,7 @@ jobs:
           TAXONOMY_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.taxonomy_ledger_sha }}
           LISTING_VALIDITY_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.listing_validity_ledger_sha }}
           MOBILE_CATALOGUE_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.mobile_catalogue_ledger_sha }}
+          IDV_DIGILOCKER_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.idv_digilocker_ledger_sha }}
           WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue') && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
           ACCESSORIES_RECHECK_PROD_FOUNDATION: ${{ needs.verify.outputs.accessories_recheck_prod_foundation }}
           ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
