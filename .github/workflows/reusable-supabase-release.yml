@@ -415,11 +415,13 @@ jobs:
           NODE
 
   production:
-    # Moderation, Mobile Catalogue, IDV DigiLocker V1, Listing Validity and Taxonomy: automatic after verified Test. Accessories and Tablets: only a dedicated target=production
+    # Moderation, Mobile Catalogue, Listing Validity and Taxonomy: automatic after verified Test. Accessories and Tablets: only a dedicated target=production
     # dispatch, whose Web and earlier-stage Test/Production evidence was already enforced by the verify job.
+    # idv-digilocker-v1 is Staging/Test only: Production is always skipped for it.
     needs: [verify, test, verify_test]
     if: >-
       ${{ always() && needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
+      inputs.candidate != 'idv-digilocker-v1' &&
       ((inputs.target == 'test' && needs.verify.outputs.auto_promote == 'true' && needs.test.result == 'success' && needs.verify_test.result == 'success' &&
       (inputs.candidate != 'mobile-catalogue-india-v1' || needs.verify_test.outputs.mobile_catalogue_ledger_sha != '') &&
       (inputs.candidate != 'idv-digilocker-v1' || needs.verify_test.outputs.idv_digilocker_ledger_sha != '') &&
