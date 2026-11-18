@@ -18,6 +18,8 @@ import {runTabletsV2Preflight, runTabletsV2Postflight, verifyTabletsV2Web} from 
 import {readTabletsLedger, runTabletsPostflight, runTabletsPreflight, verifyTabletsLedger} from './tablets-v1-release.mjs';
 import {ADOPTED_STATUS, assertCliSupportsIncludeAll, assertLedgerTail, assertMobilePhonesProvenance, assertSwitchingPrerequisite, runWearablesPostflight, runWearablesPreflight} from './wearables-v1-release.mjs';
 
+import {CATALOGUE_CANDIDATE,CATALOGUE_SCOPE,runCataloguePreflight,runCataloguePostflight} from './taxonomy-v2-catalogue-release.mjs';
+import {TAXONOMY_CANDIDATE,TAXONOMY_SCOPE,runTaxonomyPreflight,runTaxonomyPostflight} from './taxonomy-v2-release.mjs';
 import {readValiditySnapshot, verifyValidityPostflight, VALIDITY_SCOPE} from './listing-validity-365-release.mjs';
 
 export const REFS = PROJECT_REFS;
@@ -528,6 +530,12 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
     }
     return check;
   }
+  if (candidate.id === CATALOGUE_CANDIDATE) {
+    return runCataloguePostflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+  }
+  if (candidate.id === TAXONOMY_CANDIDATE) {
+    return runTaxonomyPostflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+  }
   if (candidate.id === 'listing-validity-365') {
     return verifyValidityPostflight(catalogueBefore, readValiditySnapshot(sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql')));
   }
@@ -575,6 +583,12 @@ export async function releaseReusable({
   }
   const candidate = getCandidate(candidateId);
   const projectRef = REFS[environment];
+  const taxonomyCatalogue = candidateId === CATALOGUE_CANDIDATE;
+  const taxonomy = taxonomyCatalogue || candidateId === TAXONOMY_CANDIDATE;
+  const taxonomyTestLedger = context.TAXONOMY_TEST_LEDGER_SHA;
+  if (taxonomy && environment === 'FairSwapProd' && (context.TARGET !== 'test' || !SHA256.test(taxonomyTestLedger ?? ''))) {
+    throw new Error('REUSABLE_RELEASE_TAXONOMY_TEST_EVIDENCE_REQUIRED');
+  }
   const listingValidity = candidateId === 'listing-validity-365';
   const validityTestLedger = context.LISTING_VALIDITY_TEST_LEDGER_SHA;
   if (listingValidity && environment === 'FairSwapProd' && (context.TARGET !== 'test' || !SHA256.test(validityTestLedger ?? ''))) {
@@ -701,15 +715,15 @@ export async function releaseReusable({
     const wearables = candidate.id.startsWith('wearables-v1-');
     // Tablets, Wearables and Mobile Catalogue pin the ledger: history is read before apply, must not change, and the installed
     // statements hash is carried Test -> Production through the receipts.
-    const pinned = tablets || wearables || mobileCatalogue || listingValidity || catalogueUpdate;
-    const label = listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
+    const pinned = tablets || wearables || mobileCatalogue || listingValidity || taxonomy || catalogueUpdate;
+    const label = taxonomy ? 'TAXONOMY' : listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
     const foundationVersion = wearables ? '20261104120000' : '20261102165946';
     const readLedger = () => readTabletsLedger(sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
     let catalogueBefore;
     let ledgerBefore;
     let ledgerStatementsSha256;
     let outOfOrder = {includeAll: false, ahead: []};
-    if (candidate.strict || mobileCatalogue || listingValidity) {
+    if (candidate.strict || mobileCatalogue || listingValidity || taxonomy) {
       // Prerequisites, ordering and partial state fail closed; resumption of a verified release is allowed in both environments.
       const ordering = assertLedgerOrdering(candidate, initialLedger);
       isAlreadyApplied = ordering.state === 'applied';
@@ -754,7 +768,7 @@ export async function releaseReusable({
           ledgerBefore.find(row => row.version === foundationVersion)?.statementsSha256 !== context.TABLETS_FOUNDATION_LEDGER_SHA) {
         throw new Error(`REUSABLE_RELEASE_${label}_FOUNDATION_EVIDENCE_MISMATCH`);
       }
-      if (!mobileCatalogue && !listingValidity && environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
+      if (!mobileCatalogue && !listingValidity && !taxonomy && environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
         throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_EVIDENCE_REQUIRED`);
       }
       if (ledgerBefore.length !== beforeRemote.size || ledgerBefore.some(row =>
@@ -788,6 +802,10 @@ export async function releaseReusable({
       dryRunPending = [];
     } else {
       // Standard path: candidate-only dry run, migration apply, ledger verification and postflight
+      if (taxonomy) {
+        phase = 'preflight';
+        catalogueBefore = (taxonomyCatalogue ? runCataloguePreflight : runTaxonomyPreflight)(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
+      }
       if (listingValidity) {
         phase = 'preflight';
         catalogueBefore = readValiditySnapshot(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
@@ -832,10 +850,10 @@ export async function releaseReusable({
       phase = 'ledger';
       const ledgerOutput = run('supabase', ['migration', 'list', '--linked', '--workdir', workspace], env);
       verifyLedgerVersion(ledgerOutput, candidate.version);
-      if (candidate.strict || mobileCatalogue || listingValidity) verifyHistoryPreserved(beforeRemote, ledgerOutput, candidate.version);
+      if (candidate.strict || mobileCatalogue || listingValidity || taxonomy) verifyHistoryPreserved(beforeRemote, ledgerOutput, candidate.version);
       if (pinned) {
         ledgerStatementsSha256 = verifyTabletsLedger(ledgerBefore, readLedger(), candidate);
-        const testLedger = listingValidity ? validityTestLedger : mobileCatalogue ? mobileTestLedger : context.TABLETS_CANDIDATE_LEDGER_SHA;
+        const testLedger = taxonomy ? taxonomyTestLedger : listingValidity ? validityTestLedger : mobileCatalogue ? mobileTestLedger : context.TABLETS_CANDIDATE_LEDGER_SHA;
         if (environment === 'FairSwapProd' && ledgerStatementsSha256 !== testLedger) {
           throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_MISMATCH`);
         }
@@ -866,6 +884,11 @@ export async function releaseReusable({
       postflightVerified: true,
       ...(pinned ? {ledgerStatementsSha256} : {}),
       ...(catalogue || catalogueUpdate ? {webStagingEvidence: catalogueWebEvidence ?? null} : {}),
+      ...(taxonomy ? {
+        postflightScope: taxonomyCatalogue ? CATALOGUE_SCOPE : TAXONOMY_SCOPE,
+        releaseWorkflowAttempt: context.GITHUB_RUN_ATTEMPT,
+        ...(environment === 'FairSwapProd' ? {testLedgerStatementsSha256: taxonomyTestLedger} : {})
+      } : {}),
       ...(listingValidity ? {
         postflightScope: VALIDITY_SCOPE,
         releaseWorkflowAttempt: context.GITHUB_RUN_ATTEMPT,

@@ -8,6 +8,23 @@ export const MOBILE_CATALOGUE_CANDIDATE = 'mobile-catalogue-india-v1';
 export const LISTING_VALIDITY_CANDIDATE = 'listing-validity-365';
 
 export const CANDIDATES = Object.freeze({
+  'taxonomy-v2-catalogue': Object.freeze({
+    id: 'taxonomy-v2-catalogue', version: '20261118092010',
+    filename: '20261118092010_taxonomy_v2_catalogue.sql',
+    path: 'supabase/forward-migrations/taxonomy-v2/catalogue/supabase/migrations/20261118092010_taxonomy_v2_catalogue.sql',
+    sha256: '51ffb9bac8ae16be8c531c60640ae93f96d4c49430750126f5efc68e2af6e42e',
+    description: 'Taxonomy V2 78-node canonical catalogue; no new posting activation or imports',
+    requiredLedgerVersions: Object.freeze(['20261117185218']),
+    autoPromote: true
+  }),
+  'taxonomy-v2-foundation': Object.freeze({
+    id: 'taxonomy-v2-foundation', version: '20261117185218',
+    filename: '20261117185218_taxonomy_v2_foundation.sql',
+    path: 'supabase/forward-migrations/taxonomy-v2/supabase/migrations/20261117185218_taxonomy_v2_foundation.sql',
+    sha256: '85e6e501e009dc56bc7ba4e28fb72b8b827e35c031fff7f283d0a373b92bbc25',
+    description: 'Taxonomy V2 additive foundation; no seed, activation or catalogue imports',
+    autoPromote: true
+  }),
   [LISTING_VALIDITY_CANDIDATE]: Object.freeze({
     id: LISTING_VALIDITY_CANDIDATE,
     version: '20261115120000',

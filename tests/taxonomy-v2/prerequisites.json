@@ -1,0 +1,86 @@
+{
+  "repository": "vivek2310sharma/FairSwap-Backend",
+  "commit": "8e6769b3bf7acd756a353174181b9bac0bb6920b",
+  "files": {
+    "supabase/forward-migrations/accessories-v1/foundation/supabase/migrations/20261102164135_accessories_v1.sql": {
+      "sha256": "790f6e2e06fb049d84903b42fad9bf8efd359a248ac0ecfcdd69f1e897142e9a",
+      "gitBlob": "5110c7dc9fb012abf1d57eab9622d67a127c7614"
+    },
+    "supabase/forward-migrations/posting-v2/session-recovery/supabase/migrations/20261101234604_posting_v212_session_recovery.sql": {
+      "sha256": "375fc67f277939916129412099dab3e9c8062307dfbf0fa8ee5942b94bba1b89",
+      "gitBlob": "b77ad0a93f51fcd782884de421521a0e1f1b18a6"
+    },
+    "supabase/forward-migrations/posting-v2/supabase/migrations/20261025131116_posting_v2_mobiles.sql": {
+      "sha256": "5fc94530f76a21b04a71b8d6d85cd29b007f6b5e366b7d15b571a8e4d55c3a0a",
+      "gitBlob": "2495b3de0b986cfbee14ecd2f56771617aa3edd2"
+    },
+    "supabase/forward-migrations/posting-v2/supabase/migrations/20261105213015_posting_v2_mobile_catalogue_india.sql": {
+      "sha256": "4bb663e766876f34136620651308c41293cce1e9411c7247bd87801a7cd9f360",
+      "gitBlob": "c7b3c0a163698d40c83fc389f465cecb5ab463ae"
+    },
+    "supabase/forward-migrations/tablets-v1/supabase/migrations/20261102165946_posting_v2_tablets.sql": {
+      "sha256": "bf081edd9f89d1244de5a8735b1c1f25f71aa75d6a34df8e1b83115c2ea7860a",
+      "gitBlob": "c9aa7b5f1a16ba40b6620552ebb5ce1912c7c680"
+    },
+    "supabase/forward-migrations/tablets-v2/supabase/migrations/20261104215253_tablets_v2_india_catalogue.sql": {
+      "sha256": "42bcab058e68e5cb4352a92212f4bbe836cf2ae28626950cf54574c57508ed95",
+      "gitBlob": "f63795b9ffeff9343aa62dda9692effa7dfd4bf9"
+    },
+    "supabase/forward-migrations/taxonomy-v2/supabase/migrations/20261117185218_taxonomy_v2_foundation.sql": {
+      "sha256": "85e6e501e009dc56bc7ba4e28fb72b8b827e35c031fff7f283d0a373b92bbc25",
+      "gitBlob": "0188b4c60c282b7df223b0a8acf017087fadfc86"
+    },
+    "supabase/forward-migrations/wearables-v1/supabase/migrations/20261104120000_posting_v2_wearables.sql": {
+      "sha256": "41122396afe11952126eaf474d272e88e81444863e97d0b2e646ee4cbac48b06",
+      "gitBlob": "1875f34c0b5ee4739a800e7ee74a89f50b84e863"
+    },
+    "supabase/forward-migrations/wearables-v11/supabase/migrations/20261111195641_wearables_v11_catalogue.sql": {
+      "sha256": "de4a8581988ec53e51c34b28836e24228df49b83dade94ef09d025be19900cf3",
+      "gitBlob": "5dcfbcb576c0d8c7b7f180c76719b8382c7a501d"
+    },
+    "supabase/migrations/20260914000005_create_listings.sql": {
+      "sha256": "fdd84dc87ca6ba8c26041936d93e299f860d3945799248c8b4adac25482115b7",
+      "gitBlob": "f9ec56dee28fcfbbcdc27703a8b3770aeab05ce1"
+    },
+    "supabase/migrations/20261009163210_seller_listing_category_context.sql": {
+      "sha256": "d7f3459ccf4e4b6ab8807b5182138c0cc45a8eceae066d611482260c5bdae2ee",
+      "gitBlob": "7091392c713a42a1d71947536edfc5d316618240"
+    },
+    "supabase/migrations/20261009201151_two_wheeler_draft_v1.sql": {
+      "sha256": "dfed0a91e1f24c4c8f7c3a36d97a31ca331a9858b50f48b2829516aade0dcbf5",
+      "gitBlob": "4dc482b3c3b8937de047a3b956052b5c485ef0c2"
+    },
+    "supabase/migrations/20261010064518_car_draft_v1.sql": {
+      "sha256": "dbfdf55304cd26c161cb792f487ce4f5034985f10094d2fe761aee50914c88ca",
+      "gitBlob": "c526dff572b7608cf061562ec43e91c213ac6dc5"
+    },
+    "supabase/migrations/20261010084523_property_rental_draft_v1.sql": {
+      "sha256": "c0dd1b704d33ba366e077fcde432e7f5faaed240b24ef84b830125e8e1855497",
+      "gitBlob": "61c78b1e467b7ded2444115cd246704a512d871b"
+    },
+    "supabase/migrations/20261013192336_post_ad_listing_insert_category_guard.sql": {
+      "sha256": "db38ece22fddcaedb229a55a2637e2b91b148255687825506909563db7e94163",
+      "gitBlob": "a5e898626b53f464e8b51c35760c64c06aed8a1a"
+    },
+    "tests/posting-v212/native-adapter.mjs": {
+      "sha256": "f463e21e3b5e74f2ee00ea2060c184818a626072c7ba6d2b282f598edbeeb123",
+      "gitBlob": "59a009a989b2dddbbe5fcd0f56c8772bcee081d5"
+    },
+    "tests/ratings/build-native-pg17.sh": {
+      "sha256": "3a3ed9a23d3ae76b39eb11463f89875d1cf9b53b28ee83814ad2b91b78e6d8bb",
+      "gitBlob": "66b03aede55234ebdd6f58b4d9e608e1f94aab8c"
+    },
+    "tests/ratings/package-lock.json": {
+      "sha256": "c549de8bff6960976ed3468561de50d6e695d5acc38f38cb88cb6599c4327760",
+      "gitBlob": "7bd7d816e2dff4ecbcbc6e1a9b86dd91ebaab9aa"
+    },
+    "tests/ratings/package.json": {
+      "sha256": "03af5c28c2d3199d955d76df7949b2925fe59f16d1c5613ebe4847e2c73ee5ac",
+      "gitBlob": "d66df1eeab11ec1e6ec40bb48c9db3e57c9e8972"
+    },
+    "tests/ratings/pg17-source.json": {
+      "sha256": "eb51dce8c16aa49770fa93c5beefd26d7081d7d8bfed20b8a2befb779637444c",
+      "gitBlob": "cb47be8dc9bbadd2e696d714c57b1fdd11f98ea0"
+    }
+  }
+}

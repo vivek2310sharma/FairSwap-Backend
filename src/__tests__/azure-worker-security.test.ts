@@ -381,5 +381,267 @@ describe("Azure Moderation Worker - Response Validation & Security Gates", () =>
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("recovers on cold start when attempt 1 receives transient 503 gateway response and attempt 2 succeeds", async () => {
+    const { processClaimedModerationJob } = await import("../../supabase/functions/_shared/azure-moderation-worker");
+    const mockSupabase: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "listings") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: { category_id: "77777777-7777-7777-7777-777777777777", categories: { slug: "electronics" } },
+                error: null,
+              }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: [
+                  { id: "55555555-5555-5555-5555-555555555555", original_storage_path: "listings/photo1.jpg", processing_status: "ready" },
+                ],
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }),
+      storage: {
+        from: vi.fn().mockReturnValue({
+          download: vi.fn().mockResolvedValue({
+            data: { arrayBuffer: () => Promise.resolve(new ArrayBuffer(10)) },
+            error: null,
+          }),
+          createSignedUrl: vi.fn().mockResolvedValue({
+            data: { signedUrl: "https://storage.test/photo1.jpg" },
+            error: null,
+          }),
+        }),
+      },
+      rpc: vi.fn().mockImplementation((fn: string) => {
+        if (fn === "register_moderation_scan_receipt") return Promise.resolve({ error: null });
+        if (fn === "impl_finalize_moderation_result") return Promise.resolve({ data: { decision: "auto_approved" }, error: null });
+        return Promise.resolve({ error: null });
+      }),
+    };
+
+    const originalFetch = globalThis.fetch;
+    let callCount = 0;
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("moderations")) {
+        return Promise.resolve(new Response(JSON.stringify({ results: [{ flagged: false, categories: {}, category_scores: {} }] }), { status: 200 }));
+      }
+      callCount++;
+      if (callCount === 1) {
+        // Cold start waking up: ACA gateway returns 503 Service Unavailable
+        return Promise.resolve(new Response(JSON.stringify({ error: "Service Unavailable" }), { status: 503 }));
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            verdict: "APPROVE",
+            listingId: mockJob.listing_id,
+            listingRevision: mockJob.listing_revision,
+            generationId: mockJob.generation_id,
+            mediaDigest: "e865150fede4cd97c9559a494b4258929bc2c39c78c18e4a5e4ef0b74168695b",
+            completedChecks: ["check_vision_nsfw", "check_vision_category", "check_ocr_qr"],
+            failedChecks: [],
+            flags: [],
+            modelVersions: { rulesetVersion: "india_azure_v1.0.0" },
+            scannedMediaCount: 1,
+            extractedTexts: [],
+            qrPayloads: [],
+            manifest: [{ id: "55555555-5555-5555-5555-555555555555", originalStoragePath: "listings/photo1.jpg", mediaSha256: "01d448afd928065458cf670b60f5a594d735af0172c8d67f22a81680132681ca" }],
+          }),
+          { status: 200 }
+        )
+      );
+    });
+
+    try {
+      const res = await processClaimedModerationJob(mockJob, mockSupabase, {
+        mode: "azure",
+        azureEndpoint: "https://azure.mod/scan",
+        azureSecret: "mock-azure-secret-12345",
+        openAiApiKey: "test-openai-key",
+      });
+      expect(res.success).toBe(true);
+      expect(callCount).toBe(2);
+      expect(mockSupabase.rpc).toHaveBeenCalledWith(
+        "impl_finalize_moderation_result",
+        expect.objectContaining({ p_outcome: "no_review_flags" })
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("fails closed without retry when 503 gateway response arrives with insufficient remaining budget", async () => {
+    const { processClaimedModerationJob } = await import("../../supabase/functions/_shared/azure-moderation-worker");
+    const mockSupabase: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "listings") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: { category_id: "77777777-7777-7777-7777-777777777777", categories: { slug: "electronics" } },
+                error: null,
+              }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: [
+                  { id: "55555555-5555-5555-5555-555555555555", original_storage_path: "listings/photo1.jpg", processing_status: "ready" },
+                ],
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }),
+      storage: {
+        from: vi.fn().mockReturnValue({
+          download: vi.fn().mockResolvedValue({
+            data: { arrayBuffer: () => Promise.resolve(new ArrayBuffer(10)) },
+            error: null,
+          }),
+          createSignedUrl: vi.fn().mockResolvedValue({
+            data: { signedUrl: "https://storage.test/photo1.jpg" },
+            error: null,
+          }),
+        }),
+      },
+      rpc: vi.fn().mockImplementation((fn: string) => {
+        if (fn === "register_moderation_scan_receipt") return Promise.resolve({ error: null });
+        if (fn === "impl_finalize_moderation_result") return Promise.resolve({ data: { decision: "routed_to_admin" }, error: null });
+        return Promise.resolve({ error: null });
+      }),
+    };
+
+    const originalFetch = globalThis.fetch;
+    let azureCalls = 0;
+    const realDateNow = Date.now;
+    let fakeNow = 1000000;
+    Date.now = vi.fn().mockImplementation(() => fakeNow);
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("moderations")) {
+        return Promise.resolve(new Response(JSON.stringify({ results: [{ flagged: false, categories: {}, category_scores: {} }] }), { status: 200 }));
+      }
+      azureCalls++;
+      // Advance clock by 4000ms during attempt 1, exhausting budget against a 6000ms deadline
+      fakeNow += 4000;
+      return Promise.resolve(new Response("Service Unavailable", { status: 503 }));
+    });
+
+    try {
+      const res = await processClaimedModerationJob(mockJob, mockSupabase, {
+        mode: "azure",
+        azureEndpoint: "https://azure.mod/scan",
+        azureSecret: "mock-azure-secret-12345",
+        openAiApiKey: "test-openai-key",
+        azureTimeoutMs: 6000,
+      });
+
+      expect(res.success).toBe(true);
+      // Fails closed without retry: exactly 1 call because budget did not allow second attempt
+      expect(azureCalls).toBe(1);
+      expect(mockSupabase.rpc).toHaveBeenCalledWith(
+        "impl_finalize_moderation_result",
+        expect.objectContaining({
+          p_outcome: "checks_incomplete",
+          p_failed_rules: expect.arrayContaining(["azure_http_503", "azure_retry_budget_exceeded"]),
+        })
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      Date.now = realDateNow;
+    }
+  });
+
+  it("fails closed without duplicate dispatch when network timeout occurs", async () => {
+    const { processClaimedModerationJob } = await import("../../supabase/functions/_shared/azure-moderation-worker");
+    const mockSupabase: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "listings") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: { category_id: "77777777-7777-7777-7777-777777777777", categories: { slug: "electronics" } },
+                error: null,
+              }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: [
+                  { id: "55555555-5555-5555-5555-555555555555", original_storage_path: "listings/photo1.jpg", processing_status: "ready" },
+                ],
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }),
+      storage: {
+        from: vi.fn().mockReturnValue({
+          download: vi.fn().mockResolvedValue({
+            data: { arrayBuffer: () => Promise.resolve(new ArrayBuffer(10)) },
+            error: null,
+          }),
+          createSignedUrl: vi.fn().mockResolvedValue({
+            data: { signedUrl: "https://storage.test/photo1.jpg" },
+            error: null,
+          }),
+        }),
+      },
+      rpc: vi.fn().mockImplementation((fn: string) => {
+        if (fn === "register_moderation_scan_receipt") return Promise.resolve({ error: null });
+        if (fn === "impl_finalize_moderation_result") return Promise.resolve({ data: { decision: "routed_to_admin" }, error: null });
+        return Promise.resolve({ error: null });
+      }),
+    };
+
+    const originalFetch = globalThis.fetch;
+    let azureCalls = 0;
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("moderations")) {
+        return Promise.resolve(new Response(JSON.stringify({ results: [{ flagged: false, categories: {}, category_scores: {} }] }), { status: 200 }));
+      }
+      azureCalls++;
+      return Promise.reject(new Error("TimeoutError: The operation was aborted"));
+    });
+
+    try {
+      const res = await processClaimedModerationJob(mockJob, mockSupabase, {
+        mode: "azure",
+        azureEndpoint: "https://azure.mod/scan",
+        azureSecret: "mock-azure-secret-12345",
+        openAiApiKey: "test-openai-key",
+      });
+      expect(res.success).toBe(true);
+      // Fails closed on timeout: exactly 1 call (no uncoordinated duplicate remote execution)
+      expect(azureCalls).toBe(1);
+      expect(mockSupabase.rpc).toHaveBeenCalledWith(
+        "impl_finalize_moderation_result",
+        expect.objectContaining({
+          p_outcome: "checks_incomplete",
+          p_failed_rules: expect.arrayContaining(["azure_dispatch_network_timeout"]),
+        })
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 

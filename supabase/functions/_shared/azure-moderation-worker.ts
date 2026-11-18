@@ -29,6 +29,7 @@ export const AzureWorkerConfigSchema = z.object({
   openAiApiKey: z.string().optional(),
   batchSize: z.coerce.number().int().positive().max(100).default(10),
   leaseSeconds: z.coerce.number().int().positive().max(600).default(60),
+  azureTimeoutMs: z.coerce.number().int().positive().max(50000).optional(),
 });
 
 export type AzureWorkerConfig = z.infer<typeof AzureWorkerConfigSchema>;
@@ -76,6 +77,7 @@ export interface ModerationJobOptions {
   azureEndpoint?: string;
   azureSecret?: string;
   openAiApiKey?: string;
+  azureTimeoutMs?: number;
 }
 
 /**
@@ -94,6 +96,7 @@ export async function processClaimedModerationJob(
     };
   }
   const job = parsedJob.data;
+  const jobStartTime = Date.now();
 
   // 1. Fetch attached listing media and category from database
   const listingQuery = supabase
@@ -243,125 +246,162 @@ export async function processClaimedModerationJob(
       verdict = "INCOMPLETE";
     } else {
       let returnedMediaDigest = "";
-      try {
-        const azureRes = await fetch(options.azureEndpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Moderation-Secret": options.azureSecret,
-          },
-          body: JSON.stringify({
-            listingId: job.listing_id,
-            listingRevision: job.listing_revision,
-            generationId: job.generation_id,
-            title: job.title,
-            description: job.description,
-            categorySlug,
-            mediaDigest: computedMediaDigest,
-            media: mediaItems,
-          }),
-          signal: AbortSignal.timeout(15000),
-        });
+      const maxJobBudgetMs = 50000; // Leaves 10s margin for DB receipt/finalizer before 60s lease expiry
+      const remainingFromJobStart = maxJobBudgetMs - (Date.now() - jobStartTime);
+      const configuredTimeout = options.azureTimeoutMs ?? 30000;
+      const totalAzureBudgetMs = Math.min(configuredTimeout, Math.max(0, remainingFromJobStart));
+      const azureDeadline = Date.now() + totalAzureBudgetMs;
 
-        if (azureRes.ok) {
-          const parsedAzure = AzureScanResponseSchema.safeParse(await azureRes.json());
-          if (parsedAzure.success) {
-            const az = parsedAzure.data;
-            if (
-              az.listingId !== job.listing_id ||
-              az.listingRevision !== job.listing_revision ||
-              az.generationId !== job.generation_id ||
-              az.scannedMediaCount !== mediaItems.length ||
-              az.manifest.length !== mediaItems.length
-            ) {
-              failedChecks.push("azure_response_identity_mismatch");
-              verdict = "INCOMPLETE";
+      const MIN_RETRY_THRESHOLD_MS = 5000;
+      const RETRY_BACKOFF_MS = 2000;
+      const maxAttempts = 2; // Bounded retry only for transient gateway wake-up responses
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const remainingBudgetMs = azureDeadline - Date.now();
+        if (remainingBudgetMs < MIN_RETRY_THRESHOLD_MS) {
+          failedChecks.push("azure_dispatch_deadline_exceeded");
+          verdict = "INCOMPLETE";
+          break;
+        }
+
+        const attemptTimeoutMs = Math.min(remainingBudgetMs, 15000);
+
+        try {
+          const azureRes = await fetch(options.azureEndpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Moderation-Secret": options.azureSecret,
+            },
+            body: JSON.stringify({
+              listingId: job.listing_id,
+              listingRevision: job.listing_revision,
+              generationId: job.generation_id,
+              title: job.title,
+              description: job.description,
+              categorySlug,
+              mediaDigest: computedMediaDigest,
+              media: mediaItems,
+            }),
+            signal: AbortSignal.timeout(attemptTimeoutMs),
+          });
+
+          // Handle transient ACA cold-start gateway wake-up responses (502/503/504) where backend was not reached
+          if (!azureRes.ok && [502, 503, 504].includes(azureRes.status) && attempt < maxAttempts) {
+            const timeAfterBackoff = (azureDeadline - Date.now()) - RETRY_BACKOFF_MS;
+            if (timeAfterBackoff >= MIN_RETRY_THRESHOLD_MS) {
+              await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS));
+              continue;
             } else {
-              const returnedIds = az.manifest.map((m) => m.id ?? m.mediaId);
-              const uniqueReturnedIds = new Set(returnedIds);
-              const expectedIds = new Set(mediaItems.map((m) => m.id));
+              failedChecks.push(`azure_http_${azureRes.status}`);
+              failedChecks.push("azure_retry_budget_exceeded");
+              verdict = "INCOMPLETE";
+              break;
+            }
+          }
 
-              const idsMatchExactly =
-                uniqueReturnedIds.size === az.manifest.length &&
-                uniqueReturnedIds.size === expectedIds.size &&
-                [...uniqueReturnedIds].every((id) => expectedIds.has(id!));
-
-              let allMediaMatched = idsMatchExactly;
-              if (allMediaMatched) {
-                for (const expectedItem of mediaItems) {
-                  const matchedEntry = az.manifest.find(
-                    (m) => (m.id ?? m.mediaId) === expectedItem.id
-                  );
-                  if (!matchedEntry) {
-                    allMediaMatched = false;
-                    break;
-                  }
-                  const returnedPath = matchedEntry.path ?? matchedEntry.originalStoragePath;
-                  const returnedSha = matchedEntry.sha256 ?? matchedEntry.mediaSha256;
-                  if (
-                    returnedPath !== expectedItem.originalStoragePath ||
-                    returnedSha !== expectedItem.mediaSha256
-                  ) {
-                    allMediaMatched = false;
-                    break;
-                  }
-                }
-              }
-
-              if (!allMediaMatched) {
-                failedChecks.push("azure_manifest_mismatch");
+          if (azureRes.ok) {
+            const parsedAzure = AzureScanResponseSchema.safeParse(await azureRes.json());
+            if (parsedAzure.success) {
+              const az = parsedAzure.data;
+              if (
+                az.listingId !== job.listing_id ||
+                az.listingRevision !== job.listing_revision ||
+                az.generationId !== job.generation_id ||
+                az.scannedMediaCount !== mediaItems.length ||
+                az.manifest.length !== mediaItems.length
+              ) {
+                failedChecks.push("azure_response_identity_mismatch");
                 verdict = "INCOMPLETE";
               } else {
-                // Add Azure completed checks (excluding checks Supabase authoritatively evaluated)
-                for (const c of az.completedChecks) {
-                  if (!completedChecks.includes(c)) completedChecks.push(c);
-                }
-                for (const f of az.failedChecks) {
-                  if (!failedChecks.includes(f)) failedChecks.push(f);
-                }
-                flags.push(...az.flags);
-                modelVersions = { ...modelVersions, ...az.modelVersions };
-                returnedMediaDigest = az.mediaDigest;
+                const returnedIds = az.manifest.map((m) => m.id ?? m.mediaId);
+                const uniqueReturnedIds = new Set(returnedIds);
+                const expectedIds = new Set(mediaItems.map((m) => m.id));
 
-                // Evaluate OCR text and QR payloads with Supabase India fraud rules
-                const ocrTexts = az.extractedTexts || [];
-                const qrPayloads = az.qrPayloads || [];
-                const mediaFraud = evaluateIndiaRules({
-                  title: job.title,
-                  description: job.description,
-                  ocrTexts,
-                  qrPayloads,
-                });
-                if (mediaFraud.flags.length > 0) {
-                  flags.push(...mediaFraud.flags);
-                }
-                for (const text of [...ocrTexts, ...qrPayloads]) {
-                  const ocrFraud = evaluateListingText({ title: "Media Text", description: text });
-                  if (ocrFraud.outcome === "needs_review") {
-                    flags.push(...ocrFraud.flags);
+                const idsMatchExactly =
+                  uniqueReturnedIds.size === az.manifest.length &&
+                  uniqueReturnedIds.size === expectedIds.size &&
+                  [...uniqueReturnedIds].every((id) => expectedIds.has(id!));
+
+                let allMediaMatched = idsMatchExactly;
+                if (allMediaMatched) {
+                  for (const expectedItem of mediaItems) {
+                    const matchedEntry = az.manifest.find(
+                      (m) => (m.id ?? m.mediaId) === expectedItem.id
+                    );
+                    if (!matchedEntry) {
+                      allMediaMatched = false;
+                      break;
+                    }
+                    const returnedPath = matchedEntry.path ?? matchedEntry.originalStoragePath;
+                    const returnedSha = matchedEntry.sha256 ?? matchedEntry.mediaSha256;
+                    if (
+                      returnedPath !== expectedItem.originalStoragePath ||
+                      returnedSha !== expectedItem.mediaSha256
+                    ) {
+                      allMediaMatched = false;
+                      break;
+                    }
                   }
                 }
 
-                if (az.verdict === "REJECT" || az.verdict === "FLAG" || flags.length > 0) {
-                  verdict = "FLAG";
-                } else if (az.verdict === "INCOMPLETE" || failedChecks.length > 0) {
+                if (!allMediaMatched) {
+                  failedChecks.push("azure_manifest_mismatch");
                   verdict = "INCOMPLETE";
                 } else {
-                  verdict = "APPROVE";
+                  // Add Azure completed checks (excluding checks Supabase authoritatively evaluated)
+                  for (const c of az.completedChecks) {
+                    if (!completedChecks.includes(c)) completedChecks.push(c);
+                  }
+                  for (const f of az.failedChecks) {
+                    if (!failedChecks.includes(f)) failedChecks.push(f);
+                  }
+                  flags.push(...az.flags);
+                  modelVersions = { ...modelVersions, ...az.modelVersions };
+                  returnedMediaDigest = az.mediaDigest;
+
+                  // Evaluate OCR text and QR payloads with Supabase India fraud rules
+                  const ocrTexts = az.extractedTexts || [];
+                  const qrPayloads = az.qrPayloads || [];
+                  const mediaFraud = evaluateIndiaRules({
+                    title: job.title,
+                    description: job.description,
+                    ocrTexts,
+                    qrPayloads,
+                  });
+                  if (mediaFraud.flags.length > 0) {
+                    flags.push(...mediaFraud.flags);
+                  }
+                  for (const text of [...ocrTexts, ...qrPayloads]) {
+                    const ocrFraud = evaluateListingText({ title: "Media Text", description: text });
+                    if (ocrFraud.outcome === "needs_review") {
+                      flags.push(...ocrFraud.flags);
+                    }
+                  }
+
+                  if (az.verdict === "REJECT" || az.verdict === "FLAG" || flags.length > 0) {
+                    verdict = "FLAG";
+                  } else if (az.verdict === "INCOMPLETE" || failedChecks.length > 0) {
+                    verdict = "INCOMPLETE";
+                  } else {
+                    verdict = "APPROVE";
+                  }
                 }
               }
+            } else {
+              failedChecks.push("azure_response_schema_invalid");
+              verdict = "INCOMPLETE";
             }
           } else {
-            failedChecks.push("azure_response_schema_invalid");
+            failedChecks.push(`azure_http_${azureRes.status}`);
             verdict = "INCOMPLETE";
           }
-        } else {
-          failedChecks.push(`azure_http_${azureRes.status}`);
+          break; // Response handled, do not retry further
+        } catch (err: any) {
+          failedChecks.push("azure_dispatch_network_timeout");
           verdict = "INCOMPLETE";
+          break; // Network timeout fails closed without duplicate remote execution
         }
-      } catch (err: any) {
-        failedChecks.push("azure_dispatch_network_timeout");
-        verdict = "INCOMPLETE";
       }
 
       if (mediaItems.length > 0 && returnedMediaDigest !== computedMediaDigest) {
@@ -451,5 +491,6 @@ export async function processClaimedAzureJob(
     azureEndpoint: config.azureModerationEndpoint,
     azureSecret: config.azureModerationSecret,
     openAiApiKey: config.openAiApiKey,
+    azureTimeoutMs: config.azureTimeoutMs,
   });
 }
