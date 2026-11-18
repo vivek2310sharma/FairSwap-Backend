@@ -28,12 +28,15 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     // GHCR parameters present
     expect(bicep).toContain("param ghcrServer string = 'ghcr.io'");
     expect(bicep).toContain("@secure()\nparam ghcrPullToken string");
-    expect(bicep).toContain("param controllerImage string = 'ghcr.io/vivek2310sharma/fairswap-private-moderation-controller-v1:${imageTag}'");
-    expect(bicep).toContain("param nodeVisionImage string = 'ghcr.io/vivek2310sharma/fairswap-private-node-vision-v1:${imageTag}'");
-    expect(bicep).toContain("param pythonOcrImage string = 'ghcr.io/vivek2310sharma/fairswap-private-python-ocr-v1:${imageTag}'");
+    expect(bicep).toContain("param controllerImage string = 'ghcr.io/vivek2310sharma/fairswap-private-moderation-controller-v2:${imageTag}'");
+    expect(bicep).toContain("param nodeVisionImage string = 'ghcr.io/vivek2310sharma/fairswap-private-node-vision-v2:${imageTag}'");
+    expect(bicep).toContain("param pythonOcrImage string = 'ghcr.io/vivek2310sharma/fairswap-private-python-ocr-v2:${imageTag}'");
     expect(bicep).not.toContain("fairswap-moderation-controller");
     expect(bicep).not.toContain("fairswap-node-vision");
     expect(bicep).not.toContain("fairswap-python-ocr");
+    expect(bicep).not.toContain("fairswap-private-moderation-controller-v1");
+    expect(bicep).not.toContain("fairswap-private-node-vision-v1");
+    expect(bicep).not.toContain("fairswap-private-python-ocr-v1");
 
     // Private registry authentication in Container Apps
     expect(bicep).toContain("server: ghcrServer");
@@ -76,14 +79,17 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(workflow).toContain("environment: FairSwapProd");
 
     // Target packages match GHCR specifications
-    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-private-moderation-controller-v1");
-    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-private-node-vision-v1");
-    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-private-python-ocr-v1");
+    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-private-moderation-controller-v2");
+    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-private-node-vision-v2");
+    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-private-python-ocr-v2");
 
-    // Old public packages must be absent from active deployment workflow
+    // Old public and V1 packages must be absent from active deployment workflow
     expect(workflow).not.toContain("fairswap-moderation-controller");
     expect(workflow).not.toContain("fairswap-node-vision");
     expect(workflow).not.toContain("fairswap-python-ocr");
+    expect(workflow).not.toContain("fairswap-private-moderation-controller-v1");
+    expect(workflow).not.toContain("fairswap-private-node-vision-v1");
+    expect(workflow).not.toContain("fairswap-private-python-ocr-v1");
 
     // Immutable digests promoted to both Test and Prod
     expect(workflow).toContain("controllerImage=${{ needs.build-ci-and-publish.outputs.controller_image }}");
@@ -451,33 +457,46 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(invalidReq.success).toBe(false);
   });
 
-  it("enforces V1.6 private package name recovery and isolated DOCKER_CONFIG anonymous pull gate", () => {
+  it("enforces V1.7 private-first publisher PAT, secret preflight, V2 packages, and isolated DOCKER_CONFIG gate", () => {
     const workflow = readFileSync(deployWorkflowPath, "utf-8");
     const bicep = readFileSync(mainBicepPath, "utf-8");
 
-    // All active package references must use private names
-    const privatePackages = [
+    // All active package references must use V2 private names
+    const privatePackagesV2 = [
+      "fairswap-private-moderation-controller-v2",
+      "fairswap-private-node-vision-v2",
+      "fairswap-private-python-ocr-v2",
+    ];
+
+    for (const pkg of privatePackagesV2) {
+      expect(workflow).toContain(pkg);
+      expect(bicep).toContain(pkg);
+    }
+
+    // Old public package names and V1 package names must NOT be present in active deploy workflow or Bicep
+    const retiredPackages = [
+      "fairswap-moderation-controller",
+      "fairswap-node-vision",
+      "fairswap-python-ocr",
       "fairswap-private-moderation-controller-v1",
       "fairswap-private-node-vision-v1",
       "fairswap-private-python-ocr-v1",
     ];
 
-    for (const pkg of privatePackages) {
-      expect(workflow).toContain(pkg);
-      expect(bicep).toContain(pkg);
-    }
-
-    // Old public package names must NOT be present in active deploy workflow or Bicep
-    const oldPublicPackages = [
-      "fairswap-moderation-controller",
-      "fairswap-node-vision",
-      "fairswap-python-ocr",
-    ];
-
-    for (const oldPkg of oldPublicPackages) {
+    for (const oldPkg of retiredPackages) {
       expect(workflow).not.toContain(oldPkg);
       expect(bicep).not.toContain(oldPkg);
     }
+
+    // Publishing login MUST use repository secret GHCR_PUBLISH_TOKEN with github.repository_owner, NOT GITHUB_TOKEN
+    expect(workflow).toContain("password: ${{ secrets.GHCR_PUBLISH_TOKEN }}");
+    expect(workflow).toContain("username: ${{ github.repository_owner }}");
+    expect(workflow).not.toContain("password: ${{ secrets.GITHUB_TOKEN }}");
+
+    // Preflight fail-fast non-empty check for GHCR_PUBLISH_TOKEN
+    expect(workflow).toContain("Verify GHCR Publish Secret Preflight");
+    expect(workflow).toContain('-z "${{ secrets.GHCR_PUBLISH_TOKEN }}"');
+    expect(workflow).toContain("Missing repository secret GHCR_PUBLISH_TOKEN");
 
     // Anonymous pull gate must use isolated, clean DOCKER_CONFIG with trap cleanup
     expect(workflow).toContain("mktemp -d /tmp/docker-anon-XXXXXX");
@@ -486,5 +505,9 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(workflow).toContain("docker logout ghcr.io || true");
     expect(workflow).toContain("SECURITY VIOLATION: Anonymous pull succeeded for $pkg!");
     expect(workflow).toContain("Unexpected pull failure output for $pkg (must be permission denied / unauthorized to verify privacy).");
+
+    // Authorized read-only pull checks in Test and Prod must use GHCR_PULL_TOKEN
+    expect(workflow).toContain("Verify Authorized Read-Only Pull with GHCR_PULL_TOKEN (FairSwapTest)");
+    expect(workflow).toContain("Verify Authorized Read-Only Pull with GHCR_PULL_TOKEN (FairSwapProd)");
   });
 });
