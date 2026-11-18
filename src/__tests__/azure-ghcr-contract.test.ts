@@ -25,22 +25,24 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(bicep).not.toContain("Microsoft.ContainerRegistry/registries@2023-07-01' existing");
     expect(bicep).not.toContain("guid(resourceGroup().id, acaIdentity.id, 'AcrPull')");
 
-    // GHCR server parameter present
-    expect(bicep).toContain("param ghcrServer string = 'ghcr.io'");
+    // Public GHCR image parameters present
     expect(bicep).toContain("param controllerImage string = 'ghcr.io/vivek2310sharma/fairswap-moderation-controller:${imageTag}'");
     expect(bicep).toContain("param nodeVisionImage string = 'ghcr.io/vivek2310sharma/fairswap-node-vision:${imageTag}'");
     expect(bicep).toContain("param pythonOcrImage string = 'ghcr.io/vivek2310sharma/fairswap-python-ocr:${imageTag}'");
 
-    // No private package names or credentials in Bicep
+    // No private package names, unused ghcrServer parameter, or credentials in Bicep
     expect(bicep).not.toContain("fairswap-private-");
+    expect(bicep).not.toContain("param ghcrServer");
     expect(bicep).not.toContain("ghcrPullToken");
     expect(bicep).not.toContain("ghcr-pull-token");
     expect(bicep).not.toContain("ghcrUsername");
     expect(bicep).not.toContain("passwordSecretRef");
 
-    // Public registry configuration on Container Apps without auth credentials
-    const registryMatches = bicep.match(/registries:\s*\[\s*\{\s*server:\s*ghcrServer\s*\}\s*\]/g);
+    // Public registry configuration on Container Apps: empty registries array explicitly clears private credentials
+    const registryMatches = bicep.match(/registries:\s*\[\s*\]/g);
     expect(registryMatches?.length).toBe(3);
+    expect(bicep).not.toContain("server: ghcrServer");
+    expect(bicep).not.toContain("server: 'ghcr.io'");
 
     // Scale-to-zero preserved on all three container apps
     const minReplicasMatches = bicep.match(/minReplicas:\s*0/g);
@@ -480,15 +482,19 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(workflow).not.toContain("GHCR_PULL_TOKEN");
     expect(workflow).not.toContain("GHCR_PULL_USERNAME");
 
-    // 4. Bicep must NOT contain any GHCR credentials or pull secrets
+    // 4. Bicep must NOT contain any GHCR credentials, unused ghcrServer param, or pull secrets
     expect(bicep).not.toContain("ghcrPullToken");
     expect(bicep).not.toContain("ghcr-pull-token");
     expect(bicep).not.toContain("ghcrUsername");
     expect(bicep).not.toContain("passwordSecretRef");
+    expect(bicep).not.toContain("param ghcrServer");
+    expect(workflow).not.toContain("ghcrServer=ghcr.io");
 
-    // 5. Bicep must configure server-only registry for public GHCR on each app
-    const registryMatches = bicep.match(/registries:\s*\[\s*\{\s*server:\s*ghcrServer\s*\}\s*\]/g);
+    // 5. Bicep must configure empty registries list on each app to clear credentials for public GHCR
+    const registryMatches = bicep.match(/registries:\s*\[\s*\]/g);
     expect(registryMatches?.length).toBe(3);
+    expect(bicep).not.toContain("server: ghcrServer");
+    expect(bicep).not.toContain("server: 'ghcr.io'");
 
     // 6. Anonymous pull gate must test unauthenticated pull SUCCESS (Fail-Closed)
     expect(workflow).toContain("Verify Anonymous Pull Succeeds on All Three Public Packages (Fail-Closed)");
@@ -500,6 +506,41 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(workflow).toContain("SECURITY / AVAILABILITY VIOLATION: Anonymous pull failed for public package $pkg!");
 
     // 7. Test and Prod environments must use unauthenticated public image pulls (no PAT)
+    expect(workflow).toContain("Verify Public Image Pulls in Test Environment (Fail-Closed)");
+    expect(workflow).toContain("Verify Public Image Pulls in Production Environment (Fail-Closed)");
+  });
+
+  it("enforces V1.9 regression fix: avoids ContainerAppRegistriesPasswordSecretRefNotFound ARM failure by using empty registries array", () => {
+    const workflow = readFileSync(deployWorkflowPath, "utf-8");
+    const bicep = readFileSync(mainBicepPath, "utf-8");
+
+    // Root Cause in run #44298685253:
+    // ARM error 'ContainerAppRegistriesPasswordSecretRefNotFound' occurs when 'configuration.registries'
+    // contains an object like '{ server: ghcrServer }' without a passwordSecretRef.
+    // Azure ARM interprets this as PasswordSecretRef '' not found.
+    // In Azure Container Apps ARM schema, 'configuration.registries' is strictly for private registry credentials.
+    // For public GHCR images, 'registries: []' explicitly clears any legacy credentials and pulls without auth.
+
+    // 1. Must NOT contain server-only registry declarations in Bicep
+    expect(bicep).not.toMatch(/registries:\s*\[\s*\{\s*server:/);
+    expect(bicep).not.toContain("server: ghcrServer");
+    expect(bicep).not.toContain("server: 'ghcr.io'");
+
+    // 2. Must explicitly declare registries: [] across all 3 apps to clear credentials when updating
+    const emptyRegistries = bicep.match(/registries:\s*\[\s*\]/g);
+    expect(emptyRegistries?.length).toBe(3);
+
+    // 3. Workflow ARM deploy parameters must NOT pass unused ghcrServer parameter
+    expect(workflow).not.toContain("ghcrServer=ghcr.io");
+    expect(workflow).not.toContain("ghcrServer=");
+
+    // 4. Public GHCR image references remain in place
+    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller");
+    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-node-vision");
+    expect(workflow).toContain("ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr");
+
+    // 5. Build, Test, and Prod anonymous pull gates are preserved
+    expect(workflow).toContain("Verify Anonymous Pull Succeeds on All Three Public Packages (Fail-Closed)");
     expect(workflow).toContain("Verify Public Image Pulls in Test Environment (Fail-Closed)");
     expect(workflow).toContain("Verify Public Image Pulls in Production Environment (Fail-Closed)");
   });

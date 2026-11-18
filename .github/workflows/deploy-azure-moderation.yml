@@ -210,7 +210,6 @@ jobs:
           parameters: >-
             environment=test
             location=centralindia
-            ghcrServer=ghcr.io
             controllerImage=${{ needs.build-ci-and-publish.outputs.controller_image }}
             nodeVisionImage=${{ needs.build-ci-and-publish.outputs.vision_image }}
             pythonOcrImage=${{ needs.build-ci-and-publish.outputs.ocr_image }}
@@ -707,7 +706,6 @@ jobs:
           parameters: >-
             environment=prod
             location=centralindia
-            ghcrServer=ghcr.io
             controllerImage=${{ needs.build-ci-and-publish.outputs.controller_image }}
             nodeVisionImage=${{ needs.build-ci-and-publish.outputs.vision_image }}
             pythonOcrImage=${{ needs.build-ci-and-publish.outputs.ocr_image }}
