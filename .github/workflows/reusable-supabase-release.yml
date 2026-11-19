@@ -156,6 +156,7 @@ jobs:
         env:
           CANDIDATE: ${{ inputs.candidate }}
           EXPECTED_SHA: ${{ inputs.expected_candidate_sha256 }}
+          TARGET: ${{ inputs.target }}
         run: |
           node --input-type=module - <<'NODE'
           import {verifyCandidateSha, getCandidate} from './scripts/release/reusable-candidates.mjs';
