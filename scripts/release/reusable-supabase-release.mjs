@@ -259,8 +259,35 @@ export function verifyMobileCataloguePostflight(before, exec) {
   return {verified: true};
 }
 
+function verifyDisabledV3(count, exec) {
+  const raw = exec(`
+    BEGIN READ ONLY;
+    SET LOCAL statement_timeout = '15s';
+    SELECT jsonb_build_object(
+      'contracts', count(*)::integer,
+      'disabled', count(*) FILTER (
+        WHERE NOT g.enabled AND c.slug=g.slug AND p.slug=g.parent_slug
+          AND c.macro_category=coalesce(to_jsonb(g)->>'macro_category','goods') AND c.posting_flow=coalesce(to_jsonb(g)->>'posting_flow','generic')
+          AND NOT c.is_active AND NOT c.new_listing_enabled AND c.status='coming_soon'
+      )::integer
+    )::text
+    FROM app_security.ordinary_goods_contracts_v3 g
+    LEFT JOIN public.categories c ON c.id=g.category_id
+    LEFT JOIN public.categories p ON p.id=c.parent_id;
+    COMMIT;
+  `);
+  const result = JSON.parse(raw.trim());
+  if (result?.contracts !== count || result?.disabled !== count) {
+    throw new Error('REUSABLE_RELEASE_V3_DISABLED_CONTRACT_MISMATCH');
+  }
+  return result;
+}
+
 export async function verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore) {
   const candidate = getCandidate(candidateId);
+  if (candidate.unifiedPublishingV3) {
+    return verifyDisabledV3(candidate.unifiedPublishingV3.count, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+  }
   if (candidate.id === 'moderation-analytics-v1') {
     // Read-only SQL query to verify exact function attributes, empty search_path, volatility, definer/invoker, and permissions.
     // Uses standard PostgreSQL array containment: p.proconfig @> ARRAY['search_path=""']::text[]
@@ -731,7 +758,7 @@ export async function releaseReusable({
     // Tablets, Wearables and Mobile Catalogue pin the ledger: history is read before apply, must not change, and the installed
     // statements hash is carried Test -> Production through the receipts.
     const pinned = tablets || wearables || mobileCatalogue || listingValidity || taxonomy || catalogueUpdate || idvDigilocker;
-    const ordered = candidate.strict || mobileCatalogue || listingValidity || taxonomy || idvDigilocker;
+    const ordered = candidate.unifiedPublishingV3 || candidate.strict || mobileCatalogue || listingValidity || taxonomy || idvDigilocker;
     const label = idvDigilocker ? 'IDV_DIGILOCKER' : taxonomy ? 'TAXONOMY' : listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
     const foundationVersion = wearables ? '20261104120000' : '20261102165946';
     const readLedger = () => readTabletsLedger(sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
@@ -819,6 +846,10 @@ export async function releaseReusable({
       status = 'ALREADY_APPLIED_VERIFIED';
       dryRunPending = [];
     } else {
+      if (candidate.unifiedPublishingV3?.previousCount) {
+        phase = 'preflight';
+        verifyDisabledV3(candidate.unifiedPublishingV3.previousCount, sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
+      }
       // Standard path: candidate-only dry run, migration apply, ledger verification and postflight
       if (taxonomy) {
         phase = 'preflight';

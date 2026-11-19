@@ -424,7 +424,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.keys(CANDIDATES).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
+  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -3443,7 +3443,7 @@ test('IDV DigiLocker: neither a successful Test run nor a manual Production or a
   assert.match(yaml, /\n  test:\n    needs: verify\n    if: \$\{\{ needs\.verify\.result == 'success' && inputs\.target == 'test'/);
   assert.ok(yaml.includes("if: ${{ inputs.candidate == 'idv-digilocker-v1' }}"));
   // Every other candidate keeps its promotion setting.
-  assert.deepEqual(Object.values(CANDIDATES).filter(c => c.testOnly).map(c => c.id), [idv.id]);
+  assert.deepEqual(Object.values(CANDIDATES).filter(c => c.testOnly && !c.unifiedPublishingV3).map(c => c.id), [idv.id]);
   assert.deepEqual(Object.values(CANDIDATES).filter(c => c.autoPromote === true).map(c => c.id).sort(), ['listing-validity-365',
     'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation']);
 });
@@ -3529,3 +3529,34 @@ test('disposable PostgreSQL: IDV DigiLocker preflight and postflight pass on the
       'drop function public.idv_release_probe()'), pre.preserved);   // any other public/app_security change is detected
     assert.equal((await snapshot(IDV_DIGILOCKER_POSTFLIGHT, 'postflight')).preserved, pre.preserved);
   });
+
+test('V3 candidates are digest-pinned, Test-only and ordered against the full preceding V3 chain', async () => {
+  const expected = [
+    '20261119092042', '20261119100640', '20261119102359', '20261119103516',
+    '20261119105021', '20261119111559', '20261119114512',
+  ];
+  const v3 = Object.values(CANDIDATES).filter(candidate => candidate.unifiedPublishingV3);
+  assert.deepEqual(v3.map(candidate => candidate.version), expected);
+  const {assertLedgerOrdering} = await import('../../scripts/release/accessories-v1-release.mjs');
+  const {verifyRemotePostflight} = await import('../../scripts/release/reusable-supabase-release.mjs');
+  for (const [index, candidate] of v3.entries()) {
+    assert.equal(verifyCandidateSha(candidate.id).sha256, candidate.sha256);
+    assert.equal(candidate.autoPromote, false);
+    assert.deepEqual(candidate.requiredLedgerVersions, ['20261118092010', ...expected.slice(0, index)]);
+    assert.throws(() => planDispatch({candidateId: candidate.id, target: 'production'}), /TEST_ONLY_CANDIDATE/);
+    assert.equal(planDispatch({candidateId: candidate.id, target: 'test'}).candidate, candidate);
+    const header = 'Local | Remote | Time (UTC)';
+    const rows = candidate.requiredLedgerVersions.map(version => `${version} | ${version} |`);
+    const ledger = [header, ...rows].join('\n');
+    assert.equal(assertLedgerOrdering(candidate, ledger).state, 'absent');
+    assert.throws(() => assertLedgerOrdering(candidate, [header, ...rows.slice(1)].join('\n')), /PREREQUISITE_MIGRATION_MISSING/);
+    const count = candidate.unifiedPublishingV3.count;
+    const counts = {contracts: count, disabled: count};
+    assert.deepEqual(await verifyRemotePostflight('FairSwapTest', candidate.id, 'url', {}, (_, args) => {
+      assert.match(args.at(-1), /BEGIN READ ONLY/);
+      return JSON.stringify(counts);
+    }), counts);
+    await assert.rejects(verifyRemotePostflight('FairSwapTest', candidate.id, 'url', {},
+      () => JSON.stringify({...counts, disabled: count - 1})), /V3_DISABLED_CONTRACT_MISMATCH/);
+  }
+});
