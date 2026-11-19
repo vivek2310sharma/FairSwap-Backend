@@ -8,6 +8,9 @@ export const MOBILE_CATALOGUE_CANDIDATE = 'mobile-catalogue-india-v1';
 export const LISTING_VALIDITY_CANDIDATE = 'listing-validity-365';
 
 // These candidates prepare schema in Test. Production needs independently reviewed identity parity.
+export const V3_PRODUCTION_BATCH = 'v3-production-disabled-batch';
+export const V3_IDENTITY_PREREQUISITE = 'v3-production-identity-prerequisite';
+
 export const V3_TEST_DIAGNOSTIC_LEDGER = Object.freeze({
   version: '20261119113557',
   name: '20261119120000_idv_digilocker_oidc_diag_test_only',
@@ -36,7 +39,19 @@ const unifiedPublishingV3 = Object.fromEntries(v3Candidates.map(([version, name,
   })];
 }));
 
+export const V3_PRODUCTION_SEQUENCE = Object.freeze([V3_IDENTITY_PREREQUISITE, ...Object.keys(unifiedPublishingV3)]);
+
 export const CANDIDATES = Object.freeze({
+  [V3_IDENTITY_PREREQUISITE]: Object.freeze({
+    id: V3_IDENTITY_PREREQUISITE, version: '20261119090000',
+    filename: '20261119090000_v3_production_identity_prerequisite.sql',
+    path: 'supabase/forward-migrations/unified-publishing-v3/supabase/migrations/20261119090000_v3_production_identity_prerequisite.sql',
+    sha256: '46d60c13a156b8031650d1ee0a89b68a1c7c9fba9e68b515eea1eb1ae226ce0b',
+    description: 'Production seller identity prerequisite with enforcement off',
+    requiredLedgerVersions: Object.freeze(['20261118092010']),
+    productionBatchOnly: true,
+    autoPromote: false,
+  }),
   ...unifiedPublishingV3,
   // Dark launch. The environment-specific foundation prerequisite and the reviewed out-of-order Taxonomy V2 tail are
   // enforced by idv-digilocker-v1-release.mjs before any dry run; identity_verification_required must stay 'false'.
@@ -396,6 +411,7 @@ function need(ok, code) {
 export function planDispatch({candidateId, target = 'test', inputs = {}, context = {}}) {
   const candidate = getCandidate(candidateId);
   need(target === 'test' || target === 'production' || target === 'adopt', 'INVALID_TARGET');
+  need(!candidate.productionBatchOnly, 'V3_PRODUCTION_BATCH_REQUIRED');
   need(!candidate.testOnly || target === 'test', 'TEST_ONLY_CANDIDATE');
   const waiver = WEARABLES_E2E_WAIVER;
   const waiveE2e = inputs.test_e2e_run_id === waiver.input;
