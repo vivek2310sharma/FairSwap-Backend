@@ -23,8 +23,7 @@ export type DigiLockerErrorCode =
   | "PROVIDER_REJECTED"
   | "SCOPE_MISSING"
   | "INVALID_PROVIDER_RESPONSE"
-  | "ID_TOKEN_INVALID"
-  | "ASSURANCE_NOT_PROVEN";
+  | "ID_TOKEN_INVALID";
 
 export class DigiLockerError extends Error {
   constructor(public readonly code: DigiLockerErrorCode) {

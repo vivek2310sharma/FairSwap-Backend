@@ -1,9 +1,9 @@
 import { resolveProjectRef } from "./idv-config.ts";
 import type { DigiLockerClientConfig } from "./digilocker-client.ts";
-import { OIDC_ALLOWED_PROJECT_REF, type OidcConfig } from "./digilocker-oidc.ts";
 
-// Stage and Production are isolated by Supabase project ref: each ref accepts only its own registered callback.
-// Credentials are separate per environment (never shared); the API Setu "Stage" tag is not assumed to be a sandbox.
+// Test and Production are isolated by the validated Supabase project ref: each ref accepts only its own registered
+// callback, and credentials/keys are configured separately per project (never shared). The environment is derived from
+// the project ref; there is no separate environment switch and no legacy fallback.
 export const DIGILOCKER_REDIRECT_BY_PROJECT: Record<string, string> = {
   wpppxlnbzqynvhpeuavd: "https://fairswap-web-git-staging-fairswap.vercel.app/api/idv/digilocker/callback",
   kriuhwppxgxsyyrbjsau: "https://fairswap.in/api/idv/digilocker/callback",
@@ -26,13 +26,14 @@ export interface DigiLockerRuntime {
   currentFpKey: FingerprintKey;
   /** All older fingerprint keys still configured, used only to match existing bindings and fraud blocks. */
   legacyFpKeys: FingerprintKey[];
-  /** false (default): the digilockerid comes from the server-to-server token response only.
-   *  true: additionally requires /oauth2/1/user to return the same id (only once userdetails is approved). */
-  requireUserDetails: boolean;
-  /** null = legacy v1 flow (unchanged, the only mode outside FairSwapTest). Set only when DIGILOCKER_AUTH_MODE=oidc_v2
-   *  on the Test project: signed ID token + acr=aadhaar evidence is then mandatory for any badge. */
-  oidc: OidcConfig | null;
+  /** Environment derived from the validated project ref. */
+  environment: "test" | "production";
 }
+
+export const DIGILOCKER_ENVIRONMENT_BY_PROJECT: Record<string, "test" | "production"> = {
+  wpppxlnbzqynvhpeuavd: "test",
+  kriuhwppxgxsyyrbjsau: "production",
+};
 
 /** Collects IDV_DIGILOCKER_FP_KEY_V<n> keys. Returns null if any configured key is too short or the current one is missing. */
 export function readFingerprintKeyring(
@@ -55,41 +56,33 @@ export function readFingerprintKeyring(
   return { current, legacy };
 }
 
-/** Returns null (feature closed) unless the flag is ON and every credential is valid for this environment. Never throws. */
+/** Returns null (feature closed) unless the flag is ON, DIGILOCKER_AUTH_MODE is exactly `oidc_v2`, and every credential is
+ *  valid for this environment. Signed OIDC is the only mode: unsigned legacy account linking can never be selected. Never throws. */
 export function readDigiLockerRuntime(env: Record<string, string | undefined>): DigiLockerRuntime | null {
   if ((env["FAIRSWAP_DIGILOCKER_ENABLED"] ?? "false").toLowerCase() !== "true") return null;
+  if ((env["DIGILOCKER_AUTH_MODE"] ?? "").trim().toLowerCase() !== "oidc_v2") return null;
   let projectRef: string;
   try {
     projectRef = resolveProjectRef(env).projectRef;
   } catch {
     return null;
   }
+  const environment = DIGILOCKER_ENVIRONMENT_BY_PROJECT[projectRef];
   const expectedRedirect = DIGILOCKER_REDIRECT_BY_PROJECT[projectRef];
   const redirectUri = (env["DIGILOCKER_REDIRECT_URI"] ?? "").trim();
   const clientId = (env["DIGILOCKER_CLIENT_ID"] ?? "").trim();
   const clientSecret = (env["DIGILOCKER_CLIENT_SECRET"] ?? "").trim();
   const stateKey = (env["IDV_DIGILOCKER_STATE_KEY"] ?? "").trim();
-  if (!expectedRedirect || redirectUri !== expectedRedirect) return null; // exact registered URI only
+  if (!environment || !expectedRedirect || redirectUri !== expectedRedirect) return null; // exact registered URI only
   if (!clientId || !clientSecret || stateKey.length < MIN_KEY_LENGTH) return null;
-  const mode = (env["DIGILOCKER_AUTH_MODE"] ?? "legacy").trim().toLowerCase();
-  if (mode !== "legacy" && mode !== "oidc_v2") return null;
-  if (mode === "oidc_v2" && projectRef !== OIDC_ALLOWED_PROJECT_REF) return null; // never Production
   const ring = readFingerprintKeyring(env);
   if (!ring) return null;
   if ([ring.current, ...ring.legacy].some((k) => k.key === stateKey)) return null; // keys must be independent
   return {
-    client: {
-      clientId,
-      clientSecret,
-      redirectUri,
-      requestOpenidScope: (env["DIGILOCKER_REQUEST_OPENID_SCOPE"] ?? "false").toLowerCase() === "true",
-    },
+    client: { clientId, clientSecret, redirectUri },
     stateKey,
     currentFpKey: ring.current,
     legacyFpKeys: ring.legacy,
-    requireUserDetails: (env["DIGILOCKER_USERDETAILS_APPROVED"] ?? "false").toLowerCase() === "true",
-    oidc: mode === "oidc_v2"
-      ? { acrSemanticsConfirmed: (env["DIGILOCKER_ACR_SEMANTICS_CONFIRMED"] ?? "false").toLowerCase() === "true" }
-      : null,
+    environment,
   };
 }

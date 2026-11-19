@@ -8,6 +8,9 @@ export const MOBILE_CATALOGUE_CANDIDATE = 'mobile-catalogue-india-v1';
 export const LISTING_VALIDITY_CANDIDATE = 'listing-validity-365';
 
 // These candidates prepare schema in Test. Production needs independently reviewed identity parity.
+export const V3_PRODUCTION_BATCH = 'v3-production-disabled-batch';
+export const V3_IDENTITY_PREREQUISITE = 'v3-production-identity-prerequisite';
+
 export const V3_TEST_DIAGNOSTIC_LEDGER = Object.freeze({
   version: '20261119113557',
   name: '20261119120000_idv_digilocker_oidc_diag_test_only',
@@ -17,7 +20,7 @@ const v3Candidates = [
   ['20261119092042', 'ordinary_goods_v3', '9ed7c84d2f61ea8e10e0f20be50e9018a29fab734f06a2557da97a692d89bfd8', 35],
   ['20261119100640', 'bounded_goods_v3', 'd28c193776967d2932ea6ac2a50304597ae1656b99495b1427eb585fff42d0eb', 45],
   ['20261119102359', 'pedal_and_parts_v3', 'f032809af2c4a55f90f9d36188a4bdb3d28540d0ef377877342d5b9155e22f59', 48],
-  ['20261119103516', 'property_intake_v3', 'b3f3cd8490a186a9917819472fa9b02efd008bc0b7bc5ce1bfadda92aebe4a18', 54],
+  ['20261119103516', 'property_intake_v3', '1a4066fa74be527eb29daa0e85d898b81437326c2058363bf3ea7e4f5c324e17', 54],
   ['20261119105021', 'regulated_vehicle_drafts_v3', 'c093718c2801c5f2a9627b3dd6e7ad541b424f48a29af9357d2b74f14ade0e7a', 56],
   ['20261119111559', 'specialist_vehicle_draft_binding_v3', 'af7e20061bc7931bcb3ab75a3fc6a3f0d6da52477531182caa6dacc7d5cd70e0', 58],
   ['20261119114512', 'v3_require_active_seller_identity', '7dfed56d46bb3941dad5b39a9725c64a5dda04cedd64e1908f918b96da90c77f', 58],
@@ -36,19 +39,42 @@ const unifiedPublishingV3 = Object.fromEntries(v3Candidates.map(([version, name,
   })];
 }));
 
+export const V3_PRODUCTION_SEQUENCE = Object.freeze([V3_IDENTITY_PREREQUISITE, ...Object.keys(unifiedPublishingV3)]);
+
 export const CANDIDATES = Object.freeze({
+  [V3_IDENTITY_PREREQUISITE]: Object.freeze({
+    id: V3_IDENTITY_PREREQUISITE, version: '20261119090000',
+    filename: '20261119090000_v3_production_identity_prerequisite.sql',
+    path: 'supabase/forward-migrations/unified-publishing-v3/supabase/migrations/20261119090000_v3_production_identity_prerequisite.sql',
+    sha256: '46d60c13a156b8031650d1ee0a89b68a1c7c9fba9e68b515eea1eb1ae226ce0b',
+    description: 'Production seller identity prerequisite with enforcement off',
+    requiredLedgerVersions: Object.freeze(['20261118092010']),
+    productionBatchOnly: true,
+    autoPromote: false,
+  }),
   ...unifiedPublishingV3,
   // Dark launch. The environment-specific foundation prerequisite and the reviewed out-of-order Taxonomy V2 tail are
   // enforced by idv-digilocker-v1-release.mjs before any dry run; identity_verification_required must stay 'false'.
+  // FairSwapTest already records this version, so its Test stage is a read-only attestation whose ledger digest the
+  // automatic Production install must reproduce. Bytes and version are unchanged.
   'idv-digilocker-v1': Object.freeze({
     id: 'idv-digilocker-v1', version: '20261117090000',
     filename: '20261117090000_idv_digilocker_direct_v1.sql',
     path: 'supabase/forward-migrations/idv/20261117090000_idv_digilocker_direct_v1.sql',
     sha256: 'c51fbc4f24d6085d3c1b022d2fea114e59b911c2aea772f125b4e798f304b62d',
     description: 'IDV DigiLocker V1 direct account linking; dark (identity gate OFF, no Edge deployment)',
-    // Staging/Test only until the owner completes manual Stage testing: never promoted or dispatched to Production.
-    autoPromote: false,
-    testOnly: true
+    autoPromote: true
+  }),
+  // Signed DigiLocker OIDC badge provenance. Requires V1 in the same environment; Production fails closed until the V1
+  // Production install is recorded. identity_verification_required is never changed.
+  'idv-digilocker-oidc-v2': Object.freeze({
+    id: 'idv-digilocker-oidc-v2', version: '20261119200000',
+    filename: '20261119200000_idv_digilocker_oidc_v2_badge.sql',
+    path: 'supabase/forward-migrations/idv/20261119200000_idv_digilocker_oidc_v2_badge.sql',
+    sha256: '757643cc6c58d8d0064b2783505b5219d2ec6b8533d76d5ae7f25232b9147692',
+    description: 'IDV DigiLocker OIDC v2 badge provenance; legacy unsigned linking disabled (identity gate OFF, no Edge deployment)',
+    requiredLedgerVersions: Object.freeze(['20261117090000']),
+    autoPromote: true
   }),
   'taxonomy-v2-catalogue': Object.freeze({
     id: 'taxonomy-v2-catalogue', version: '20261118092010',
@@ -396,6 +422,7 @@ function need(ok, code) {
 export function planDispatch({candidateId, target = 'test', inputs = {}, context = {}}) {
   const candidate = getCandidate(candidateId);
   need(target === 'test' || target === 'production' || target === 'adopt', 'INVALID_TARGET');
+  need(!candidate.productionBatchOnly, 'V3_PRODUCTION_BATCH_REQUIRED');
   need(!candidate.testOnly || target === 'test', 'TEST_ONLY_CANDIDATE');
   const waiver = WEARABLES_E2E_WAIVER;
   const waiveE2e = inputs.test_e2e_run_id === waiver.input;

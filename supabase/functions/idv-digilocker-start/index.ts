@@ -2,7 +2,7 @@ import { z } from "zod";
 import { readDigiLockerRuntime, APPROVED_DIGILOCKER_POLICY_VERSION } from "../_shared/idv/digilocker-config.ts";
 import { defaultDeps, type IdvDeps } from "../_shared/idv/digilocker-deps.ts";
 import { deriveOidcNonce, buildOidcAuthorizeUrl } from "../_shared/idv/digilocker-oidc.ts";
-import { buildAuthorizeUrl, derivePkceVerifier, generateState, sha256Hex } from "../_shared/idv/digilocker-client.ts";
+import { derivePkceVerifier, generateState, sha256Hex } from "../_shared/idv/digilocker-client.ts";
 
 declare const Deno: {
   env: { toObject(): Record<string, string | undefined> };
@@ -60,9 +60,8 @@ export async function handleDigiLockerStart(
   }
 
   const verifier = await derivePkceVerifier(runtime.stateKey, state);
-  const redirectUrl = runtime.oidc
-    ? await buildOidcAuthorizeUrl(runtime.client, state, verifier, await deriveOidcNonce(runtime.stateKey, state))
-    : await buildAuthorizeUrl(runtime.client, state, verifier);
+  // Signed OIDC is the only flow; the nonce is bound to the single-use state and verified in the ID token.
+  const redirectUrl = await buildOidcAuthorizeUrl(runtime.client, state, verifier, await deriveOidcNonce(runtime.stateKey, state));
   return json(200, { success: true, alreadyVerified: false, redirectUrl });
 }
 
