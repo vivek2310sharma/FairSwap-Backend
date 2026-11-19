@@ -19,7 +19,8 @@ export const diagPayloadSchema = z.discriminatedUnion("action", [
     action: z.literal("complete"),
     state: z.string().regex(/^[0-9a-f]{64}$/),
     code: z.string().min(1).max(2048).optional(),
-    error: z.literal("denied").optional(),
+    // Standard OAuth error code relayed by the Web callback after sanitization (never free text).
+    error: z.string().regex(/^[a-z_]{1,24}$/).optional(),
   }).strict(),
 ]);
 
@@ -84,7 +85,13 @@ export async function handleDigiLockerDiagnostic(
 
   const endpoints = { authorize: rt.authorizeVersion, token: "2" as const };
   const result = (r: DiagResult) => json(200, { success: true, result: r });
-  if (providerError || !code) return result({ outcome: "CANCELLED", code: "CONSENT_DENIED", endpoints, checks: null });
+  if (providerError || !code) {
+    // access_denied (and the legacy "denied") is a user cancellation. Any other provider error is reported as its own
+    // sanitized code, so a KYC-required or provider-side failure is never mislabelled as a consent denial.
+    return providerError && providerError !== "denied" && providerError !== "access_denied"
+      ? result({ outcome: "FAILED", code: `PROVIDER_ERR_${providerError.toUpperCase()}`, endpoints, checks: null, claimNames: null })
+      : result({ outcome: "CANCELLED", code: "CONSENT_DENIED", endpoints, checks: null, claimNames: null });
+  }
 
   let accessToken: string | null = null;
   try {
@@ -94,7 +101,7 @@ export async function handleDigiLockerDiagnostic(
     return result(r);
   } catch (e) {
     const code2 = e instanceof DigiLockerError ? e.code : "PROVIDER_UNAVAILABLE";
-    return result({ outcome: "FAILED", code: code2, endpoints, checks: null });
+    return result({ outcome: "FAILED", code: code2, endpoints, checks: null, claimNames: null });
   } finally {
     if (accessToken) {
       await revokeToken({ clientId: rt.clientId, clientSecret: rt.clientSecret, redirectUri: rt.redirectUri }, accessToken, fetchImpl);
