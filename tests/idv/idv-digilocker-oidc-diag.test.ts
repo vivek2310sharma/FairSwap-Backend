@@ -167,11 +167,13 @@ describe("DigiLocker OIDC v2 Stage diagnostic", () => {
     const p = provider({ idToken: await signJwt(await goodClaims(state)) });
     const r = await complete(w, p.f, state);
     expect(r.status).toBe(200);
-    expect(r.body.result).toEqual({
+    const { raw, ...verdict } = r.body.result;
+    expect(verdict).toEqual({
       outcome: "VERIFIED", code: null, endpoints: { authorize: "1", token: "2" },
       checks: { signature: "verified", issuer: "verified", audience: true, expiry: true, subject: true, issuedAt: true, nonce: "match", acr: "aadhaar" },
       claimNames: ["aadhaar", "acr", "aud", "exp", "iat", "iss", "nonce", "pan", "sub"],
     });
+    expect(raw.expected).toEqual({ issuer: ISSUER, audience: CLIENT, nonce: await deriveDiagNonce(KEY, state), checkedAtEpoch: NOW / 1000 });
     const tok = p.log.find((l) => l.url === `${DIGILOCKER_HOST}${DIAG_TOKEN_PATH}`)!;
     const sent = new URLSearchParams(tok.body);
     expect(sent.get("redirect_uri")).toBe(STAGE_REDIRECT);
@@ -179,17 +181,58 @@ describe("DigiLocker OIDC v2 Stage diagnostic", () => {
     expect(p.log.some((l) => l.url.endsWith("/oauth2/1/revoke"))).toBe(true); // access token revoked, never kept
   });
 
-  it("never leaks tokens, codes, provider ids, Aadhaar, PAN or raw claims, and issues no badge", async () => {
+  it("returns the unredacted token response to the tester, but never FairSwap secrets, and issues no badge", async () => {
     const w = makeWorld();
     const { state } = await start(w);
     const idToken = await signJwt(await goodClaims(state));
     const r = await complete(w, provider({ idToken }).f, state, { code: "secret-auth-code" });
-    for (const s of ["tok-secret", "secret-auth-code", idToken, "999999990019", "ABCDE1234F", "provider-subject-not-returned", "123e4567", ISSUER]) {
-      expect(r.text).not.toContain(s);
-    }
+    expect(r.body.result.raw.providerCallback).toBeNull();
+    expect(r.body.result.raw.tokenResponse).toEqual({
+      httpStatus: 200, contentType: "text/plain;charset=UTF-8", text: null,
+      json: { access_token: "tok-secret", token_type: "Bearer", digilockerid: "123e4567-e89b-12d3-a456-426655440000", id_token: idToken },
+    });
+    for (const secret of ["stage-secret-value", KEY, "service", "secret-auth-code"]) expect(r.text).not.toContain(secret);
     expect(r.body).not.toHaveProperty("verified");
     for (const n of NO_BADGE_RPCS) expect(w.calls).not.toContain(n);
     expect(w.calls).toEqual(["server_idv_dl_diag_start", "server_idv_dl_diag_consume"]);
+  });
+
+  it("preserves null, empty-string and absent fields exactly as the provider sent them", async () => {
+    const w = makeWorld();
+    const { state } = await start(w);
+    const idToken = await signJwt(await goodClaims(state));
+    const f = vi.fn(async (url: string) => url.endsWith(DIAG_TOKEN_PATH)
+      ? new Response(`{"access_token":"a","refresh_token":"r","id_token":"${idToken}","eaadhaar":null,"name":"","dob":"01011990","extra":{"k":[1,null]}}`, { status: 200 })
+      : url === JWKS_URL ? new Response(JSON.stringify({ keys: [{ ...pubJwk, kid: "k1", use: "sig" }] })) : new Response("{}"));
+    const r = await complete(w, f as unknown as typeof fetch, state);
+    const j = r.body.result.raw.tokenResponse.json;
+    expect(j).toMatchObject({ refresh_token: "r", eaadhaar: null, name: "", dob: "01011990", extra: { k: [1, null] } });
+    expect(Object.keys(j)).not.toContain("digilockerid"); // absent stays absent
+  });
+
+  it("provider token errors return the original status and body (JSON or not); the client secret is never echoed", async () => {
+    let w = makeWorld();
+    let s = (await start(w)).state;
+    const mk = (status: number, body: string) => vi.fn(async (url: string) => url.endsWith(DIAG_TOKEN_PATH) ? new Response(body, { status }) : new Response("{}")) as unknown as typeof fetch;
+    let r = await complete(w, mk(400, '{"error":"invalid_grant","error_description":"Code expired"}'), s);
+    expect(r.body.result).toMatchObject({ outcome: "FAILED", code: "PROVIDER_REJECTED" });
+    expect(r.body.result.raw.tokenResponse).toMatchObject({ httpStatus: 400, json: { error: "invalid_grant", error_description: "Code expired" }, text: null });
+    w = makeWorld(); s = (await start(w)).state;
+    r = await complete(w, mk(502, "<html>bad gateway</html>"), s);
+    expect(r.body.result).toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    expect(r.body.result.raw.tokenResponse).toMatchObject({ httpStatus: 502, json: null, text: "<html>bad gateway</html>" });
+    w = makeWorld(); s = (await start(w)).state;
+    r = await complete(w, mk(200, '{"access_token":"a"}'), s); // 200 without id_token
+    expect(r.body.result).toMatchObject({ code: "INVALID_PROVIDER_RESPONSE" });
+    expect(r.body.result.raw.tokenResponse.json).toEqual({ access_token: "a" });
+  });
+
+  it("relays the provider callback error and description verbatim; non-cancellation codes stay FAILED", async () => {
+    const w = makeWorld();
+    const { state } = await start(w);
+    const r = await complete(w, provider().f, state, { error: "invalid_request", error_description: "Aadhaar KYC <required>" });
+    expect(r.body.result).toMatchObject({ outcome: "FAILED", code: "PROVIDER_ERR_INVALID_REQUEST" });
+    expect(r.body.result.raw).toEqual({ providerCallback: { error: "invalid_request", error_description: "Aadhaar KYC <required>" }, tokenResponse: null, expected: null });
   });
 
   it("unsuccessful assurance: acr other than aadhaar is NOT_VERIFIED", async () => {
