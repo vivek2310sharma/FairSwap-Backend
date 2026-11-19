@@ -1,0 +1,277 @@
+// FairSwap DigiLocker OIDC v2 STAGE-ONLY DIAGNOSTIC. Not production identity verification.
+// It answers one question for an allowlisted tester: does the provider prove Aadhaar-verified assurance (acr=aadhaar)
+// in a signature-verified ID token? It never links accounts, never issues a badge, never stores tokens, codes,
+// provider identifiers or raw provider responses. Only the sanitized flags in DiagResult leave this module.
+//
+// Endpoint discrepancy (resolved conservatively):
+//   MeriPehchaan v2.4 (the provider's own specification): authorize /public/oauth2/1/authorize, OIDC token /public/oauth2/2/token.
+//   API Setu generator: /public/oauth2/2/authorize and /public/oauth2/2/token.
+// Default follows the specification (authorize v1). DIGILOCKER_DIAG_AUTHORIZE_VERSION=2 is the only allowed override, so
+// the owner can compare both. The token endpoint is always v2 (both sources agree). The result reports which was used.
+import { DIGILOCKER_HOST, DIGILOCKER_PURPOSE, DIGILOCKER_SERVICE_NAME, DigiLockerError, pkceChallenge } from "./digilocker-client.ts";
+import { DIGILOCKER_REDIRECT_BY_PROJECT } from "./digilocker-config.ts";
+import { resolveProjectRef } from "./idv-config.ts";
+
+/** Hard lock: FairSwapTest only. There is no Production entry and no override. */
+export const DIAG_ALLOWED_PROJECT_REF = "wpppxlnbzqynvhpeuavd";
+export const DIAG_STATE_TTL_SECONDS = 300;
+export const DIAG_ACR = "aadhaar";
+export const DIAG_TOKEN_PATH = "/public/oauth2/2/token";
+const MIN_KEY_LENGTH = 32;
+const MAX_TESTERS = 5;
+const TIMEOUT_MS = 8000;
+const CLOCK_SKEW_S = 60;
+const MAX_JWKS_BYTES = 64 * 1024;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type AuthorizeVersion = "1" | "2";
+
+export interface DiagRuntime {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  stateKey: string;
+  authorizeVersion: AuthorizeVersion;
+  testerIds: ReadonlySet<string>;
+  /** Provider JWKS URL on the DigiLocker host. Absent: signatures cannot be verified, so the result is UNCONFIRMED. */
+  jwksUrl: string | null;
+  /** Documented issuer. Absent: issuer cannot be confirmed, so the result is UNCONFIRMED. */
+  expectedIssuer: string | null;
+}
+
+function onDigiLockerHost(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return u.protocol === "https:" && u.origin === DIGILOCKER_HOST && !u.username && !u.password;
+  } catch {
+    return false;
+  }
+}
+
+/** Returns null (diagnostic closed, endpoint behaves as absent) unless every guard holds. Never throws. */
+export function readDiagRuntime(env: Record<string, string | undefined>): DiagRuntime | null {
+  if ((env["FAIRSWAP_DIGILOCKER_DIAG_ENABLED"] ?? "false").toLowerCase() !== "true") return null;
+  let projectRef: string;
+  try {
+    projectRef = resolveProjectRef(env).projectRef;
+  } catch {
+    return null;
+  }
+  if (projectRef !== DIAG_ALLOWED_PROJECT_REF) return null;
+
+  const redirectUri = (env["DIGILOCKER_REDIRECT_URI"] ?? "").trim();
+  if (redirectUri !== DIGILOCKER_REDIRECT_BY_PROJECT[projectRef]) return null; // existing registered Stage URI only
+  const clientId = (env["DIGILOCKER_CLIENT_ID"] ?? "").trim();
+  const clientSecret = (env["DIGILOCKER_CLIENT_SECRET"] ?? "").trim();
+  const stateKey = (env["IDV_DIGILOCKER_STATE_KEY"] ?? "").trim();
+  if (!clientId || !clientSecret || stateKey.length < MIN_KEY_LENGTH) return null;
+
+  const testers = (env["DIGILOCKER_DIAG_TESTER_IDS"] ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (testers.length === 0 || testers.length > MAX_TESTERS || !testers.every((t) => UUID.test(t))) return null;
+
+  const av = (env["DIGILOCKER_DIAG_AUTHORIZE_VERSION"] ?? "1").trim();
+  if (av !== "1" && av !== "2") return null;
+
+  const jwks = (env["DIGILOCKER_DIAG_JWKS_URL"] ?? "").trim();
+  const iss = (env["DIGILOCKER_DIAG_EXPECTED_ISSUER"] ?? "").trim();
+  if (jwks && !onDigiLockerHost(jwks)) return null; // keys only from the provider host
+  if (iss && !onDigiLockerHost(iss)) return null;
+
+  return {
+    clientId, clientSecret, redirectUri, stateKey,
+    authorizeVersion: av,
+    testerIds: new Set(testers),
+    jwksUrl: jwks || null,
+    expectedIssuer: iss || null,
+  };
+}
+
+const enc = new TextEncoder();
+const b64url = (buf: ArrayBuffer) =>
+  btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+async function hmacB64(key: string, message: string): Promise<string> {
+  const k = await crypto.subtle.importKey("raw", enc.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return b64url(await crypto.subtle.sign("HMAC", k, enc.encode(message)));
+}
+
+/** Domain-separated from v1 (fs:dl:pkce:v1), so a v1 state can never derive a diagnostic verifier or vice versa. */
+export const deriveDiagPkceVerifier = (key: string, state: string) => hmacB64(key, `fs:dl:diag:pkce:v1:${state}`);
+export const deriveDiagNonce = (key: string, state: string) => hmacB64(key, `fs:dl:diag:nonce:v1:${state}`);
+
+export async function buildDiagAuthorizeUrl(rt: DiagRuntime, state: string): Promise<string> {
+  const u = new URL(`${DIGILOCKER_HOST}/public/oauth2/${rt.authorizeVersion}/authorize`);
+  u.searchParams.set("response_type", "code");
+  u.searchParams.set("client_id", rt.clientId);
+  u.searchParams.set("redirect_uri", rt.redirectUri);
+  u.searchParams.set("state", state);
+  u.searchParams.set("code_challenge", await pkceChallenge(await deriveDiagPkceVerifier(rt.stateKey, state)));
+  u.searchParams.set("code_challenge_method", "S256");
+  u.searchParams.set("scope", "openid");
+  u.searchParams.set("acr", DIAG_ACR);
+  u.searchParams.set("dl_flow", "signin");
+  u.searchParams.set("nonce", await deriveDiagNonce(rt.stateKey, state));
+  u.searchParams.set("purpose", DIGILOCKER_PURPOSE);
+  u.searchParams.set("service_name", DIGILOCKER_SERVICE_NAME);
+  return u.toString();
+}
+
+async function call(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    return await fetchImpl(url, { ...init, signal: ctrl.signal, redirect: "error" });
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw new DigiLockerError("PROVIDER_TIMEOUT");
+    throw new DigiLockerError("PROVIDER_UNAVAILABLE");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readObject(res: Response): Promise<Record<string, unknown>> {
+  if (res.status >= 500) throw new DigiLockerError("PROVIDER_UNAVAILABLE");
+  if (!res.ok) throw new DigiLockerError("PROVIDER_REJECTED");
+  try {
+    const j = await res.json();
+    if (j && typeof j === "object" && !Array.isArray(j)) return j as Record<string, unknown>;
+  } catch { /* fall through */ }
+  throw new DigiLockerError("INVALID_PROVIDER_RESPONSE");
+}
+
+export interface DiagExchange { idToken: string; accessToken: string | null }
+
+/** Server-side OIDC code exchange with the exact registered redirect URI and the PKCE verifier. */
+export async function exchangeDiagCode(rt: DiagRuntime, code: string, state: string, fetchImpl: typeof fetch = fetch): Promise<DiagExchange> {
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    client_id: rt.clientId,
+    client_secret: rt.clientSecret,
+    redirect_uri: rt.redirectUri,
+    code_verifier: await deriveDiagPkceVerifier(rt.stateKey, state),
+  });
+  const res = await call(fetchImpl, `${DIGILOCKER_HOST}${DIAG_TOKEN_PATH}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: body.toString(),
+  });
+  const j = await readObject(res);
+  const idToken = j["id_token"];
+  const at = j["access_token"];
+  if (typeof idToken !== "string" || idToken.length === 0 || idToken.length > 16384) {
+    throw new DigiLockerError("INVALID_PROVIDER_RESPONSE");
+  }
+  return { idToken, accessToken: typeof at === "string" && at.length > 0 ? at : null };
+}
+
+// ---- ID token validation. Every output is a fixed enum/boolean; no claim value other than these is ever returned. ----
+
+export type Tri = "verified" | "unconfirmed" | "failed";
+export interface DiagChecks {
+  signature: Tri;
+  issuer: Tri;
+  audience: boolean;
+  expiry: boolean;
+  nonce: "match" | "absent" | "mismatch";
+  acr: "aadhaar" | "missing" | "other";
+}
+export type DiagOutcome = "VERIFIED" | "UNCONFIRMED" | "NOT_VERIFIED" | "CANCELLED" | "FAILED";
+export interface DiagResult {
+  outcome: DiagOutcome;
+  code: string | null;
+  endpoints: { authorize: AuthorizeVersion; token: "2" };
+  checks: DiagChecks | null;
+}
+
+function decodeSegment(seg: string): Record<string, unknown> | null {
+  if (!/^[A-Za-z0-9_-]+$/.test(seg)) return null;
+  try {
+    const bin = atob(seg.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((seg.length + 3) % 4));
+    const j = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
+    return j && typeof j === "object" && !Array.isArray(j) ? (j as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function b64urlToBytes(seg: string): Uint8Array<ArrayBuffer> | null {
+  if (!/^[A-Za-z0-9_-]+$/.test(seg)) return null;
+  try {
+    const bin = atob(seg.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((seg.length + 3) % 4));
+    return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+async function verifySignature(
+  rt: DiagRuntime, header: Record<string, unknown>, signingInput: string, sig: string, fetchImpl: typeof fetch,
+): Promise<Tri> {
+  const alg = header["alg"];
+  if (typeof alg !== "string" || alg === "none" || alg.startsWith("HS")) return "failed"; // never accept unsigned/symmetric
+  if (alg !== "RS256" || !rt.jwksUrl) return "unconfirmed";
+  let keys: unknown;
+  try {
+    const res = await call(fetchImpl, rt.jwksUrl, { method: "GET", headers: { Accept: "application/json" } });
+    if (!res.ok) return "unconfirmed";
+    const text = await res.text();
+    if (text.length > MAX_JWKS_BYTES) return "unconfirmed";
+    keys = (JSON.parse(text) as { keys?: unknown }).keys;
+  } catch {
+    return "unconfirmed";
+  }
+  if (!Array.isArray(keys)) return "unconfirmed";
+  const kid = typeof header["kid"] === "string" ? header["kid"] : null;
+  const candidates = keys.filter((k): k is Record<string, unknown> =>
+    !!k && typeof k === "object" && (k as Record<string, unknown>)["kty"] === "RSA" &&
+    ((k as Record<string, unknown>)["use"] ?? "sig") === "sig" &&
+    (kid === null || (k as Record<string, unknown>)["kid"] === kid));
+  if (candidates.length === 0 || (kid === null && candidates.length !== 1)) return "unconfirmed";
+  const sigBytes = b64urlToBytes(sig);
+  if (!sigBytes) return "failed";
+  try {
+    const { n, e } = candidates[0] as { n?: unknown; e?: unknown };
+    if (typeof n !== "string" || typeof e !== "string") return "unconfirmed";
+    const key = await crypto.subtle.importKey(
+      "jwk", { kty: "RSA", n, e, alg: "RS256", ext: true }, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"],
+    );
+    return (await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, sigBytes, enc.encode(signingInput))) ? "verified" : "failed";
+  } catch {
+    return "unconfirmed";
+  }
+}
+
+export async function evaluateIdToken(
+  rt: DiagRuntime, idToken: string, expectedNonce: string, nowSeconds: number, fetchImpl: typeof fetch = fetch,
+): Promise<DiagResult> {
+  const endpoints = { authorize: rt.authorizeVersion, token: "2" as const };
+  const parts = idToken.split(".");
+  const header = parts.length === 3 ? decodeSegment(parts[0]) : null;
+  const claims = parts.length === 3 ? decodeSegment(parts[1]) : null;
+  if (!header || !claims) return { outcome: "FAILED", code: "INVALID_ID_TOKEN", endpoints, checks: null };
+
+  const signature = await verifySignature(rt, header, `${parts[0]}.${parts[1]}`, parts[2], fetchImpl);
+  const iss = claims["iss"];
+  const issuer: Tri = !rt.expectedIssuer ? "unconfirmed" : iss === rt.expectedIssuer ? "verified" : "failed";
+  const aud = claims["aud"];
+  const audience = aud === rt.clientId || (Array.isArray(aud) && aud.length > 0 && aud.every((a) => typeof a === "string") && aud.includes(rt.clientId));
+  const exp = claims["exp"];
+  const iat = claims["iat"];
+  const expiry = typeof exp === "number" && exp + CLOCK_SKEW_S > nowSeconds &&
+    (iat === undefined || (typeof iat === "number" && iat - CLOCK_SKEW_S <= nowSeconds));
+  const n = claims["nonce"];
+  const nonce = n === undefined ? "absent" : n === expectedNonce ? "match" : "mismatch";
+  const a = claims["acr"];
+  const acr = a === undefined || a === null || a === "" ? "missing" : a === DIAG_ACR ? "aadhaar" : "other";
+  const checks: DiagChecks = { signature, issuer, audience, expiry, nonce, acr };
+
+  if (signature === "failed" || issuer === "failed" || !audience || !expiry || nonce === "mismatch") {
+    return { outcome: "FAILED", code: "INVALID_ID_TOKEN", endpoints, checks };
+  }
+  if (acr === "other") return { outcome: "NOT_VERIFIED", code: "ACR_NOT_AADHAAR", endpoints, checks };
+  if (acr === "missing") return { outcome: "UNCONFIRMED", code: "ACR_MISSING", endpoints, checks };
+  if (signature !== "verified") return { outcome: "UNCONFIRMED", code: "SIGNING_KEYS_UNCONFIRMED", endpoints, checks };
+  if (issuer !== "verified") return { outcome: "UNCONFIRMED", code: "ISSUER_UNCONFIRMED", endpoints, checks };
+  return { outcome: "VERIFIED", code: null, endpoints, checks };
+}
