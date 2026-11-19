@@ -22,7 +22,9 @@ import {CATALOGUE_CANDIDATE,CATALOGUE_SCOPE,runCataloguePreflight,runCataloguePo
 import {TAXONOMY_CANDIDATE,TAXONOMY_SCOPE,runTaxonomyPreflight,runTaxonomyPostflight} from './taxonomy-v2-release.mjs';
 import {readValiditySnapshot, verifyValidityPostflight, VALIDITY_SCOPE} from './listing-validity-365-release.mjs';
 import {
-  IDV_DIGILOCKER_CANDIDATE, IDV_DIGILOCKER_SCOPE, assertIdvDigilockerLedger, idvDigilockerReceiptFields, runIdvDigilockerPostflight, runIdvDigilockerPreflight
+  IDV_DIGILOCKER_CANDIDATE, IDV_DIGILOCKER_INSTALLED_SCOPE, IDV_DIGILOCKER_SCOPE, IDV_DIGILOCKER_V2_CANDIDATE, IDV_DIGILOCKER_V2_SCOPE,
+  assertIdvDigilockerLedger, assertIdvDigilockerTestInstalled, idvDigilockerReceiptFields, runIdvDigilockerInstalledCheck,
+  runIdvDigilockerPostflight, runIdvDigilockerPreflight, runIdvDigilockerV2Postflight, runIdvDigilockerV2Preflight
 } from './idv-digilocker-v1-release.mjs';
 
 import {verifyV3ProductionEvidence, v3ProductionState} from './v3-production-evidence.mjs';
@@ -610,6 +612,9 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
   if (candidate.id === IDV_DIGILOCKER_CANDIDATE) {
     return runIdvDigilockerPostflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
   }
+  if (candidate.id === IDV_DIGILOCKER_V2_CANDIDATE) {
+    return runIdvDigilockerV2Postflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+  }
   if (candidate.id === 'listing-validity-365') {
     return verifyValidityPostflight(catalogueBefore, readValiditySnapshot(sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql')));
   }
@@ -677,8 +682,10 @@ export async function releaseReusable({
     throw new Error('REUSABLE_RELEASE_LISTING_VALIDITY_TEST_EVIDENCE_REQUIRED');
   }
   const idvDigilocker = candidateId === IDV_DIGILOCKER_CANDIDATE;
+  const idvDigilockerV2 = candidateId === IDV_DIGILOCKER_V2_CANDIDATE;
   const idvTestLedger = context.IDV_DIGILOCKER_TEST_LEDGER_SHA;
-  if (idvDigilocker && environment === 'FairSwapProd' && (context.TARGET !== 'test' || !SHA256.test(idvTestLedger ?? ''))) {
+  // Both IDV candidates reach Production only by automatic promotion after a verified Test receipt of the same run.
+  if ((idvDigilocker || idvDigilockerV2) && environment === 'FairSwapProd' && (context.TARGET !== 'test' || !SHA256.test(idvTestLedger ?? ''))) {
     throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_TEST_EVIDENCE_REQUIRED');
   }
   const mobileCatalogue = candidateId === MOBILE_CATALOGUE_CANDIDATE;
@@ -803,15 +810,17 @@ export async function releaseReusable({
     // Tablets, Wearables and Mobile Catalogue pin the ledger: history is read before apply, must not change, and the installed
     // statements hash is carried Test -> Production through the receipts.
     const v3 = Boolean(candidate.unifiedPublishingV3) || v3IdentityPrerequisite;
-    const pinned = v3 || tablets || wearables || mobileCatalogue || listingValidity || taxonomy || catalogueUpdate || idvDigilocker;
-    const ordered = v3 || candidate.strict || mobileCatalogue || listingValidity || taxonomy || idvDigilocker;
-    const label = v3 ? 'V3' : idvDigilocker ? 'IDV_DIGILOCKER' : taxonomy ? 'TAXONOMY' : listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
+    const idv = idvDigilocker || idvDigilockerV2;
+    const pinned = v3 || tablets || wearables || mobileCatalogue || listingValidity || taxonomy || catalogueUpdate || idv;
+    const ordered = v3 || candidate.strict || mobileCatalogue || listingValidity || taxonomy || idv;
+    const label = v3 ? 'V3' : idvDigilockerV2 ? 'IDV_DIGILOCKER_V2' : idvDigilocker ? 'IDV_DIGILOCKER' : taxonomy ? 'TAXONOMY' : listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
     const foundationVersion = wearables ? '20261104120000' : '20261102165946';
     const readLedger = () => readTabletsLedger(sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
     let catalogueBefore;
     let ledgerBefore;
     let ledgerStatementsSha256;
     let outOfOrder = {includeAll: false, ahead: []};
+    let idvInstalledAttestation = false;
     if (ordered) {
       // Prerequisites, ordering and partial state fail closed; resumption of a verified release is allowed in both environments.
       const ordering = assertLedgerOrdering(candidate, initialLedger);
@@ -836,7 +845,15 @@ export async function releaseReusable({
       v3ProductionState(sql => psqlQuery(sql, psqlUrl, env, runner, 'v3_production_state'), options);
     let productionStateBefore;
     const testV3Ledger = v3ProductionEvidence?.get(candidateId);
-    if (pinned) {
+    if (pinned && idvDigilocker && environment === 'FairSwapTest' && isAlreadyApplied) {
+      // FairSwapTest recorded V1 before Production was eligible: attest that installation read-only (ledger row and
+      // installed-state integrity). Nothing is applied; the attested digest is the evidence Production must reproduce.
+      ledgerBefore = readLedger();
+      ledgerStatementsSha256 = assertIdvDigilockerTestInstalled(environment, ledgerBefore);
+      phase = 'postflight';
+      runIdvDigilockerInstalledCheck(sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+      idvInstalledAttestation = true;
+    } else if (pinned) {
       // A pre-existing entry has no trusted receipt tying it to the reviewed source bytes.
       if (isAlreadyApplied) throw new Error(`REUSABLE_RELEASE_${label}_ALREADY_RECORDED`);
       ledgerBefore = readLedger();
@@ -893,7 +910,7 @@ export async function releaseReusable({
           ledgerBefore.find(row => row.version === foundationVersion)?.statementsSha256 !== context.TABLETS_FOUNDATION_LEDGER_SHA) {
         throw new Error(`REUSABLE_RELEASE_${label}_FOUNDATION_EVIDENCE_MISMATCH`);
       }
-      if (!v3Production && !mobileCatalogue && !listingValidity && !taxonomy && !idvDigilocker && environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
+      if (!v3Production && !mobileCatalogue && !listingValidity && !taxonomy && !idv && environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
         throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_EVIDENCE_REQUIRED`);
       }
       if (ledgerBefore.length !== beforeRemote.size || ledgerBefore.some(row =>
@@ -922,7 +939,10 @@ export async function releaseReusable({
       }
     }
 
-    if ((environment === 'FairSwapTest' || candidate.strict) && isAlreadyApplied) {
+    if (idvInstalledAttestation) {
+      status = 'ALREADY_INSTALLED_VERIFIED';
+      dryRunPending = [];
+    } else if ((environment === 'FairSwapTest' || candidate.strict) && isAlreadyApplied) {
       // Support resumption for FairSwapTest if already applied: verify ledger, exact SQL hash, and postflight
       phase = 'postflight';
       const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore);
@@ -950,6 +970,10 @@ export async function releaseReusable({
       if (idvDigilocker) {
         phase = 'preflight';
         catalogueBefore = runIdvDigilockerPreflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
+      }
+      if (idvDigilockerV2) {
+        phase = 'preflight';
+        catalogueBefore = runIdvDigilockerV2Preflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
       }
       if (mobileCatalogue) {
         phase = 'preflight';
@@ -994,7 +1018,7 @@ export async function releaseReusable({
       if (ordered) verifyHistoryPreserved(beforeRemote, ledgerOutput, candidate.version);
       if (pinned) {
         ledgerStatementsSha256 = verifyTabletsLedger(ledgerBefore, readLedger(), candidate);
-        const testLedger = idvDigilocker ? idvTestLedger : taxonomy ? taxonomyTestLedger : listingValidity ? validityTestLedger : mobileCatalogue ? mobileTestLedger : context.TABLETS_CANDIDATE_LEDGER_SHA;
+        const testLedger = idv ? idvTestLedger : taxonomy ? taxonomyTestLedger : listingValidity ? validityTestLedger : mobileCatalogue ? mobileTestLedger : context.TABLETS_CANDIDATE_LEDGER_SHA;
         if (environment === 'FairSwapProd' && !v3IdentityPrerequisite && ledgerStatementsSha256 !== (v3Production ? testV3Ledger : testLedger)) {
           throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_MISMATCH`);
         }
@@ -1039,10 +1063,11 @@ export async function releaseReusable({
         releaseWorkflowAttempt: context.GITHUB_RUN_ATTEMPT,
         ...(environment === 'FairSwapProd' ? {testLedgerStatementsSha256: taxonomyTestLedger} : {})
       } : {}),
-      ...(idvDigilocker ? {
-        postflightScope: IDV_DIGILOCKER_SCOPE,
+      ...(idv ? {
+        postflightScope: idvDigilockerV2 ? IDV_DIGILOCKER_V2_SCOPE : idvInstalledAttestation ? IDV_DIGILOCKER_INSTALLED_SCOPE : IDV_DIGILOCKER_SCOPE,
         releaseWorkflowAttempt: context.GITHUB_RUN_ATTEMPT,
         ...idvDigilockerReceiptFields(environment),
+        ...(idvInstalledAttestation ? {installedBeforeThisWorkflow: true} : {}),
         ...(environment === 'FairSwapProd' ? {testLedgerStatementsSha256: idvTestLedger} : {})
       } : {}),
       ...(listingValidity ? {

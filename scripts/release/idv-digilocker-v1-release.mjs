@@ -1,9 +1,16 @@
-// IDV DigiLocker V1 (dark) release guards for the reusable Supabase workflow. All SQL here is read-only.
+// IDV DigiLocker V1 (dark) and OIDC V2 badge-provenance release guards for the reusable Supabase workflow.
+// All SQL here is read-only.
 // Receipts carry only versions, names, digests and booleans: no user, binding, attempt or settings row contents.
 import {getCandidate, PROJECT_REFS} from './reusable-candidates.mjs';
 
 export const IDV_DIGILOCKER_CANDIDATE = 'idv-digilocker-v1';
 export const IDV_DIGILOCKER_SCOPE = 'idv-digilocker-v1-dark-integrity';
+// FairSwapTest already records V1 (installed before Production was eligible). Its Test stage is therefore a read-only
+// attestation of that installation, and the attested ledger digest is what Production must reproduce.
+export const IDV_DIGILOCKER_INSTALLED_SCOPE = 'idv-digilocker-v1-installed-integrity';
+export const IDV_DIGILOCKER_V2_CANDIDATE = 'idv-digilocker-oidc-v2';
+export const IDV_DIGILOCKER_V2_SCOPE = 'idv-digilocker-oidc-v2-badge-integrity';
+export const isIdvDigilockerCandidate = id => id === IDV_DIGILOCKER_CANDIDATE || id === IDV_DIGILOCKER_V2_CANDIDATE;
 const fail = code => { throw new Error(`REUSABLE_RELEASE_IDV_DIGILOCKER_${code}`); };
 
 // The foundation was applied with project-scoped apply_migration, so each environment recorded its own hosted
@@ -47,6 +54,24 @@ export function assertIdvDigilockerLedger(environment, rows) {
     fail('LEDGER_TAIL_MISMATCH');
   }
   return {includeAll: true, ahead: ahead.map(row => row.version)};
+}
+
+// FairSwapTest only: V1 is already recorded. Verifies the environment foundation row and the recorded V1 row (name and
+// non-empty statements) and returns that row's statements digest. Nothing is applied, repaired or rewritten.
+export function assertIdvDigilockerTestInstalled(environment, rows) {
+  const candidate = getCandidate(IDV_DIGILOCKER_CANDIDATE);
+  const own = IDV_FOUNDATION_LEDGER[environment];
+  if (environment !== 'FairSwapTest' || !own || !Array.isArray(rows)) fail('INSTALLED_ATTESTATION_ENVIRONMENT_INVALID');
+  const foundation = rows.filter(row => row.name === own.name);
+  if (foundation.length !== 1 || foundation[0].version !== own.version || foundation[0].hasStatements !== true) {
+    fail('FOUNDATION_PREREQUISITE_MISMATCH');
+  }
+  const installed = rows.filter(row => row.version === candidate.version || row.name === ledgerName(candidate));
+  if (installed.length !== 1 || installed[0].version !== candidate.version || installed[0].name !== ledgerName(candidate) ||
+      installed[0].hasStatements !== true || !(installed[0].statementCount > 0) || !/^[a-f0-9]{64}$/.test(installed[0].statementsSha256 ?? '')) {
+    fail('INSTALLED_LEDGER_MISMATCH');
+  }
+  return installed[0].statementsSha256;
 }
 
 const FOUNDATION_TABLES = ['public.user_identity_verifications', 'app_security.idv_verification_attempts',
@@ -160,41 +185,109 @@ export const IDV_DIGILOCKER_POSTFLIGHT = Object.freeze({
 
 // Digest of every pre-existing table, policy, function and trigger in public/app_security that the migration must not
 // change. New DigiLocker objects and the added trg_identity_gate triggers are excluded; everything else must be identical.
-const PRESERVED = `encode(sha256(convert_to(jsonb_build_object(
+const preservedSql = (tables, functionNames, gateTriggersExcluded = true) => `encode(sha256(convert_to(jsonb_build_object(
   'tables', (SELECT jsonb_agg(jsonb_build_array(n.nspname, c.relname, c.relowner, c.relacl::text, c.relrowsecurity, c.relforcerowsecurity)
       ORDER BY n.nspname, c.relname)
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname IN ('public','app_security') AND c.relkind IN ('r','p') AND n.nspname || '.' || c.relname <> ALL(${arr(TABLES)})),
+    WHERE n.nspname IN ('public','app_security') AND c.relkind IN ('r','p') AND n.nspname || '.' || c.relname <> ALL(${arr(tables)})),
   'policies', (SELECT jsonb_agg(to_jsonb(p) ORDER BY p.schemaname, p.tablename, p.policyname)
     FROM pg_policies p WHERE p.schemaname IN ('public','app_security')),
   'functions', (SELECT jsonb_agg(jsonb_build_array(p.oid::regprocedure::text, p.proowner, p.proacl::text, p.prosecdef, p.proconfig, md5(p.prosrc))
       ORDER BY p.oid::regprocedure::text)
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname IN ('public','app_security') AND p.proname <> ALL(${arr(FUNCTION_NAMES)})),
+    WHERE n.nspname IN ('public','app_security') AND p.proname <> ALL(${arr(functionNames)})),
   'triggers', (SELECT jsonb_agg(jsonb_build_array(t.tgrelid::regclass::text, t.tgname, t.tgenabled, t.tgfoid::regprocedure::text)
       ORDER BY t.tgrelid::regclass::text, t.tgname)
     FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE NOT t.tgisinternal AND n.nspname IN ('public','app_security') AND t.tgname <> 'trg_identity_gate'
-      AND n.nspname || '.' || c.relname <> ALL(${arr(TABLES)}))
+    WHERE NOT t.tgisinternal AND n.nspname IN ('public','app_security') ${gateTriggersExcluded ? "AND t.tgname <> 'trg_identity_gate'" : ''}
+      AND n.nspname || '.' || c.relname <> ALL(${arr(tables)}))
 )::text, 'UTF8')), 'hex')`;
+const PRESERVED = preservedSql(TABLES, FUNCTION_NAMES);
 
-export const snapshotSql = (checks, label) => `-- idv-digilocker-${label}
+export const snapshotSql = (checks, label, preserved = PRESERVED) => `-- idv-digilocker-${label}
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '30s';
 SELECT jsonb_build_object('checks', jsonb_build_object(${Object.entries(checks).map(([k, sql]) => `'${k}', (${sql})`).join(',\n  ')}),
-  'preserved', ${PRESERVED})::text;
+  'preserved', ${preserved})::text;
 COMMIT;`;
 
-function readSnapshot(query, checks, label) {
+function readSnapshot(query, checks, label, preserved = PRESERVED) {
   let value;
-  try { value = JSON.parse(String(query(snapshotSql(checks, label))).trim()); } catch { fail(`${label.toUpperCase()}_INVALID`); }
+  try { value = JSON.parse(String(query(snapshotSql(checks, label, preserved))).trim()); } catch { fail(`${label.toUpperCase().replace(/-/g, '_')}_INVALID`); }
   const keys = Object.keys(value?.checks ?? {});
   if (!/^[a-f0-9]{64}$/.test(value?.preserved ?? '') || keys.length !== Object.keys(checks).length ||
       Object.keys(checks).some(key => value.checks[key] !== true)) {
-    fail(`${label.toUpperCase()}_FAILED`);
+    fail(`${label.toUpperCase().replace(/-/g, '_')}_FAILED`);
   }
   return {preserved: value.preserved};
 }
+
+// Installed-state integrity of an existing V1 installation (FairSwapTest attestation). Same structure, grant, trigger and
+// gate checks as the postflight, without the fresh-install-only conditions (empty tables, unchanged-object baseline).
+export const IDV_DIGILOCKER_INSTALLED = Object.freeze(Object.fromEntries(Object.entries(IDV_DIGILOCKER_POSTFLIGHT)
+  .filter(([key]) => key !== 'tables_empty')));
+export const runIdvDigilockerInstalledCheck = query => {
+  readSnapshot(query, IDV_DIGILOCKER_INSTALLED, 'installed');
+  return {status: 'PASS', scope: IDV_DIGILOCKER_INSTALLED_SCOPE};
+};
+
+// ---------- OIDC V2 badge provenance (20261119200000) ----------
+const BINDINGS = TABLES[1];
+export const IDV_DIGILOCKER_V2_FUNCTIONS = Object.freeze({
+  serviceOnly: Object.freeze([
+    'app_security.has_digilocker_badge(uuid)',
+    'app_security.impl_idv_dl_complete_v2(uuid,uuid,text,text,text[],text)',
+    'public.server_idv_dl_complete_v2(uuid,uuid,text,text,text[],text)'
+  ]),
+  projection: Object.freeze(['public.get_digilocker_badges(uuid[])']),
+  // Replaced in place with unchanged signatures and grants.
+  replaced: Object.freeze([
+    'app_security.impl_idv_dl_start_attempt(uuid,text,integer,text,boolean,text)',
+    'app_security.impl_idv_dl_complete(uuid,uuid,text,text,text[])',
+    'public.get_my_marketplace_access()'
+  ])
+});
+const V2_NEW = [...IDV_DIGILOCKER_V2_FUNCTIONS.serviceOnly, ...IDV_DIGILOCKER_V2_FUNCTIONS.projection];
+const V2_ALL = [...V2_NEW, ...IDV_DIGILOCKER_V2_FUNCTIONS.replaced];
+const V2_FUNCTION_NAMES = [...new Set(V2_ALL.map(sig => sig.split('(')[0].split('.')[1]))];
+const V2_PRESERVED = preservedSql([BINDINGS], V2_FUNCTION_NAMES, false);
+const column = name => `(SELECT a.attnotnull FROM pg_attribute a WHERE a.attrelid = to_regclass('${BINDINGS}')::oid AND a.attname = '${name}' AND NOT a.attisdropped)`;
+const hasColumn = name => `EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = to_regclass('${BINDINGS}')::oid AND a.attname = '${name}' AND NOT a.attisdropped)`;
+const anyFn = sigs => `EXISTS (SELECT 1 FROM unnest(${arr(sigs)}) s WHERE to_regprocedure(s) IS NOT NULL)`;
+
+export const IDV_DIGILOCKER_V2_PREFLIGHT = Object.freeze({
+  v1_installed: IDV_DIGILOCKER_INSTALLED.functions_exact + ' AND ' + IDV_DIGILOCKER_INSTALLED.tables_rls_forced,
+  gate_setting_off: IDV_DIGILOCKER_POSTFLIGHT.gate_setting_off,
+  provenance_columns_absent: `NOT ${hasColumn('evidence_method')} AND NOT ${hasColumn('evidence_verified_at')}`,
+  v2_functions_absent: `NOT ${anyFn(V2_NEW)}`
+});
+
+export const IDV_DIGILOCKER_V2_POSTFLIGHT = Object.freeze({
+  provenance_columns: `${column('evidence_method')} IS TRUE AND ${column('evidence_verified_at')} IS FALSE`,
+  provenance_constraint: `EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = to_regclass('${BINDINGS}')::oid
+    AND conname = 'chk_idv_dl_evidence_method' AND contype = 'c' AND convalidated)`,
+  provenance_consistent: `NOT EXISTS (SELECT 1 FROM app_security.idv_digilocker_bindings
+    WHERE evidence_method = 'oidc_v2_signed_id_token' AND evidence_verified_at IS NULL)`,
+  functions_exact: allFns(V2_ALL, `p.prosecdef AND p.proconfig @> ARRAY['search_path=""']::text[]`),
+  service_only_execute: execBy('service_role', true, IDV_DIGILOCKER_V2_FUNCTIONS.serviceOnly) + ' AND ' +
+    ['public', 'anon', 'authenticated'].map(role => execBy(role, false, IDV_DIGILOCKER_V2_FUNCTIONS.serviceOnly)).join(' AND '),
+  projection_execute: ['anon', 'authenticated', 'service_role'].map(role => execBy(role, true, IDV_DIGILOCKER_V2_FUNCTIONS.projection)).join(' AND ') +
+    ' AND ' + execBy('public', false, IDV_DIGILOCKER_V2_FUNCTIONS.projection),
+  v1_grants_unchanged: IDV_DIGILOCKER_INSTALLED.service_only_execute + ' AND ' + IDV_DIGILOCKER_INSTALLED.authenticated_execute,
+  tables_no_client_privileges: IDV_DIGILOCKER_POSTFLIGHT.tables_no_client_privileges,
+  bindings_no_direct_dml: IDV_DIGILOCKER_POSTFLIGHT.bindings_no_direct_dml,
+  gate_setting_off: IDV_DIGILOCKER_POSTFLIGHT.gate_setting_off,
+  gate_function_off: IDV_DIGILOCKER_POSTFLIGHT.gate_function_off
+});
+
+export const runIdvDigilockerV2Preflight = query => readSnapshot(query, IDV_DIGILOCKER_V2_PREFLIGHT, 'v2-preflight', V2_PRESERVED);
+export function runIdvDigilockerV2Postflight(before, query) {
+  if (!before?.preserved) fail('BASELINE_REQUIRED');
+  const after = readSnapshot(query, IDV_DIGILOCKER_V2_POSTFLIGHT, 'v2-postflight', V2_PRESERVED);
+  if (after.preserved !== before.preserved) fail('EXISTING_OBJECTS_CHANGED');
+  return {status: 'PASS', scope: IDV_DIGILOCKER_V2_SCOPE};
+}
+export const idvDigilockerV2SnapshotSql = (checks, label) => snapshotSql(checks, label, V2_PRESERVED);
 
 export const runIdvDigilockerPreflight = query => readSnapshot(query, IDV_DIGILOCKER_PREFLIGHT, 'preflight');
 
@@ -212,24 +305,48 @@ export const idvDigilockerReceiptFields = environment => ({
   edgeFunctionsDeployedByThisWorkflow: false
 });
 
+const RECEIPT_CONTEXT_OK = context => /^[a-f0-9]{40}$/.test(context.GITHUB_SHA ?? '') && /^[1-9]\d*$/.test(context.GITHUB_RUN_ID ?? '') &&
+  /^[1-9]\d*$/.test(context.GITHUB_RUN_ATTEMPT ?? '');
+const receiptCommon = (receipt, c, context) => RECEIPT_CONTEXT_OK(context) &&
+  receipt?.environment === 'FairSwapTest' && receipt.projectRef === PROJECT_REFS.FairSwapTest &&
+  receipt.candidateId === c.id && receipt.migrationVersion === c.version && receipt.migrationFile === c.filename &&
+  receipt.migrationSha256 === c.sha256 && receipt.reviewedCommit === context.GITHUB_SHA &&
+  receipt.releaseWorkflowRun === context.GITHUB_RUN_ID && receipt.releaseWorkflowAttempt === context.GITHUB_RUN_ATTEMPT &&
+  receipt.postflightVerified === true && Array.isArray(receipt.dryRunPending) &&
+  receipt.identityVerificationRequired === false && receipt.edgeFunctionsDeployedByThisWorkflow === false &&
+  /^[a-f0-9]{64}$/.test(receipt.ledgerStatementsSha256 ?? '');
+
+// Validates the FairSwapTest receipt of either IDV candidate and returns the ledger digest Production must reproduce.
+// V1: a fresh out-of-order apply (historical shape) or the read-only attestation of the existing Test installation.
+// V2: an ordinary in-order apply with the V2 postflight.
 export function verifyIdvDigilockerTestReceipt(receipt, context) {
-  const c = getCandidate(IDV_DIGILOCKER_CANDIDATE);
-  const expectedTail = IDV_DIGILOCKER_TAIL.map(pin => getCandidate(pin.candidateId).version);
+  const candidateId = receipt?.candidateId;
+  if (!isIdvDigilockerCandidate(candidateId) || (context.CANDIDATE && context.CANDIDATE !== candidateId)) fail('TEST_RECEIPT_INVALID');
+  const c = getCandidate(candidateId);
   const prerequisite = IDV_FOUNDATION_LEDGER.FairSwapTest;
-  if (!/^[a-f0-9]{40}$/.test(context.GITHUB_SHA ?? '') || !/^[1-9]\d*$/.test(context.GITHUB_RUN_ID ?? '') ||
-      !/^[1-9]\d*$/.test(context.GITHUB_RUN_ATTEMPT ?? '') ||
-      receipt?.environment !== 'FairSwapTest' || receipt.projectRef !== PROJECT_REFS.FairSwapTest ||
-      receipt.candidateId !== c.id || receipt.migrationVersion !== c.version || receipt.migrationFile !== c.filename ||
-      receipt.migrationSha256 !== c.sha256 || receipt.reviewedCommit !== context.GITHUB_SHA ||
-      receipt.releaseWorkflowRun !== context.GITHUB_RUN_ID || receipt.releaseWorkflowAttempt !== context.GITHUB_RUN_ATTEMPT ||
-      receipt.status !== 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED' || receipt.postflightVerified !== true ||
-      receipt.postflightScope !== IDV_DIGILOCKER_SCOPE || !Array.isArray(receipt.dryRunPending) ||
+  if (!receiptCommon(receipt, c, context) ||
+      receipt.prerequisiteLedger?.version !== prerequisite.version || receipt.prerequisiteLedger?.name !== prerequisite.name) {
+    fail('TEST_RECEIPT_INVALID');
+  }
+  if (candidateId === IDV_DIGILOCKER_V2_CANDIDATE) {
+    if (receipt.status !== 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED' || receipt.postflightScope !== IDV_DIGILOCKER_V2_SCOPE ||
+        receipt.dryRunPending.length !== 1 || receipt.dryRunPending[0] !== c.filename || receipt.outOfOrderInstall !== undefined) {
+      fail('TEST_RECEIPT_INVALID');
+    }
+    return receipt.ledgerStatementsSha256;
+  }
+  if (receipt.status === 'ALREADY_INSTALLED_VERIFIED') {
+    if (receipt.postflightScope !== IDV_DIGILOCKER_INSTALLED_SCOPE || receipt.dryRunPending.length !== 0 ||
+        receipt.outOfOrderInstall !== undefined || receipt.installedBeforeThisWorkflow !== true) {
+      fail('TEST_RECEIPT_INVALID');
+    }
+    return receipt.ledgerStatementsSha256;
+  }
+  const expectedTail = IDV_DIGILOCKER_TAIL.map(pin => getCandidate(pin.candidateId).version);
+  if (receipt.status !== 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED' || receipt.postflightScope !== IDV_DIGILOCKER_SCOPE ||
       receipt.dryRunPending.length !== 1 || receipt.dryRunPending[0] !== c.filename ||
       receipt.outOfOrderInstall?.includeAll !== true ||
-      JSON.stringify(receipt.outOfOrderInstall.aheadVersions) !== JSON.stringify(expectedTail) ||
-      receipt.prerequisiteLedger?.version !== prerequisite.version || receipt.prerequisiteLedger?.name !== prerequisite.name ||
-      receipt.identityVerificationRequired !== false || receipt.edgeFunctionsDeployedByThisWorkflow !== false ||
-      !/^[a-f0-9]{64}$/.test(receipt.ledgerStatementsSha256 ?? '')) {
+      JSON.stringify(receipt.outOfOrderInstall.aheadVersions) !== JSON.stringify(expectedTail)) {
     fail('TEST_RECEIPT_INVALID');
   }
   return receipt.ledgerStatementsSha256;

@@ -17,6 +17,7 @@ on:
           - taxonomy-v2-foundation
           - taxonomy-v2-catalogue
           - idv-digilocker-v1
+          - idv-digilocker-oidc-v2
           - accessories-v1-foundation
           - accessories-v1-activation
           - tablets-v1-foundation
@@ -515,12 +516,14 @@ jobs:
 
       - name: Verify IDV DigiLocker V1 Test postflight receipt
         id: idv_digilocker_proof
-        if: ${{ inputs.candidate == 'idv-digilocker-v1' }}
+        if: ${{ inputs.candidate == 'idv-digilocker-v1' || inputs.candidate == 'idv-digilocker-oidc-v2' }}
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
         run: |
           node --input-type=module - <<'NODE'
           import {appendFileSync, readFileSync} from 'node:fs';
           import {verifyIdvDigilockerTestReceipt} from './scripts/release/idv-digilocker-v1-release.mjs';
-          const receipt = JSON.parse(readFileSync('test-evidence/idv-digilocker-v1-fairswaptest.json', 'utf8'));
+          const receipt = JSON.parse(readFileSync(`test-evidence/${process.env.CANDIDATE}-fairswaptest.json`, 'utf8'));
           const digest = verifyIdvDigilockerTestReceipt(receipt, process.env);
           appendFileSync(process.env.GITHUB_OUTPUT, `ledger_sha=${digest}\n`);
           NODE
@@ -528,18 +531,19 @@ jobs:
   production:
     # Moderation, Mobile Catalogue, Listing Validity and Taxonomy: automatic after verified Test. Accessories and Tablets: only a dedicated target=production
     # dispatch, whose Web and earlier-stage Test/Production evidence was already enforced by the verify job.
-    # idv-digilocker-v1 is Staging/Test only: Production is always skipped for it.
+    # IDV DigiLocker V1 and OIDC V2: automatic only after a verified Test receipt of the same run (never a manual Production dispatch).
     needs: [verify, test, verify_test]
     if: >-
       ${{ always() && needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
-      inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'v3-test-remaining-batch' &&
+      inputs.candidate != 'v3-test-remaining-batch' &&
       ((inputs.target == 'test' && needs.verify.outputs.auto_promote == 'true' && needs.test.result == 'success' && needs.verify_test.result == 'success' &&
       (inputs.candidate != 'mobile-catalogue-india-v1' || needs.verify_test.outputs.mobile_catalogue_ledger_sha != '') &&
       (inputs.candidate != 'idv-digilocker-v1' || needs.verify_test.outputs.idv_digilocker_ledger_sha != '') &&
+      (inputs.candidate != 'idv-digilocker-oidc-v2' || needs.verify_test.outputs.idv_digilocker_ledger_sha != '') &&
       (inputs.candidate != 'listing-validity-365' || needs.verify_test.outputs.listing_validity_ledger_sha != '') &&
       (inputs.candidate != 'taxonomy-v2-foundation' || needs.verify_test.outputs.taxonomy_ledger_sha != '') &&
       (inputs.candidate != 'taxonomy-v2-catalogue' || needs.verify_test.outputs.taxonomy_ledger_sha != '')) ||
-      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue') ||
+      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'idv-digilocker-oidc-v2' && inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue') ||
       (inputs.target == 'adopt' && inputs.candidate == 'accessories-v1-foundation' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped')) }}
     environment: FairSwapProd
     runs-on: ubuntu-24.04

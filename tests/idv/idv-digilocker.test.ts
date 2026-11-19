@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { handleDigiLockerStart } from "../../supabase/functions/idv-digilocker-start/index";
 import { handleDigiLockerComplete } from "../../supabase/functions/idv-digilocker-complete/index";
@@ -7,6 +7,7 @@ import { readDigiLockerRuntime } from "../../supabase/functions/_shared/idv/digi
 import {
   derivePkceVerifier, fingerprintDigiLockerId, pkceChallenge, sha256Hex, DIGILOCKER_HOST,
 } from "../../supabase/functions/_shared/idv/digilocker-client";
+import { deriveOidcNonce, OIDC_ISSUER, OIDC_JWKS_URL, OIDC_TOKEN_PATH } from "../../supabase/functions/_shared/idv/digilocker-oidc";
 
 const KEY = "s".repeat(40); // state/PKCE key
 const FP1 = "f".repeat(40);
@@ -18,6 +19,7 @@ const PROD_REDIRECT = "https://fairswap.in/api/idv/digilocker/callback";
 
 const stageEnv = (over: Record<string, string> = {}): Record<string, string> => ({
   FAIRSWAP_DIGILOCKER_ENABLED: "true",
+  DIGILOCKER_AUTH_MODE: "oidc_v2",
   SUPABASE_URL: "https://wpppxlnbzqynvhpeuavd.supabase.co",
   SUPABASE_ANON_KEY: "anon",
   SUPABASE_SERVICE_ROLE_KEY: "service",
@@ -28,6 +30,23 @@ const stageEnv = (over: Record<string, string> = {}): Record<string, string> => 
   IDV_DIGILOCKER_FP_KEY_V1: FP1,
   ...over,
 });
+
+// ---- Signed ID tokens. The nonce is bound to the state of the request being completed. ----
+let priv: CryptoKey; let pubJwk: JsonWebKey;
+beforeAll(async () => {
+  const kp = (await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true, ["sign", "verify"])) as CryptoKeyPair;
+  priv = kp.privateKey; pubJwk = await crypto.subtle.exportKey("jwk", kp.publicKey);
+});
+const b64u = (b: Uint8Array | string) => Buffer.from(typeof b === "string" ? Buffer.from(b) : b).toString("base64url");
+let currentState = "";
+async function idTokenFor(id: string | undefined, state = currentState) {
+  const now = Math.floor(Date.now() / 1000);
+  const claims: Record<string, unknown> = { iss: OIDC_ISSUER, aud: "stage-client", sub: "s", iat: now - 5, exp: now + 300, nonce: await deriveOidcNonce(KEY, state) };
+  if (id !== undefined) claims.digilockerid = id;
+  const h = b64u(JSON.stringify({ alg: "RS256", kid: "k1" })); const p = b64u(JSON.stringify(claims));
+  return `${h}.${p}.${b64u(new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", priv, Buffer.from(`${h}.${p}`))))}`;
+}
 
 // ---- In-memory fake mirroring the SQL contract (atomicity itself is proven in tests/idv-pg17) ----
 function makeWorld() {
@@ -53,7 +72,8 @@ function makeWorld() {
       return { data: { success: true, attempt_id: at.id }, error: null };
     }
     if (name === "server_idv_dl_fail_attempt") return { data: { success: true }, error: null };
-    if (name === "server_idv_dl_complete") {
+    if (name === "server_idv_dl_complete") return { data: { success: false, error: "LEGACY_LINK_DISABLED" }, error: null };
+    if (name === "server_idv_dl_complete_v2") {
       const all = [a.p_id_fingerprint, ...(a.p_legacy_fingerprints ?? [])];
       if (bindings.some((x) => all.includes(x.fp) && x.blocked)) return { data: { success: false, error: "VERIFICATION_UNAVAILABLE" }, error: null };
       const b = bindings.find((x) => all.includes(x.fp));
@@ -77,19 +97,18 @@ function makeWorld() {
   return { deps, attempts, bindings, verified, calls };
 }
 
-function providerFetch(opts: { id?: string; userId?: string; tokenStatus?: number; userStatus?: number; tokenBody?: any; timeout?: boolean } = {}) {
+function providerFetch(opts: { id?: string; tokenStatus?: number; tokenBody?: any; timeout?: boolean; state?: string } = {}) {
   const log: { url: string; body?: string }[] = [];
   const f = vi.fn(async (url: string, init?: RequestInit) => {
     log.push({ url, body: init?.body as string });
     if (opts.timeout) { const e = new Error("t"); e.name = "AbortError"; throw e; }
-    if (url.endsWith("/oauth2/1/token")) {
+    if (url === `${DIGILOCKER_HOST}${OIDC_TOKEN_PATH}`) {
       const status = opts.tokenStatus ?? 200;
-      return new Response(JSON.stringify(opts.tokenBody ?? { access_token: "tok-secret", token_type: "Bearer", digilockerid: opts.id ?? DLID, name: "Ajit", dob: "31121970" }), { status });
+      const id = opts.id ?? DLID;
+      return new Response(JSON.stringify(opts.tokenBody ?? { access_token: "tok-secret", token_type: "Bearer", digilockerid: id,
+        id_token: await idTokenFor(id, opts.state ?? currentState), name: "Ajit", dob: "31121970" }), { status });
     }
-    if (url.endsWith("/oauth2/1/user")) {
-      const status = opts.userStatus ?? 200;
-      return new Response(JSON.stringify({ digilockerid: opts.userId ?? opts.id ?? DLID, name: "Ajit", mobile: "9999999999", email: "a@b.c" }), { status });
-    }
+    if (url === OIDC_JWKS_URL) return new Response(JSON.stringify({ keys: [{ ...pubJwk, kid: "k1", use: "sig" }] }));
     return new Response("{}", { status: 200 }); // revoke
   });
   return { f: f as unknown as typeof fetch, log };
@@ -104,11 +123,13 @@ async function startFlow(world: ReturnType<typeof makeWorld>, user = "user-1", e
   const state = body.redirectUrl ? new URL(body.redirectUrl).searchParams.get("state")! : "";
   return { res, body, state };
 }
-const complete = (w: ReturnType<typeof makeWorld>, f: typeof fetch, state: string, extra: any = { code: "auth-code" }, user = "user-1", env = stageEnv()) =>
-  handleDigiLockerComplete(req({ state, ...extra }, `Bearer ${user}`), env, f, w.deps);
+const complete = (w: ReturnType<typeof makeWorld>, f: typeof fetch, state: string, extra: any = { code: "auth-code" }, user = "user-1", env = stageEnv()) => {
+  currentState = state;
+  return handleDigiLockerComplete(req({ state, ...extra }, `Bearer ${user}`), env, f, w.deps);
+};
 
 describe("DigiLocker direct verification", () => {
-  it("first-time verification: PKCE S256, exact redirect, no document scopes, then verified", async () => {
+  it("first-time verification: PKCE S256, exact redirect, openid + nonce only (no acr/document scopes), then verified", async () => {
     const w = makeWorld();
     const { res, body, state } = await startFlow(w);
     expect(res.status).toBe(200);
@@ -118,25 +139,27 @@ describe("DigiLocker direct verification", () => {
     expect(u.searchParams.get("redirect_uri")).toBe(STAGE_REDIRECT);
     expect(u.searchParams.get("code_challenge_method")).toBe("S256");
     expect(u.searchParams.get("code_challenge")).toBe(await pkceChallenge(await derivePkceVerifier(KEY, state)));
-    for (const p of ["scope", "acr", "req_doctype", "amr", "dl_flow"]) expect(u.searchParams.has(p)).toBe(false);
+    expect(u.searchParams.get("scope")).toBe("openid");
+    expect(u.searchParams.get("nonce")).toBe(await deriveOidcNonce(KEY, state));
+    for (const p of ["acr", "req_doctype", "amr", "dl_flow"]) expect(u.searchParams.has(p)).toBe(false);
     expect(state).toMatch(/^[0-9a-f]{64}$/);
 
     const p = providerFetch();
     const done = await complete(w, p.f, state);
     expect(done.status).toBe(200);
     expect(w.verified.has("user-1")).toBe(true);
-    const tokenCall = p.log.find((l) => l.url.endsWith("/oauth2/1/token"))!;
+    const tokenCall = p.log.find((l) => l.url.endsWith(OIDC_TOKEN_PATH))!;
     expect(tokenCall.body).toContain("code_verifier=" + (await derivePkceVerifier(KEY, state)));
     expect(tokenCall.body).toContain("grant_type=authorization_code");
     expect(w.bindings[0].fp).toBe(await fingerprintDigiLockerId(FP1, DLID));
     expect(w.bindings[0].fp).not.toContain(DLID);
-    // userdetails not approved by default: /oauth2/1/user is never called.
-    expect(p.log.some((l) => l.url.endsWith("/oauth2/1/user"))).toBe(false);
+    // The identifier comes only from the signed ID token: /oauth2/1/user and the v1 token endpoint are never called.
+    expect(p.log.some((l) => l.url.endsWith("/oauth2/1/user") || l.url.endsWith("/oauth2/1/token"))).toBe(false);
   });
 
-  it("openid scope is opt-in only; ACR/AMR are never sent", async () => {
+  it("obsolete legacy knobs cannot re-enable unsigned linking or add ACR/AMR", async () => {
     const w = makeWorld();
-    const on = await startFlow(w, "user-1", stageEnv({ DIGILOCKER_REQUEST_OPENID_SCOPE: "true" }));
+    const on = await startFlow(w, "user-1", stageEnv({ DIGILOCKER_REQUEST_OPENID_SCOPE: "false", DIGILOCKER_USERDETAILS_APPROVED: "true" }));
     const u = new URL(on.body.redirectUrl);
     expect(u.searchParams.get("scope")).toBe("openid");
     expect(u.searchParams.has("acr") || u.searchParams.has("amr")).toBe(false);
@@ -164,8 +187,8 @@ describe("DigiLocker direct verification", () => {
     const w = makeWorld();
     const [a, b] = await Promise.all([startFlow(w, "user-1"), startFlow(w, "user-2")]);
     const [ra, rb] = await Promise.all([
-      complete(w, providerFetch().f, a.state, { code: "c" }, "user-1"),
-      complete(w, providerFetch().f, b.state, { code: "c" }, "user-2"),
+      complete(w, providerFetch({ state: a.state }).f, a.state, { code: "c" }, "user-1"),
+      complete(w, providerFetch({ state: b.state }).f, b.state, { code: "c" }, "user-2"),
     ]);
     expect([ra.status, rb.status].sort()).toEqual([200, 409]);
     expect(w.bindings.length).toBe(1);
@@ -182,36 +205,28 @@ describe("DigiLocker direct verification", () => {
   });
 
   it.each([
-    ["missing digilockerid", { access_token: "t", token_type: "Bearer" }],
-    ["short digilockerid", { access_token: "t", token_type: "Bearer", digilockerid: "abc" }],
-    ["non-bearer token", { access_token: "t", token_type: "mac", digilockerid: DLID }],
-    ["missing access token", { token_type: "Bearer", digilockerid: DLID }],
-  ])("fails closed on %s", async (_n, tokenBody) => {
+    ["missing id_token (unsigned token-response id alone)", async () => ({ access_token: "t", token_type: "Bearer", digilockerid: DLID })],
+    ["short token-response digilockerid", async () => ({ access_token: "t", token_type: "Bearer", digilockerid: "abc", id_token: await idTokenFor(DLID) })],
+    ["token-response id differs from signed id", async () => ({ access_token: "t", token_type: "Bearer", digilockerid: DLID2, id_token: await idTokenFor(DLID) })],
+    ["signed token without digilockerid", async () => ({ access_token: "t", token_type: "Bearer", digilockerid: DLID, id_token: await idTokenFor(undefined) })],
+    ["unsigned/garbage id_token", async () => ({ access_token: "t", token_type: "Bearer", digilockerid: DLID, id_token: "eyJ.eyJ.sig" })],
+    ["non-bearer token", async () => ({ access_token: "t", token_type: "mac", id_token: await idTokenFor(DLID) })],
+    ["missing access token", async () => ({ token_type: "Bearer", id_token: await idTokenFor(DLID) })],
+  ])("fails closed on %s", async (_n, build) => {
     const w = makeWorld(); const { state } = await startFlow(w);
-    const r = await complete(w, providerFetch({ tokenBody }).f, state);
+    currentState = state;
+    const r = await complete(w, providerFetch({ tokenBody: await build() }).f, state);
     expect(r.status).toBe(422);
     expect(w.verified.size).toBe(0);
+    expect(w.calls).not.toContain("server_idv_dl_complete_v2");
   });
 
-  it("userdetails approved: /user must confirm the same id; mismatch or missing scope fails closed", async () => {
-    const env = stageEnv({ DIGILOCKER_USERDETAILS_APPROVED: "true" });
-    const w = makeWorld(); const s1 = await startFlow(w, "user-1", env);
-    expect((await complete(w, providerFetch({ userId: DLID2 }).f, s1.state, { code: "c" }, "user-1", env)).status).toBe(422);
-    const s2 = await startFlow(w, "user-1", env);
-    expect((await complete(w, providerFetch({ userStatus: 403 }).f, s2.state, { code: "c" }, "user-1", env)).status).toBe(422);
-    expect(w.verified.size).toBe(0);
-    const s3 = await startFlow(w, "user-1", env);
-    const p = providerFetch();
-    expect((await complete(w, p.f, s3.state, { code: "c" }, "user-1", env)).status).toBe(200);
-    expect(p.log.some((l) => l.url.endsWith("/oauth2/1/user"))).toBe(true);
-  });
-
-  it("OpenID-only client: no digilockerid in the token response fails closed (never inferred from id_token)", async () => {
+  it("signed ID token alone (no token-response id) is sufficient", async () => {
     const w = makeWorld(); const { state } = await startFlow(w);
-    const tokenBody = { access_token: "t", token_type: "Bearer", scope: "openid", id_token: "eyJ.eyJ.sig" };
-    const r = await complete(w, providerFetch({ tokenBody }).f, state);
-    expect(r.status).toBe(422);
-    expect(w.verified.size).toBe(0);
+    currentState = state;
+    const tokenBody = { access_token: "t", token_type: "Bearer", scope: "openid", id_token: await idTokenFor(DLID) };
+    expect((await complete(w, providerFetch({ tokenBody }).f, state)).status).toBe(200);
+    expect(w.bindings[0].fp).toBe(await fingerprintDigiLockerId(FP1, DLID));
   });
 
   it("key rotation keeps duplicate and fraud-block matching via legacy fingerprints", async () => {
@@ -288,6 +303,15 @@ describe("DigiLocker direct verification", () => {
     expect(p.f).not.toHaveBeenCalled();
   });
 
+  it("legacy or missing auth mode never falls back to unsigned linking", async () => {
+    const w = makeWorld(); const p = providerFetch();
+    for (const env of [stageEnv({ DIGILOCKER_AUTH_MODE: "legacy" }), stageEnv({ DIGILOCKER_AUTH_MODE: "" })]) {
+      expect((await handleDigiLockerStart(req({ consentAcknowledged: true }), env, w.deps)).status).toBe(503);
+      expect((await handleDigiLockerComplete(req({ state: "a".repeat(64), code: "c" }), env, p.f, w.deps)).status).toBe(503);
+    }
+    expect(w.calls.length).toBe(0);
+  });
+
   it("Stage and Production are isolated by project ref and callback", () => {
     expect(readDigiLockerRuntime(stageEnv())).not.toBeNull();
     // Production project with the Stage callback (or vice versa) must be refused.
@@ -349,5 +373,33 @@ describe("migration 20261117090000 static guarantees", () => {
     expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.server_idv_dl_complete\([^)]*\) TO service_role;/);
     expect(sql).not.toMatch(/GRANT EXECUTE ON FUNCTION app_security\.enforce_verified_actor\([^)]*\) TO [^;]*authenticated/);
     expect(sql).not.toMatch(/GRANT EXECUTE ON FUNCTION public\.server_idv_dl_[a-z_]+\([^)]*\) TO [^;]*authenticated/);
+  });
+});
+
+describe("migration 20261119200000 (OIDC v2 badge provenance) static guarantees", () => {
+  const sql = readFileSync("supabase/forward-migrations/idv/20261119200000_idv_digilocker_oidc_v2_badge.sql", "utf8");
+  it("is additive and hardened; never stores raw ids or changes the identity gate", () => {
+    expect(sql.startsWith("-- Migration: 20261119200000_idv_digilocker_oidc_v2_badge.sql")).toBe(true);
+    expect(sql).toMatch(/begin;\s*set local lock_timeout = '5s';\s*set local statement_timeout = '30s';/);
+    expect(sql).not.toMatch(/DROP TABLE|DROP COLUMN|TRUNCATE|DROP FUNCTION/i);
+    expect(sql).not.toMatch(/digilockerid\s+text|aadhaar_kyc/i);
+    expect(sql).not.toMatch(/identity_verification_required'\s*,\s*'true'|SET setting_value/i);
+  });
+  it("badge requires signed provenance; legacy linking issues nothing", () => {
+    expect(sql).toMatch(/b\.evidence_method = 'oidc_v2_signed_id_token'/);
+    expect(sql).toMatch(/failure_code = 'LEGACY_LINK_DISABLED'/);
+    expect(sql).toMatch(/IF p_evidence_method IS DISTINCT FROM 'oidc_v2_signed_id_token' THEN/);
+  });
+  it("every function is SECURITY DEFINER with an empty search_path and minimal grants", () => {
+    const fns = sql.match(/CREATE OR REPLACE FUNCTION[\s\S]*?AS \$\$/g) ?? [];
+    expect(fns.length).toBe(7);
+    for (const f of fns) { expect(f).toMatch(/SECURITY DEFINER/); expect(f).toMatch(/SET search_path = ''/); }
+    expect(sql).toMatch(/REVOKE ALL ON FUNCTION app_security\.has_digilocker_badge\(uuid\) FROM PUBLIC, anon, authenticated;/);
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION app_security\.has_digilocker_badge\(uuid\) TO service_role;/);
+    expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.server_idv_dl_complete_v2\([^)]*\) FROM PUBLIC, anon, authenticated;/);
+    expect(sql).not.toMatch(/GRANT EXECUTE ON FUNCTION (public\.server_idv_dl_complete_v2|app_security\.impl_idv_dl_complete_v2)\([^)]*\) TO [^;]*(anon|authenticated)/);
+    expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.get_digilocker_badges\(uuid\[\]\) FROM PUBLIC;/);
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.get_digilocker_badges\(uuid\[\]\) TO anon, authenticated, service_role;/);
+    expect(sql).toMatch(/RAISE EXCEPTION 'TOO_MANY_USER_IDS'/);
   });
 });
