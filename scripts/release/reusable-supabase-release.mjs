@@ -560,6 +560,108 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
     }
     return check;
   }
+  if (candidate.id === 'moderation-google-cloud-v1') {
+    const query = `
+      BEGIN READ ONLY;
+      SET LOCAL statement_timeout = '15s';
+      SELECT jsonb_build_object(
+        'system_settings_google_exists', (
+          SELECT count(*) = 1 FROM public.app_system_settings
+          WHERE setting_key = 'moderation_google_cloud_enabled' AND setting_value = 'false'
+        ),
+        'system_settings_azure_exists', (
+          SELECT count(*) = 1 FROM public.app_system_settings
+          WHERE setting_key = 'moderation_azure_enabled'
+        ),
+        'system_settings_automation_exists', (
+          SELECT count(*) = 1 FROM public.app_system_settings
+          WHERE setting_key = 'moderation_automation_enabled'
+        ),
+        'registrar_search_path', (
+          SELECT count(*) = 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'app_security' AND p.proname = 'register_moderation_scan_receipt'
+            AND p.prosecdef AND p.proconfig @> ARRAY['search_path=""']::text[]
+        ),
+        'finalizer_search_path', (
+          SELECT count(*) = 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'app_security' AND p.proname = 'impl_finalize_moderation_result'
+            AND p.prosecdef AND p.proconfig @> ARRAY['search_path=""']::text[]
+        ),
+        'registrar_service_role', (
+          SELECT has_function_privilege('service_role', 'app_security.register_moderation_scan_receipt(uuid,uuid,uuid,integer,uuid,text,text,text,text,text[],text[],jsonb,jsonb,jsonb,integer)', 'EXECUTE') = true
+            AND has_function_privilege('public', 'app_security.register_moderation_scan_receipt(uuid,uuid,uuid,integer,uuid,text,text,text,text,text[],text[],jsonb,jsonb,jsonb,integer)', 'EXECUTE') = false
+            AND has_function_privilege('anon', 'app_security.register_moderation_scan_receipt(uuid,uuid,uuid,integer,uuid,text,text,text,text,text[],text[],jsonb,jsonb,jsonb,integer)', 'EXECUTE') = false
+            AND has_function_privilege('authenticated', 'app_security.register_moderation_scan_receipt(uuid,uuid,uuid,integer,uuid,text,text,text,text,text[],text[],jsonb,jsonb,jsonb,integer)', 'EXECUTE') = false
+        ),
+        'finalizer_service_role', (
+          SELECT has_function_privilege('service_role', 'app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)', 'EXECUTE') = true
+            AND has_function_privilege('public', 'app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)', 'EXECUTE') = false
+            AND has_function_privilege('anon', 'app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)', 'EXECUTE') = false
+            AND has_function_privilege('authenticated', 'app_security.impl_finalize_moderation_result(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)', 'EXECUTE') = false
+        ),
+        'finalizer_contains_google_cloud_logic', (
+          SELECT count(*) >= 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'app_security' AND p.proname IN ('impl_finalize_moderation_result', 'impl_finalize_moderation_result_azure_v1')
+            AND p.prosrc LIKE '%india_google_v1.0.0%'
+            AND p.prosrc LIKE '%india_dual_cloud_v1.0.0%'
+            AND p.prosrc LIKE '%FOR SHARE%'
+            AND p.prosrc LIKE '%365 days%'
+        ),
+        'scan_receipts_table_rls', (
+          SELECT c.relrowsecurity AND c.relforcerowsecurity
+          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'app_security' AND c.relname = 'listing_moderation_scan_receipts'
+        ),
+        'verified_hashes_table_rls', (
+          SELECT c.relrowsecurity AND c.relforcerowsecurity
+          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'app_security' AND c.relname = 'listing_media_verified_hashes'
+        ),
+        'migration_version_applied', (
+          SELECT CASE
+            WHEN to_regclass('supabase_migrations.schema_migrations') IS NOT NULL
+            THEN (SELECT count(*) = 1 FROM supabase_migrations.schema_migrations WHERE version = '20261119130000')
+            ELSE true
+          END
+        )
+      )::text;
+      COMMIT;
+    `;
+    let rawOutput;
+    if (runner) {
+      rawOutput = runner('psql', ['-XqAt', '-v', 'ON_ERROR_STOP=1', '-d', psqlUrl, '-c', query], env);
+    } else {
+      const res = spawnSync('psql', ['-XqAt', '-v', 'ON_ERROR_STOP=1', '-d', psqlUrl, '-c', query], {env, encoding: 'utf8'});
+      if (res.status !== 0) {
+        throw subprocessFailure(res, 'postflight_sql');
+      }
+      rawOutput = res.stdout;
+    }
+
+    let check;
+    try {
+      check = JSON.parse(rawOutput.trim());
+    } catch {
+      throw new Error('REUSABLE_RELEASE_POSTFLIGHT_INVALID_RESPONSE');
+    }
+
+    if (
+      !check.system_settings_google_exists ||
+      !check.system_settings_azure_exists ||
+      !check.system_settings_automation_exists ||
+      !check.registrar_search_path ||
+      !check.finalizer_search_path ||
+      !check.registrar_service_role ||
+      !check.finalizer_service_role ||
+      !check.finalizer_contains_google_cloud_logic ||
+      !check.scan_receipts_table_rls ||
+      !check.verified_hashes_table_rls ||
+      !check.migration_version_applied
+    ) {
+      throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
+    }
+    return check;
+  }
   if (candidate.id === CATALOGUE_CANDIDATE) {
     return runCataloguePostflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
   }

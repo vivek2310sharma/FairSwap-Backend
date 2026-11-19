@@ -114,6 +114,16 @@ export const CANDIDATES = Object.freeze({
     description: 'FairSwap Provider-Switchable Moderation Architecture V1',
     autoPromote: true
   }),
+  'moderation-google-cloud-v1': Object.freeze({
+    id: 'moderation-google-cloud-v1',
+    version: '20261119130000',
+    filename: '20261119130000_google_cloud_moderation_v1.sql',
+    path: 'supabase/forward-migrations/moderation-google-cloud-v1/20261119130000_google_cloud_moderation_v1.sql',
+    sha256: 'd7de383bf87d6c5bcadad1deead65a7c10ceff414b5164f5d73b5d1f8e9a2d51',
+    description: 'FairSwap Google Cloud & Quad-Mode Moderation Architecture V1',
+    requiredLedgerVersions: Object.freeze(['20261115120000']),
+    autoPromote: true
+  }),
   'accessories-v1-foundation': Object.freeze({
     id: 'accessories-v1-foundation',
     version: '20261102164135',

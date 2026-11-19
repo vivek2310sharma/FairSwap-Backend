@@ -21,6 +21,25 @@ function validateStorageOrigin(urls: string[], allowedHost: string): boolean {
   return true;
 }
 
+// Helper to retrieve Google Cloud Run ID token from metadata server when running on GCP
+async function getGcpIdToken(targetUrl: string): Promise<string | null> {
+  if (process.env.K_SERVICE || process.env.GOOGLE_CLOUD_PROJECT) {
+    try {
+      const metadataUrl = `http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=${encodeURIComponent(targetUrl)}`;
+      const res = await fetch(metadataUrl, {
+        headers: { "Metadata-Flavor": "Google" },
+        signal: AbortSignal.timeout(1500),
+      });
+      if (res.ok) {
+        return (await res.text()).trim();
+      }
+    } catch {
+      // Non-GCP or local fallback
+    }
+  }
+  return null;
+}
+
 export async function orchestrateModerationJob(
   job: ModerationJobRequest,
   config: ControllerConfig
@@ -127,12 +146,18 @@ export async function orchestrateModerationJob(
           expectedCategory: job.categorySlug,
         };
 
+        const visionHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+          "x-internal-secret": config.moderationSecret,
+        };
+        const visionIdToken = await getGcpIdToken(config.nodeVisionServiceUrl);
+        if (visionIdToken) {
+          visionHeaders["Authorization"] = `Bearer ${visionIdToken}`;
+        }
+
         const visionRes = await fetch(`${config.nodeVisionServiceUrl}/scan`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-internal-secret": config.moderationSecret,
-          },
+          headers: visionHeaders,
           body: JSON.stringify(visionPayload),
           signal: AbortSignal.timeout(config.timeoutMs),
         });
@@ -205,12 +230,18 @@ export async function orchestrateModerationJob(
           })),
         };
 
+        const ocrHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+          "x-internal-secret": config.moderationSecret,
+        };
+        const ocrIdToken = await getGcpIdToken(config.pythonOcrServiceUrl);
+        if (ocrIdToken) {
+          ocrHeaders["Authorization"] = `Bearer ${ocrIdToken}`;
+        }
+
         const ocrRes = await fetch(`${config.pythonOcrServiceUrl}/scan`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-internal-secret": config.moderationSecret,
-          },
+          headers: ocrHeaders,
           body: JSON.stringify(ocrPayload),
           signal: AbortSignal.timeout(config.timeoutMs),
         });

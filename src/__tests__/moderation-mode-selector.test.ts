@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { resolveModerationMode } from "../../supabase/functions/_shared/moderation-mode-selector";
 
-describe("Server-Side Moderation Mode Selector", () => {
+describe("Server-Side Moderation Mode Selector - Four Combinations", () => {
   const createMockSupabase = (settings: Record<string, string | null>, error: any = null) => {
     const queryResult = {
       data: Object.entries(settings).map(([setting_key, setting_value]) => ({
@@ -24,7 +24,7 @@ describe("Server-Side Moderation Mode Selector", () => {
     const supabase = createMockSupabase({
       moderation_automation_enabled: "false",
       moderation_azure_enabled: "true",
-      moderation_google_cloud_enabled: "false",
+      moderation_google_cloud_enabled: "true",
     });
 
     const res = await resolveModerationMode(supabase);
@@ -33,7 +33,7 @@ describe("Server-Side Moderation Mode Selector", () => {
     expect(res.mode).toBeUndefined();
   });
 
-  it("selects baseline mode when both Azure and Google Cloud are false", async () => {
+  it("Combination 1: selects baseline mode when neither Azure nor Google Cloud is enabled", async () => {
     const supabase = createMockSupabase({
       moderation_automation_enabled: "true",
       moderation_azure_enabled: "false",
@@ -42,11 +42,12 @@ describe("Server-Side Moderation Mode Selector", () => {
 
     const res = await resolveModerationMode(supabase);
     expect(res.enabled).toBe(true);
+    expect(res.allowed).toBe(true);
     expect(res.mode).toBe("baseline");
     expect(res.error).toBeUndefined();
   });
 
-  it("selects azure mode when moderation_azure_enabled is true", async () => {
+  it("Combination 2: selects azure mode when moderation_azure_enabled is true and google is false", async () => {
     const supabase = createMockSupabase({
       moderation_automation_enabled: "true",
       moderation_azure_enabled: "true",
@@ -55,24 +56,12 @@ describe("Server-Side Moderation Mode Selector", () => {
 
     const res = await resolveModerationMode(supabase);
     expect(res.enabled).toBe(true);
+    expect(res.allowed).toBe(true);
     expect(res.mode).toBe("azure");
     expect(res.error).toBeUndefined();
   });
 
-  it("fails closed on conflicting configuration (both providers enabled)", async () => {
-    const supabase = createMockSupabase({
-      moderation_automation_enabled: "true",
-      moderation_azure_enabled: "true",
-      moderation_google_cloud_enabled: "true",
-    });
-
-    const res = await resolveModerationMode(supabase);
-    expect(res.enabled).toBe(false);
-    expect(res.error).toBe("MODERATION_PROVIDER_CONFLICT_FAIL_CLOSED");
-    expect(res.mode).toBeUndefined();
-  });
-
-  it("identifies google_cloud mode when moderation_google_cloud_enabled is true", async () => {
+  it("Combination 3: selects google_cloud mode when moderation_google_cloud_enabled is true and azure is false", async () => {
     const supabase = createMockSupabase({
       moderation_automation_enabled: "true",
       moderation_azure_enabled: "false",
@@ -81,7 +70,23 @@ describe("Server-Side Moderation Mode Selector", () => {
 
     const res = await resolveModerationMode(supabase);
     expect(res.enabled).toBe(true);
+    expect(res.allowed).toBe(true);
     expect(res.mode).toBe("google_cloud");
+    expect(res.error).toBeUndefined();
+  });
+
+  it("Combination 4: selects dual_cloud mode when both Azure and Google Cloud are enabled", async () => {
+    const supabase = createMockSupabase({
+      moderation_automation_enabled: "true",
+      moderation_azure_enabled: "true",
+      moderation_google_cloud_enabled: "true",
+    });
+
+    const res = await resolveModerationMode(supabase);
+    expect(res.enabled).toBe(true);
+    expect(res.allowed).toBe(true);
+    expect(res.mode).toBe("dual_cloud");
+    expect(res.error).toBeUndefined();
   });
 
   it("fails closed when any required system setting is missing from database", async () => {
@@ -93,6 +98,7 @@ describe("Server-Side Moderation Mode Selector", () => {
 
     const res = await resolveModerationMode(supabase);
     expect(res.enabled).toBe(false);
+    expect(res.allowed).toBe(false);
     expect(res.error).toContain("MISSING_SYSTEM_SETTING: moderation_azure_enabled");
   });
 
@@ -101,6 +107,21 @@ describe("Server-Side Moderation Mode Selector", () => {
 
     const res = await resolveModerationMode(supabase);
     expect(res.enabled).toBe(false);
-    expect(res.error).toBe("SYSTEM_SETTINGS_QUERY_FAILED: connection refused");
+    expect(res.allowed).toBe(false);
+    expect(res.error).toContain("SYSTEM_SETTINGS_QUERY_FAILED: connection refused");
+  });
+
+  it("fails closed when database returns null data", async () => {
+    const supabase = {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          in: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      }),
+    } as any;
+
+    const res = await resolveModerationMode(supabase);
+    expect(res.enabled).toBe(false);
+    expect(res.error).toBe("FAILED_TO_LOAD_MODERATION_SETTINGS: NO_DATA");
   });
 });

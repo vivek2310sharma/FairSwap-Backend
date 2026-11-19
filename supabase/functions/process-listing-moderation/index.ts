@@ -1,10 +1,13 @@
 // supabase/functions/process-listing-moderation/index.ts
 // FairSwap Edge Function: process-listing-moderation
 // Authorizes callers via service-role Vault token, claims batch of pending jobs,
-// resolves moderation provider mode server-side, and executes authoritative moderation.
+// resolves moderation provider mode server-side across 4 combinations:
+// 1. Supabase + OpenAI (baseline)
+// 2. Supabase + OpenAI + Azure
+// 3. Supabase + OpenAI + Google
+// 4. Supabase + OpenAI + Azure + Google
 // Fail-closed invariants:
-// - Conflicts (both Azure and Google Cloud enabled) fail closed.
-// - Google Cloud enabled without implemented adapter fails closed.
+// - Provider enabled without configuration fails closed.
 // - Provider failures never auto-approve; always route to review or retry.
 
 import { createClient } from "@supabase/supabase-js";
@@ -100,25 +103,30 @@ export async function processListingModerationHandler(req: Request): Promise<Res
     );
   }
 
-  if (modeResolution.mode === "google_cloud") {
+  // 2. Snapshot Provider Mode and Configuration for this batch
+  const selectedMode = modeResolution.mode;
+  const azureEndpoint = getEnv("AZURE_MODERATION_ENDPOINT");
+  const azureSecret = getEnv("AZURE_MODERATION_SECRET");
+  const googleCloudEndpoint = getEnv("GOOGLE_CLOUD_MODERATION_ENDPOINT");
+  const googleCloudSecret = getEnv("GOOGLE_CLOUD_MODERATION_SECRET");
+  const openAiApiKey = getEnv("OPENAI_API_KEY");
+
+  const needsAzure = selectedMode === "azure" || selectedMode === "dual_cloud";
+  const needsGoogle = selectedMode === "google_cloud" || selectedMode === "dual_cloud";
+
+  if (needsAzure && (!azureEndpoint || !azureSecret)) {
     return new Response(
       JSON.stringify({
-        error: "GOOGLE_CLOUD_PROVIDER_NOT_IMPLEMENTED_FAIL_CLOSED",
+        error: "AZURE_PROVIDER_ENABLED_BUT_UNCONFIGURED_FAIL_CLOSED",
       }),
       { status: 500, headers: { "Content-Type": "application/json" } }
     );
   }
 
-  // 2. Snapshot Provider Mode and Configuration for this batch
-  const selectedMode = modeResolution.mode;
-  const azureEndpoint = getEnv("AZURE_MODERATION_ENDPOINT");
-  const azureSecret = getEnv("AZURE_MODERATION_SECRET");
-  const openAiApiKey = getEnv("OPENAI_API_KEY");
-
-  if (selectedMode === "azure" && (!azureEndpoint || !azureSecret)) {
+  if (needsGoogle && (!googleCloudEndpoint || !googleCloudSecret)) {
     return new Response(
       JSON.stringify({
-        error: "AZURE_PROVIDER_ENABLED_BUT_UNCONFIGURED_FAIL_CLOSED",
+        error: "GOOGLE_CLOUD_PROVIDER_ENABLED_BUT_UNCONFIGURED_FAIL_CLOSED",
       }),
       { status: 500, headers: { "Content-Type": "application/json" } }
     );
@@ -128,7 +136,10 @@ export async function processListingModerationHandler(req: Request): Promise<Res
     mode: selectedMode,
     azureEndpoint,
     azureSecret,
+    googleCloudEndpoint,
+    googleCloudSecret,
     openAiApiKey,
+    snapshotSettings: modeResolution.settings,
   };
 
   // 3. Claim batch under transaction lock

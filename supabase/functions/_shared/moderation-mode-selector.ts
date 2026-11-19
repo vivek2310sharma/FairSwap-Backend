@@ -1,10 +1,15 @@
 // supabase/functions/_shared/moderation-mode-selector.ts
 // Secure server-side moderation mode selector.
-// Fails closed if settings conflict, Google Cloud is active, or killswitch vetoes.
+// Supports 4 Supabase-controlled moderation combinations:
+// 1. Supabase + OpenAI (baseline): azureEnabled=false, googleCloudEnabled=false
+// 2. Supabase + OpenAI + Azure: azureEnabled=true, googleCloudEnabled=false
+// 3. Supabase + OpenAI + Google: azureEnabled=false, googleCloudEnabled=true
+// 4. Supabase + OpenAI + Azure + Google: azureEnabled=true, googleCloudEnabled=true
+// Fails closed if required system settings are missing or killswitch vetoes.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type ModerationProviderMode = "baseline" | "azure" | "google_cloud";
+export type ModerationProviderMode = "baseline" | "azure" | "google_cloud" | "dual_cloud";
 
 export interface ModerationSettingsState {
   automationEnabled: boolean;
@@ -93,27 +98,27 @@ export async function resolveModerationMode(
     };
   }
 
-  // Rule 2 & 4: Both provider flags true must fail closed
+  // Combination 4: Both Azure and Google Cloud enabled (dual cloud mode)
   if (azureEnabled && googleCloudEnabled) {
     return {
-      enabled: false,
-      allowed: false,
-      error: "MODERATION_PROVIDER_CONFLICT_FAIL_CLOSED",
+      enabled: true,
+      allowed: true,
+      mode: "dual_cloud",
       settings,
     };
   }
 
-  // Rule 2 & 4: Google Cloud enabled without an implemented adapter must fail closed
+  // Combination 3: Google Cloud only
   if (googleCloudEnabled) {
     return {
       enabled: true,
-      allowed: false,
+      allowed: true,
       mode: "google_cloud",
-      error: "UNIMPLEMENTED_PROVIDER: Google Cloud moderation adapter is not configured or implemented",
       settings,
     };
   }
 
+  // Combination 2: Azure only
   if (azureEnabled) {
     return {
       enabled: true,
@@ -123,7 +128,7 @@ export async function resolveModerationMode(
     };
   }
 
-  // Baseline default when neither cloud provider switch is active
+  // Combination 1: Baseline default when neither cloud provider switch is active
   return {
     enabled: true,
     allowed: true,
