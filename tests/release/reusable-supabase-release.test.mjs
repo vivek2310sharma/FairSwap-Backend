@@ -9,18 +9,21 @@ import {join, resolve as resolvePath} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {rootCertificates} from 'node:tls';
 import {X509Certificate, createHash} from 'node:crypto';
-import {getCandidate, verifyCandidateSha, CANDIDATES, MOBILE_CATALOGUE_CANDIDATE, planDispatch, ACCESSORIES_WEB, WEARABLES_WEB, WEARABLES_E2E_WAIVER, WEB_PINS, EXISTING_INSTALLATIONS, adoptionAttestation, getAdoption} from '../../scripts/release/reusable-candidates.mjs';
+import {getCandidate, verifyCandidateSha, CANDIDATES, MOBILE_CATALOGUE_CANDIDATE, V3_PRODUCTION_BATCH, V3_PRODUCTION_SEQUENCE, V3_IDENTITY_PREREQUISITE, planDispatch, ACCESSORIES_WEB, WEARABLES_WEB, WEARABLES_E2E_WAIVER, WEB_PINS, EXISTING_INSTALLATIONS, adoptionAttestation, getAdoption} from '../../scripts/release/reusable-candidates.mjs';
 import {
   ADOPTED_STATUS, MOBILE_PHONES_HISTORY, WEARABLES_E2E, assertLedgerTail, assertMobilePhonesProvenance, requirePriorCommitEvidence, runWearablesPostflight,
   WEARABLES_ANCESTOR_EVIDENCE, WEARABLES_OUT_OF_ORDER, TABLETS_V2_LEDGER, MODERATION_SWITCHING_LEDGER, assertSwitchingPrerequisite, assertCliSupportsIncludeAll, runWearablesPreflight, validateCrossCommitReceipt, verifyE2eEvidence, wearablesPostflightChecks, AZURE_FINALIZER_BODY_SHA256, SWITCHING_FINALIZER_BODY_SHA256
 } from '../../scripts/release/wearables-v1-release.mjs';
 import {readTabletsLedger, verifyTabletsLedger} from '../../scripts/release/tablets-v1-release.mjs';
 import {assertLedgerOrdering, assertPreflight, parseLedgerVersions, postflightKeys, postflightQuery, preflightEnabledQuery, preflightQuery, readZipEntries, recoveredFoundationSha, requireStageEvidence, runAccessoriesPostflight, runLivePreflight, validateReceipt, verifyAccessoriesLedger, verifyHistoryPreserved, verifyWebDeployments} from '../../scripts/release/accessories-v1-release.mjs';
-import {adoptExistingInstallation, parsePendingDryRun, verifyLedgerVersion, releaseReusable, subprocessFailure, REFS, readMobileCatalogueSnapshot, verifyMobileCataloguePostflight, verifyMobileCatalogueTestReceipt} from '../../scripts/release/reusable-supabase-release.mjs';
+import {adoptExistingInstallation, parsePendingDryRun, verifyLedgerVersion, verifyRemotePostflight, releaseReusable, releaseV3ProductionBatch, subprocessFailure, REFS, readMobileCatalogueSnapshot, verifyMobileCataloguePostflight, verifyMobileCatalogueTestReceipt} from '../../scripts/release/reusable-supabase-release.mjs';
 import {
   IDV_DIGILOCKER_CANDIDATE, IDV_DIGILOCKER_FUNCTIONS, IDV_DIGILOCKER_POSTFLIGHT, IDV_DIGILOCKER_PREFLIGHT, IDV_DIGILOCKER_SCOPE, IDV_DIGILOCKER_TAIL,
   IDV_FOUNDATION_LEDGER, assertIdvDigilockerLedger, snapshotSql as idvSnapshotSql, verifyIdvDigilockerTestReceipt
 } from '../../scripts/release/idv-digilocker-v1-release.mjs';
+
+import {verifyV3ProductionEvidence, v3ProductionState} from '../../scripts/release/v3-production-evidence.mjs';
+import {setupOrdinaryGoodsFixture} from '../ordinary-goods/fixture.mjs';
 
 test('candidate registry correctly registers moderation-analytics-v1', () => {
   const c = getCandidate('moderation-analytics-v1');
@@ -424,7 +427,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
+  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -3696,3 +3699,161 @@ test('native PostgreSQL: V3 property lifecycle accepts LF and CRLF but rejects m
       pg.stop();
     }
   });
+
+const v3Manifest = 'bebcdecc9e2ec72ece06f2c05b5ee12c09183c15bcf9f47a03450ed6bc0461ae';
+
+test('V3 Production requires the full pinned manifest, seven Test receipts, and a trusted batch dispatch', async () => {
+  const evidence = verifyV3ProductionEvidence(process.cwd(), v3Manifest);
+  assert.deepEqual([...evidence.keys()], V3_PRODUCTION_SEQUENCE.slice(1));
+  assert.throws(() => verifyV3ProductionEvidence(process.cwd(), 'a'.repeat(64)), /MANIFEST_MISMATCH/);
+  assert.throws(() => planDispatch({candidateId: V3_IDENTITY_PREREQUISITE}), /BATCH_REQUIRED/);
+  await assert.rejects(releaseV3ProductionBatch({
+    candidateId: V3_PRODUCTION_BATCH, environment: 'FairSwapProd', context: {},
+  }), /CONTEXT_REQUIRED/);
+  await assert.rejects(releaseReusable({
+    candidateId: V3_IDENTITY_PREREQUISITE, environment: 'FairSwapProd', context: {},
+  }), /BATCH_REQUIRED/);
+});
+
+test('native PostgreSQL: Production V3 installs dark with the existing seller lifecycle, RLS and identity checks',
+  {skip: pgBin ? false : 'no local PostgreSQL binaries'}, async () => {
+    const pg = startPg(pgBin);
+    const seller = '9df867d3-6751-425f-8b41-14bbc4cceb01';
+    const other = '9df867d3-6751-425f-8b41-14bbc4cceb02';
+    const legacy = '9df867d3-6751-425f-8b41-14bbc4cceb03';
+    const replayGate = "update public.app_system_settings set setting_value='true' where setting_key='identity_verification_required'";
+    const actor = `set role authenticated; set "request.user"='${seller}';`;
+    let before;
+    try {
+      await setupOrdinaryGoodsFixture(pg.run, {beforeV3() {
+        pg.run(`
+          create table public.user_identity_verifications(
+            user_id uuid primary key, verification_status text, badge_issued boolean, revoked_at timestamptz, valid_until timestamptz);
+          insert into public.categories(slug,name,is_active,new_listing_enabled)
+            values ('legacy-v3-fixture','Legacy fixture',true,true);
+          insert into auth.users values ('${seller}'), ('${other}');
+        `);
+        before = v3ProductionState(pg.run, {beforePrerequisite: true, beforeProperty: true});
+        assert.throws(() => pg.run(`begin;
+          insert into public.app_system_settings values ('identity_verification_required','true',null);
+          ${readFileSync(verifyCandidateSha(V3_IDENTITY_PREREQUISITE).fullPath, 'utf8')}
+        `), /V3_PRODUCTION_IDENTITY_GATE_MUST_BE_OFF/);
+        assert.deepEqual(v3ProductionState(pg.run, {beforePrerequisite: true, beforeProperty: true}), before);
+        pg.run(readFileSync(verifyCandidateSha(V3_IDENTITY_PREREQUISITE).fullPath, 'utf8'));
+        assert.deepEqual(v3ProductionState(pg.run, {beforeProperty: true}), before);
+      }});
+      assert.deepEqual(v3ProductionState(pg.run), before);
+      assert.deepEqual(await verifyRemotePostflight('FairSwapProd', 'v3-require-active-seller-identity',
+        'test-socket', {}, (_, args) => pg.run(args.at(-1))), {contracts: 58, disabled: 58});
+      assert.equal(pg.run(`${actor} select public.ordinary_goods_v3()::text;`).trim(), '{}');
+      assert.throws(() => pg.run(`${actor} select * from app_security.ordinary_goods_contracts_v3;`), /permission denied/);
+      assert.throws(() => pg.run(`${actor} select app_security.enforce_verified_actor('${other}',true);`), /permission denied/);
+      assert.throws(() => pg.run(`${actor} insert into public.listings(seller_id, category_id)
+        select '${other}', id from public.categories where slug='legacy-v3-fixture';`), /row-level security/);
+      pg.run(`${actor} insert into public.listings(id,seller_id,category_id)
+        select '${legacy}', '${seller}', id from public.categories where slug='legacy-v3-fixture';`);
+      assert.equal(pg.run(`select count(*) from public.listings where id='${legacy}';`).trim(), '1');
+      assert.throws(() => pg.run(`${actor} select app_security.impl_seller_submit_listing('${legacy}');`),
+        /description is required|condition is required|description must be/);
+      assert.throws(() => pg.run(`${replayGate}; ${actor}
+        insert into public.listings(seller_id,category_id)
+          select '${seller}',id from public.categories where slug='legacy-v3-fixture';`), /IDENTITY_VERIFICATION_REQUIRED/);
+      assert.deepEqual(v3ProductionState(pg.run), before);
+      assert.throws(() => pg.run(`${replayGate};
+        insert into public.user_identity_verifications values ('${seller}','verified',true,now(),null);
+        ${actor}
+        insert into public.listings(seller_id,category_id)
+          select '${seller}',id from public.categories where slug='legacy-v3-fixture';`), /IDENTITY_VERIFICATION_REQUIRED/);
+      assert.throws(() => pg.run(`${replayGate};
+        insert into public.user_identity_verifications values ('${seller}','verified',true,null,null);
+        ${actor} set request.account='suspended';
+        insert into public.listings(seller_id,category_id)
+          select '${seller}',id from public.categories where slug='legacy-v3-fixture';`), /IDENTITY_VERIFICATION_REQUIRED/);
+      assert.deepEqual(v3ProductionState(pg.run), before);
+      pg.run(`
+        insert into public.cities values ('9df867d3-6751-425f-8b41-14bbc4cceb04',true,'City','State');
+        update public.listings set title='Legacy listing', description='Legacy item with a ready photo',
+          city_id='9df867d3-6751-425f-8b41-14bbc4cceb04',
+          pin_code='560001', condition='good', price_type='fixed', price_paise=100
+        where id='${legacy}';
+        insert into public.listing_media (id,listing_id,processing_status)
+          values ('9df867d3-6751-425f-8b41-14bbc4cceb05','${legacy}','ready');
+      `);
+      assert.throws(() => pg.run(`set role authenticated; set "request.user"='${other}';
+        select app_security.impl_seller_submit_listing('${legacy}');`), /does not own/);
+      const legacySubmission = JSON.parse(pg.run(`${actor} select app_security.impl_seller_submit_listing('${legacy}');`));
+      assert.equal(legacySubmission.status, 'pending_review');
+      assert.equal(legacySubmission.revision, 1);
+    } finally {
+      pg.stop();
+    }
+  });
+
+test('V3 Production dry-runs one migration at a time, verifies Test ledger statements, and stops at first drift', async () => {
+  const evidence = verifyV3ProductionEvidence(process.cwd(), v3Manifest);
+  const context = {...baseEnv, EXPECTED_SHA: v3Manifest, TARGET: 'production',
+    GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
+    GITHUB_REPOSITORY: 'vivek2310sharma/FairSwap-Backend',
+    GITHUB_WORKFLOW_REF: 'vivek2310sharma/FairSwap-Backend/.github/workflows/reusable-supabase-release.yml@refs/heads/main',
+    GITHUB_ACTOR: 'vivek2310sharma', GITHUB_TRIGGERING_ACTOR: 'vivek2310sharma'};
+  for (const fault of [null, 'extra pending', 'wrong statements', 'enabled contract', 'existing V3']) {
+    const receiptDir = mkdtempSync(join(tmpdir(), 'fs-v3-production-receipts-'));
+    const taxonomy = getCandidate('taxonomy-v2-catalogue');
+    const row = (version, name, digest = 'b'.repeat(64)) =>
+      ({version, name, hasStatements: true, statementCount: 1, statementsSha256: digest});
+    const candidateRow = (c, digest = evidence.get(c.id)) => row(c.version, c.filename.slice(15, -4), digest);
+    const ledgerRows = [...baseHistory.map(v => row(v, 'baseline')), candidateRow(taxonomy)];
+    if (fault === 'existing V3') ledgerRows.push(candidateRow(getCandidate(V3_PRODUCTION_SEQUENCE[1])));
+    let index = 0;
+    let current;
+    let applied;
+    const appliedIds = [];
+    const runner = (cmd, args) => {
+      if (cmd === 'supabase' && args.includes('--version')) {
+        const c = getCandidate(V3_PRODUCTION_SEQUENCE[index++]);
+        applied = false;
+        const before = ledgerRows.map(r => r.version);
+        current = makeRunner({before, after: [...before, c.version], filename: c.filename,
+          sql: q => {
+            if (q.includes("'identity'")) return {identity: true, lifecycle: true, categories: 'categories', policies: 'policies'};
+            if (q.includes('ordinary_goods_contracts_v3')) {
+              const count = applied ? c.unifiedPublishingV3.count : c.unifiedPublishingV3.previousCount;
+              return {contracts: count, disabled: fault === 'enabled contract' && applied ? count - 1 : count, security: true};
+            }
+            return ledgerRows;
+          }});
+      }
+      assert.ok(!args.includes('--include-all'));
+      if (args.includes('--dry-run') && fault === 'extra pending') {
+        return `${getCandidate(V3_PRODUCTION_SEQUENCE[0]).filename}\n20261119000000_unexpected.sql`;
+      }
+      if (args.includes('--yes')) {
+        const id = V3_PRODUCTION_SEQUENCE[index - 1];
+        const c = getCandidate(id);
+        appliedIds.push(id);
+        ledgerRows.push(candidateRow(c, fault === 'wrong statements' && c.unifiedPublishingV3 ? 'c'.repeat(64) : undefined));
+        applied = true;
+      }
+      return current(cmd, args);
+    };
+    try {
+      const release = releaseV3ProductionBatch({environment: 'FairSwapProd', candidateId: V3_PRODUCTION_BATCH,
+        context, runner, receiptDir});
+      if (fault) {
+        await assert.rejects(release, /DRY_RUN_MISMATCH|TEST_LEDGER_MISMATCH|DISABLED_CONTRACT_MISMATCH|V3_LEDGER_MISMATCH/);
+        assert.equal(appliedIds.length, ['wrong statements', 'enabled contract'].includes(fault) ? 2 : 0);
+        assert.ok(!existsSync(join(receiptDir, 'v3-require-active-seller-identity-fairswapprod.json')));
+      } else {
+        await release;
+        assert.deepEqual(appliedIds, V3_PRODUCTION_SEQUENCE);
+        const last = JSON.parse(readFileSync(join(receiptDir, 'v3-require-active-seller-identity-fairswapprod.json')));
+        assert.equal(last.disabledContractCount, 58);
+        assert.equal(last.identityEnforcement, 'off');
+        assert.equal(last.ledgerStatementsSha256, last.testLedgerStatementsSha256);
+        assert.equal(readFileSync(join(receiptDir, 'SHA256SUMS_fairswapprod'), 'utf8').trim().split('\n').length, 8);
+      }
+    } finally {
+      rmSync(receiptDir, {recursive: true, force: true});
+    }
+  }
+});

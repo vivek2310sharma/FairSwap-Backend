@@ -8,7 +8,7 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
-import {CANDIDATES, adoptionAttestation, getAdoption, getCandidate, planDispatch, verifyCandidateSha, PROJECT_REFS, MOBILE_CATALOGUE_CANDIDATE, V3_TEST_DIAGNOSTIC_LEDGER} from './reusable-candidates.mjs';
+import {CANDIDATES, adoptionAttestation, getAdoption, getCandidate, planDispatch, verifyCandidateSha, PROJECT_REFS, MOBILE_CATALOGUE_CANDIDATE, V3_TEST_DIAGNOSTIC_LEDGER, V3_PRODUCTION_BATCH, V3_PRODUCTION_SEQUENCE, V3_IDENTITY_PREREQUISITE} from './reusable-candidates.mjs';
 import {
   assertLedgerOrdering, parseLedgerVersions, assertStageInputs, requireStageEvidence, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved, verifyAccessoriesLedger
 } from './accessories-v1-release.mjs';
@@ -24,6 +24,31 @@ import {readValiditySnapshot, verifyValidityPostflight, VALIDITY_SCOPE} from './
 import {
   IDV_DIGILOCKER_CANDIDATE, IDV_DIGILOCKER_SCOPE, assertIdvDigilockerLedger, idvDigilockerReceiptFields, runIdvDigilockerPostflight, runIdvDigilockerPreflight
 } from './idv-digilocker-v1-release.mjs';
+
+import {verifyV3ProductionEvidence, v3ProductionState} from './v3-production-evidence.mjs';
+
+const productionBatch = Symbol('V3 Production batch');
+
+export async function releaseV3ProductionBatch(options = {}) {
+  const context = options.context ?? process.env;
+  if (options.environment !== 'FairSwapProd' || options.candidateId !== V3_PRODUCTION_BATCH ||
+      context.TARGET !== 'production' || context.GITHUB_ACTIONS !== 'true' ||
+      context.GITHUB_EVENT_NAME !== 'workflow_dispatch' || context.GITHUB_REF !== 'refs/heads/main' ||
+      context.GITHUB_REPOSITORY !== 'vivek2310sharma/FairSwap-Backend' ||
+      context.GITHUB_WORKFLOW_REF !== 'vivek2310sharma/FairSwap-Backend/.github/workflows/reusable-supabase-release.yml@refs/heads/main' ||
+      context.GITHUB_ACTOR !== 'vivek2310sharma' || context.GITHUB_TRIGGERING_ACTOR !== 'vivek2310sharma') {
+    throw new Error('V3_PRODUCTION_BATCH_CONTEXT_REQUIRED');
+  }
+  const evidence = verifyV3ProductionEvidence(root, context.EXPECTED_SHA);
+  const receiptDir = options.receiptDir ?? resolve('release-receipts');
+  const manifest = [];
+  for (const candidateId of V3_PRODUCTION_SEQUENCE) {
+    await releaseReusable({...options, context, candidateId, receiptDir, [productionBatch]: evidence});
+    const filename = `${candidateId}-fairswapprod.json`;
+    manifest.push(`${sha(readFileSync(join(receiptDir, filename)))}  ${filename}\n`);
+    writeFileSync(join(receiptDir, 'SHA256SUMS_fairswapprod'), manifest.join(''), {mode: 0o600});
+  }
+}
 
 export const REFS = PROJECT_REFS;
 
@@ -259,7 +284,7 @@ export function verifyMobileCataloguePostflight(before, exec) {
   return {verified: true};
 }
 
-function verifyDisabledV3(count, exec) {
+function verifyDisabledV3(count, exec, production = false) {
   const raw = exec(`
     BEGIN READ ONLY;
     SET LOCAL statement_timeout = '15s';
@@ -270,6 +295,18 @@ function verifyDisabledV3(count, exec) {
           AND c.macro_category=coalesce(to_jsonb(g)->>'macro_category','goods') AND c.posting_flow=coalesce(to_jsonb(g)->>'posting_flow','generic')
           AND NOT c.is_active AND NOT c.new_listing_enabled AND c.status='coming_soon'
       )::integer
+      ${production ? `, 'security', (
+        select count(*)=2 and coalesce(bool_and(c.relrowsecurity and c.relforcerowsecurity
+          and not has_table_privilege('anon',c.oid,'SELECT, INSERT, UPDATE, DELETE')
+          and not has_table_privilege('authenticated',c.oid,'SELECT, INSERT, UPDATE, DELETE')
+          and not has_table_privilege('service_role',c.oid,'SELECT, INSERT, UPDATE, DELETE')),false)
+        from pg_class c where c.oid in ('app_security.ordinary_goods_contracts_v3'::regclass,
+          'app_security.ordinary_goods_sessions_v3'::regclass)
+      ) and exists (
+        select 1 from pg_trigger t where t.tgrelid='public.listings'::regclass and t.tgenabled='O'
+          and t.tgfoid='app_security.ordinary_goods_listing_guard_v3()'::regprocedure
+          and t.tgtype=21 and not t.tgisinternal
+      )` : ''}
     )::text
     FROM app_security.ordinary_goods_contracts_v3 g
     LEFT JOIN public.categories c ON c.id=g.category_id
@@ -277,16 +314,20 @@ function verifyDisabledV3(count, exec) {
     COMMIT;
   `);
   const result = JSON.parse(raw.trim());
-  if (result?.contracts !== count || result?.disabled !== count) {
+  if (result?.contracts !== count || result?.disabled !== count || (production && result.security !== true)) {
     throw new Error('REUSABLE_RELEASE_V3_DISABLED_CONTRACT_MISMATCH');
   }
-  return result;
+  return {contracts: result.contracts, disabled: result.disabled};
 }
 
 export async function verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore) {
   const candidate = getCandidate(candidateId);
+  if (candidateId === V3_IDENTITY_PREREQUISITE) {
+    return v3ProductionState(sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'), {beforeProperty: true});
+  }
   if (candidate.unifiedPublishingV3) {
-    return verifyDisabledV3(candidate.unifiedPublishingV3.count, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+    return verifyDisabledV3(candidate.unifiedPublishingV3.count,
+      sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'), environment === 'FairSwapProd');
   }
   if (candidate.id === 'moderation-analytics-v1') {
     // Read-only SQL query to verify exact function attributes, empty search_path, volatility, definer/invoker, and permissions.
@@ -609,14 +650,18 @@ export async function releaseReusable({
   context = process.env,
   runner,
   fetcher = fetch,
-  receiptDir = resolve('release-receipts')
+  receiptDir = resolve('release-receipts'),
+  [productionBatch]: v3ProductionEvidence,
 }) {
   if (!REFS[environment]) {
     throw new Error(`REUSABLE_RELEASE_INVALID_ENVIRONMENT: ${environment}`);
   }
   const candidate = getCandidate(candidateId);
   // Test-only candidates can never reach Production, whatever the workflow inputs or job conditions.
-  if (candidate.testOnly && environment !== 'FairSwapTest') {
+  const v3Production = environment === 'FairSwapProd' && v3ProductionEvidence !== undefined;
+  const v3IdentityPrerequisite = candidateId === V3_IDENTITY_PREREQUISITE;
+  if (v3IdentityPrerequisite && !v3Production) throw new Error('V3_PRODUCTION_BATCH_REQUIRED');
+  if (candidate.testOnly && environment !== 'FairSwapTest' && !v3Production) {
     throw new Error('REUSABLE_RELEASE_TEST_ONLY_CANDIDATE');
   }
   const projectRef = REFS[environment];
@@ -757,7 +802,7 @@ export async function releaseReusable({
     const wearables = candidate.id.startsWith('wearables-v1-');
     // Tablets, Wearables and Mobile Catalogue pin the ledger: history is read before apply, must not change, and the installed
     // statements hash is carried Test -> Production through the receipts.
-    const v3 = Boolean(candidate.unifiedPublishingV3);
+    const v3 = Boolean(candidate.unifiedPublishingV3) || v3IdentityPrerequisite;
     const pinned = v3 || tablets || wearables || mobileCatalogue || listingValidity || taxonomy || catalogueUpdate || idvDigilocker;
     const ordered = v3 || candidate.strict || mobileCatalogue || listingValidity || taxonomy || idvDigilocker;
     const label = v3 ? 'V3' : idvDigilocker ? 'IDV_DIGILOCKER' : taxonomy ? 'TAXONOMY' : listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
@@ -787,6 +832,10 @@ export async function releaseReusable({
       }
     }
 
+    const readV3ProductionState = options =>
+      v3ProductionState(sql => psqlQuery(sql, psqlUrl, env, runner, 'v3_production_state'), options);
+    let productionStateBefore;
+    const testV3Ledger = v3ProductionEvidence?.get(candidateId);
     if (pinned) {
       // A pre-existing entry has no trusted receipt tying it to the reviewed source bytes.
       if (isAlreadyApplied) throw new Error(`REUSABLE_RELEASE_${label}_ALREADY_RECORDED`);
@@ -798,6 +847,20 @@ export async function releaseReusable({
       }
       // Environment-specific hosted foundation row and the exact reviewed newer tail; never repaired or rewritten.
       if (idvDigilocker) outOfOrder = assertIdvDigilockerLedger(environment, ledgerBefore);
+      if (v3Production) {
+        if (ledgerBefore.some(row => /digilocker.*(?:diag|inspect)|(?:diag|inspect).*digilocker/i.test(row.name))) {
+          throw new Error('V3_PRODUCTION_TEST_DIAGNOSTIC_PRESENT');
+        }
+        const prior = V3_PRODUCTION_SEQUENCE.slice(0, V3_PRODUCTION_SEQUENCE.indexOf(candidateId));
+        for (const id of prior) {
+          const entry = getCandidate(id);
+          const row = ledgerBefore.find(item => item.version === entry.version);
+          if (!row?.hasStatements || row.name !== entry.filename.slice(15, -4) ||
+              (v3ProductionEvidence.has(id) && row.statementsSha256 !== v3ProductionEvidence.get(id))) {
+            throw new Error('V3_PRODUCTION_BATCH_PREFIX_MISMATCH');
+          }
+        }
+      }
       if (v3) {
         const diagnostic = ledgerBefore.find(row => row.version === V3_TEST_DIAGNOSTIC_LEDGER.version);
         if (diagnostic && (environment !== 'FairSwapTest' || diagnostic.name !== V3_TEST_DIAGNOSTIC_LEDGER.name ||
@@ -830,13 +893,20 @@ export async function releaseReusable({
           ledgerBefore.find(row => row.version === foundationVersion)?.statementsSha256 !== context.TABLETS_FOUNDATION_LEDGER_SHA) {
         throw new Error(`REUSABLE_RELEASE_${label}_FOUNDATION_EVIDENCE_MISMATCH`);
       }
-      if (!mobileCatalogue && !listingValidity && !taxonomy && !idvDigilocker && environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
+      if (!v3Production && !mobileCatalogue && !listingValidity && !taxonomy && !idvDigilocker && environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
         throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_EVIDENCE_REQUIRED`);
       }
       if (ledgerBefore.length !== beforeRemote.size || ledgerBefore.some(row =>
         !beforeRemote.has(row.version) || (row.version >= candidate.version && !outOfOrder.ahead.includes(row.version)))) {
         throw new Error(`REUSABLE_RELEASE_${label}_LEDGER_MISMATCH`);
       }
+    }
+
+    if (v3Production) {
+      productionStateBefore = readV3ProductionState({
+        beforePrerequisite: v3IdentityPrerequisite,
+        beforeProperty: candidate.version <= getCandidate('property-intake-v3').version,
+      });
     }
 
     if (recovering || recheckProductionFoundation) {
@@ -865,7 +935,8 @@ export async function releaseReusable({
     } else {
       if (candidate.unifiedPublishingV3?.previousCount) {
         phase = 'preflight';
-        verifyDisabledV3(candidate.unifiedPublishingV3.previousCount, sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
+        verifyDisabledV3(candidate.unifiedPublishingV3.previousCount,
+          sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'), v3Production);
       }
       // Standard path: candidate-only dry run, migration apply, ledger verification and postflight
       if (taxonomy) {
@@ -924,7 +995,7 @@ export async function releaseReusable({
       if (pinned) {
         ledgerStatementsSha256 = verifyTabletsLedger(ledgerBefore, readLedger(), candidate);
         const testLedger = idvDigilocker ? idvTestLedger : taxonomy ? taxonomyTestLedger : listingValidity ? validityTestLedger : mobileCatalogue ? mobileTestLedger : context.TABLETS_CANDIDATE_LEDGER_SHA;
-        if (environment === 'FairSwapProd' && ledgerStatementsSha256 !== testLedger) {
+        if (environment === 'FairSwapProd' && !v3IdentityPrerequisite && ledgerStatementsSha256 !== (v3Production ? testV3Ledger : testLedger)) {
           throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_MISMATCH`);
         }
       }
@@ -932,6 +1003,9 @@ export async function releaseReusable({
       // 8. Automated Read-only Postflight Verification (awaited and validated before receipt)
       phase = 'postflight';
       const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore);
+      if (v3Production) {
+        assert.deepEqual(readV3ProductionState(), productionStateBefore, 'V3_PRODUCTION_LEGACY_STATE_CHANGED');
+      }
       if (!postflightResult || typeof postflightResult !== 'object' || postflightResult.status === 'NO_SPECIFIC_POSTFLIGHT') {
         throw new Error('REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED');
       }
@@ -953,6 +1027,12 @@ export async function releaseReusable({
       dryRunPending,
       postflightVerified: true,
       ...(pinned ? {ledgerStatementsSha256} : {}),
+      ...(v3Production ? {
+        releaseManifestSha256: context.EXPECTED_SHA,
+        identityEnforcement: 'off',
+        disabledContractCount: candidate.unifiedPublishingV3?.count ?? 0,
+        ...(testV3Ledger ? {testLedgerStatementsSha256: testV3Ledger} : {})
+      } : {}),
       ...(catalogue || catalogueUpdate ? {webStagingEvidence: catalogueWebEvidence ?? null} : {}),
       ...(taxonomy ? {
         postflightScope: taxonomyCatalogue ? CATALOGUE_SCOPE : TAXONOMY_SCOPE,
