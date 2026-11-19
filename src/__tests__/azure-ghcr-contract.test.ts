@@ -112,7 +112,8 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     // Rigorous automated postflight checks
     expect(workflow).toContain("Assert Exact Built Image Digests on All Three Apps (Test)");
     expect(workflow).toContain("Assert Scale-to-Zero and Ingress Boundaries on All Three Apps (Test)");
-    expect(workflow).toContain("Verify End-to-End Synthetic Moderation & Worker Ingress (Test)");
+    // E2E synthetic moderation probe is decoupled from the registry-only release workflow
+    expect(workflow).not.toContain("Verify End-to-End Synthetic Moderation & Worker Ingress (Test)");
     expect(workflow).toContain("Capture Live Container Apps Replica State Evidence (Test)");
     expect(workflow).toContain("Verify Supabase Edge Function Security Gate (Test)");
     expect(workflow).toContain("Assert Exact Built Image Digests on All Three Apps (Production)");
@@ -179,26 +180,15 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(mockAcaResource.properties.configuration.ingress.external).toBe(false);
   });
 
-  it("enforces Blocker B fix: E2E test probe uses benign fixture, strict validation, and cleans up", () => {
+  it("enforces Blocker B fix: benign fixture exists and probe validation logic is preserved while probe is decoupled from release workflow", () => {
     const workflow = readFileSync(deployWorkflowPath, "utf-8");
 
-    // Benign fixture referenced
-    expect(workflow).toContain("services/moderation-azure/node-vision/test_fixture.jpg");
+    // Benign fixture exists on disk for separate functional verification
     expect(existsSync(join(rootDir, "services/moderation-azure/node-vision/test_fixture.jpg"))).toBe(true);
 
-    // Dynamic storage fixture path and short-lived signed URL
-    expect(workflow).toContain("test-fixtures/azure-ghcr-probe-${{ github.sha }}.jpg");
-    expect(workflow).toContain('{"expiresIn": 300}');
-    expect(workflow).toContain("CLEANUP_FIXTURE");
-    expect(workflow).toContain("trap CLEANUP_FIXTURE EXIT");
-
-    // Strict jq fail-closed assertions
-    expect(workflow).toContain('.verdict != "INCOMPLETE"');
-    expect(workflow).toContain(".failedChecks | length == 0");
-    expect(workflow).toContain('.completedChecks | index("check_vision_nsfw")');
-    expect(workflow).toContain('.completedChecks | index("check_vision_category")');
-    expect(workflow).toContain('.completedChecks | index("check_ocr_qr")');
-    expect(workflow).toContain(".perImageResults[0].hashVerified == true");
+    // Functional E2E moderation probe is decoupled from the registry-only release workflow
+    expect(workflow).not.toContain("Verify End-to-End Synthetic Moderation & Worker Ingress (Test)");
+    expect(workflow).not.toContain("test-fixtures/azure-ghcr-probe");
 
     // Regression test for probe validator logic
     const validateProbeResponse = (res: any, expDigest: string, expId: string) => {
@@ -282,11 +272,12 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(workflow).not.toContain('replica list --name "ca-moderation-controller-test" --resource-group rg-fairswap-moderation-test --query "length(@)" -o tsv 2>/dev/null || echo "0"');
     expect(workflow).not.toContain('|| echo "0"');
 
-    // Asserts clean separation of states
+    // Asserts clean separation of states and no false claims about internal worker exercise
     expect(workflow).toContain("Azure CLI replica query failed or returned malformed output");
     expect(workflow).toContain("App replicas did not reach zero within the 60s bounded CI window");
     expect(workflow).toContain("True scale-from-zero cold activation verified on Controller");
-    expect(workflow).toContain("Internal workers exercised via Test Gate 5");
+    expect(workflow).not.toContain("Internal workers exercised via Test Gate 5");
+    expect(workflow).not.toContain("Internal workers exercised");
 
     // Regression test for replica count parser logic:
     // Proves failed or malformed CLI queries NEVER evaluate to numeric 0 or satisfy pre-probe zero condition
@@ -320,23 +311,15 @@ describe("Azure Moderation GHCR Migration Contract Tests", () => {
     expect(Number(warmReplicas)).toBeGreaterThan(0);
   });
 
-  it("enforces Finding A: Storage signed URL normalization, origin policy, and immediate cleanup trap", async () => {
+  it("enforces Finding A: Storage signed URL normalization and origin policy regression tests while probe is decoupled from release workflow", async () => {
     const workflow = readFileSync(deployWorkflowPath, "utf-8");
 
-    // Verify immediate cleanup trap registration after upload
-    const uploadIndex = workflow.indexOf("Uploading benign test fixture to listing-originals/");
-    const trapIndex = workflow.indexOf("trap CLEANUP_FIXTURE EXIT");
-    const signIndex = workflow.indexOf("Generating short-lived signed URL");
-    expect(uploadIndex).toBeGreaterThan(-1);
-    expect(trapIndex).toBeGreaterThan(-1);
-    expect(signIndex).toBeGreaterThan(-1);
-    // Trap must be registered AFTER upload and BEFORE generating signed URL
-    expect(trapIndex).toBeGreaterThan(uploadIndex);
-    expect(trapIndex).toBeLessThan(signIndex);
+    // Functional probe and upload cleanup are decoupled from registry release workflow
+    expect(workflow).not.toContain("Uploading benign test fixture to listing-originals/");
+    expect(workflow).not.toContain("trap CLEANUP_FIXTURE EXIT");
 
-    // Verify helper integration in workflow
-    expect(workflow).toContain("scripts/ci/normalize-storage-signed-url.mjs");
-    expect(workflow).toContain("Signed URL normalized and validated against Controller origin policy");
+    // Helper file exists for normalization
+    expect(existsSync(join(rootDir, "scripts/ci/normalize-storage-signed-url.mjs"))).toBe(true);
 
     // Direct unit test of normalizeStorageSignedUrl logic
     const { normalizeStorageSignedUrl } = await import("../../scripts/ci/normalize-storage-signed-url.mjs");
