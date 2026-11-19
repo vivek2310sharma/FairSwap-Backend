@@ -1,5 +1,6 @@
 import { resolveProjectRef } from "./idv-config.ts";
 import type { DigiLockerClientConfig } from "./digilocker-client.ts";
+import { OIDC_ALLOWED_PROJECT_REF, type OidcConfig } from "./digilocker-oidc.ts";
 
 // Stage and Production are isolated by Supabase project ref: each ref accepts only its own registered callback.
 // Credentials are separate per environment (never shared); the API Setu "Stage" tag is not assumed to be a sandbox.
@@ -28,6 +29,9 @@ export interface DigiLockerRuntime {
   /** false (default): the digilockerid comes from the server-to-server token response only.
    *  true: additionally requires /oauth2/1/user to return the same id (only once userdetails is approved). */
   requireUserDetails: boolean;
+  /** null = legacy v1 flow (unchanged, the only mode outside FairSwapTest). Set only when DIGILOCKER_AUTH_MODE=oidc_v2
+   *  on the Test project: signed ID token + acr=aadhaar evidence is then mandatory for any badge. */
+  oidc: OidcConfig | null;
 }
 
 /** Collects IDV_DIGILOCKER_FP_KEY_V<n> keys. Returns null if any configured key is too short or the current one is missing. */
@@ -67,6 +71,9 @@ export function readDigiLockerRuntime(env: Record<string, string | undefined>): 
   const stateKey = (env["IDV_DIGILOCKER_STATE_KEY"] ?? "").trim();
   if (!expectedRedirect || redirectUri !== expectedRedirect) return null; // exact registered URI only
   if (!clientId || !clientSecret || stateKey.length < MIN_KEY_LENGTH) return null;
+  const mode = (env["DIGILOCKER_AUTH_MODE"] ?? "legacy").trim().toLowerCase();
+  if (mode !== "legacy" && mode !== "oidc_v2") return null;
+  if (mode === "oidc_v2" && projectRef !== OIDC_ALLOWED_PROJECT_REF) return null; // never Production
   const ring = readFingerprintKeyring(env);
   if (!ring) return null;
   if ([ring.current, ...ring.legacy].some((k) => k.key === stateKey)) return null; // keys must be independent
@@ -81,5 +88,8 @@ export function readDigiLockerRuntime(env: Record<string, string | undefined>): 
     currentFpKey: ring.current,
     legacyFpKeys: ring.legacy,
     requireUserDetails: (env["DIGILOCKER_USERDETAILS_APPROVED"] ?? "false").toLowerCase() === "true",
+    oidc: mode === "oidc_v2"
+      ? { acrSemanticsConfirmed: (env["DIGILOCKER_ACR_SEMANTICS_CONFIRMED"] ?? "false").toLowerCase() === "true" }
+      : null,
   };
 }

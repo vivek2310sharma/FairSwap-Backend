@@ -3,6 +3,7 @@ import { readDigiLockerRuntime } from "../_shared/idv/digilocker-config.ts";
 import {
   DigiLockerError, confirmDigiLockerId, derivePkceVerifier, exchangeCode, fingerprintDigiLockerId, revokeToken, sha256Hex,
 } from "../_shared/idv/digilocker-client.ts";
+import { deriveOidcNonce, exchangeOidcCode, verifyOidcIdentity } from "../_shared/idv/digilocker-oidc.ts";
 import { defaultDeps, type IdvDeps } from "../_shared/idv/digilocker-deps.ts";
 
 declare const Deno: {
@@ -14,7 +15,7 @@ declare const Deno: {
 export const completePayloadSchema = z.object({
   state: z.string().regex(/^[0-9a-f]{64}$/),
   code: z.string().min(1).max(2048).optional(),
-  error: z.string().max(128).optional(),
+  error: z.string().regex(/^[a-z_]{1,32}$/).optional(), // standard OAuth error code only, relayed by the Web callback
 });
 
 const json = (status: number, body: unknown) =>
@@ -62,7 +63,14 @@ export async function handleDigiLockerComplete(
     return json(status, { error: errCode });
   };
 
-  if (providerError || !code) return fail(400, "CONSENT_DENIED");
+  if (providerError || !code) {
+    if (runtime.oidc && providerError && providerError !== "access_denied" && providerError !== "denied") {
+      // Provider refused to authenticate (for example Aadhaar KYC incomplete): no badge, no binding.
+      if (providerError === "temporarily_unavailable" || providerError === "server_error") return fail(502, "PROVIDER_UNAVAILABLE");
+      return fail(422, "ASSURANCE_NOT_PROVEN");
+    }
+    return fail(400, "CONSENT_DENIED");
+  }
 
   // 2. Server-side exchange. The digilockerid is taken from the authenticated back-channel token response; when
   //    userdetails is approved for this client it must also match /oauth2/1/user. Anything missing fails closed.
@@ -71,9 +79,28 @@ export async function handleDigiLockerComplete(
   let legacyFingerprints: string[];
   try {
     const verifier = await derivePkceVerifier(runtime.stateKey, state);
-    const ex = await exchangeCode(runtime.client, code, verifier, fetchImpl);
-    accessToken = ex.accessToken;
-    const id = runtime.requireUserDetails ? await confirmDigiLockerId(accessToken, ex.digilockerid, fetchImpl) : ex.digilockerid;
+    let id: string;
+    if (runtime.oidc) {
+      let ex;
+      try {
+        ex = await exchangeOidcCode(runtime.client, code, verifier, fetchImpl);
+      } catch (e) {
+        const at = (e as { accessToken?: unknown }).accessToken;
+        if (typeof at === "string") accessToken = at;
+        throw e;
+      }
+      accessToken = ex.accessToken;
+      id = (await verifyOidcIdentity(runtime.oidc, ex, {
+        clientId: runtime.client.clientId,
+        expectedNonce: await deriveOidcNonce(runtime.stateKey, state),
+        nowSeconds: Math.floor(Date.now() / 1000),
+        fetchImpl,
+      })).digilockerid;
+    } else {
+      const ex = await exchangeCode(runtime.client, code, verifier, fetchImpl);
+      accessToken = ex.accessToken;
+      id = runtime.requireUserDetails ? await confirmDigiLockerId(accessToken, ex.digilockerid, fetchImpl) : ex.digilockerid;
+    }
     fingerprint = await fingerprintDigiLockerId(runtime.currentFpKey.key, id);
     legacyFingerprints = await Promise.all(runtime.legacyFpKeys.map((k) => fingerprintDigiLockerId(k.key, id)));
   } catch (e) {
