@@ -33,13 +33,14 @@ on:
           - regulated-vehicle-drafts-v3
           - specialist-vehicle-draft-binding-v3
           - v3-require-active-seller-identity
+          - v3-test-remaining-batch
       approved_sha:
         description: 'Exact reviewed commit SHA on main'
         required: true
         type: string
       expected_candidate_sha256:
-        description: 'Exact reviewed SHA-256 of candidate migration SQL'
-        required: true
+        description: 'Candidate SQL SHA-256; leave empty for the pinned V3 Test batch'
+        required: false
         type: string
       target:
         description: 'Stage: test (registered automatic-promotion candidates, including Taxonomy V2), production (strict candidates, after Test evidence), or adopt (read-only attestation of an existing registered Production installation)'
@@ -160,9 +161,17 @@ jobs:
           import {verifyCandidateSha, getCandidate} from './scripts/release/reusable-candidates.mjs';
           const candidateId = process.env.CANDIDATE;
           const expectedSha = process.env.EXPECTED_SHA;
-          const {sha256} = verifyCandidateSha(candidateId);
-          if (sha256 !== expectedSha) {
-            throw new Error(`Candidate SHA mismatch: expected ${expectedSha}, got ${sha256}`);
+          if (candidateId === 'v3-test-remaining-batch') {
+            if (process.env.TARGET !== 'test' || expectedSha !== '') throw new Error('V3_BATCH_TEST_ONLY_AND_NO_DIGEST_INPUT');
+            for (const id of ['property-intake-v3', 'regulated-vehicle-drafts-v3', 'specialist-vehicle-draft-binding-v3', 'v3-require-active-seller-identity']) {
+              const candidate = getCandidate(id);
+              const {sha256} = verifyCandidateSha(id);
+              if (!candidate.unifiedPublishingV3 || !candidate.testOnly || candidate.autoPromote !== false || candidate.sha256 !== sha256)
+                throw new Error('V3_BATCH_CANDIDATE_PIN_INVALID_' + id);
+            }
+          } else {
+            const {sha256} = verifyCandidateSha(candidateId);
+            if (sha256 !== expectedSha) throw new Error(`Candidate SHA mismatch: expected ${expectedSha}, got ${sha256}`);
           }
           NODE
 
@@ -176,6 +185,7 @@ jobs:
           NODE
 
       - name: Plan stage and require Web and earlier-stage evidence
+        if: ${{ inputs.candidate != 'v3-test-remaining-batch' }}
         id: plan
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -232,7 +242,7 @@ jobs:
     if: ${{ needs.verify.result == 'success' && inputs.target == 'test' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
     environment: FairSwapTest
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: ${{ inputs.candidate == 'v3-test-remaining-batch' && 45 || 20 }}
     defaults:
       run:
         shell: bash --noprofile --norc -euo pipefail {0}
@@ -253,6 +263,7 @@ jobs:
           check-latest: false
 
       - name: Verify deployed Web release before any database change (fail closed)
+        if: ${{ inputs.candidate != 'v3-test-remaining-batch' }}
         env:
           CANDIDATE: ${{ inputs.candidate }}
           TARGET: ${{ inputs.target }}
@@ -291,6 +302,7 @@ jobs:
         run: bash scripts/release/install-inbox-cli.sh
 
       - name: Execute Test release and automated read-only verification
+        if: ${{ inputs.candidate != 'v3-test-remaining-batch' }}
         env:
           ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
           TABLETS_FOUNDATION_LEDGER_SHA: ${{ needs.verify.outputs.foundation_ledger_sha }}
@@ -319,9 +331,59 @@ jobs:
           });
           NODE
 
-      - id: proof
+      - name: Run remaining four V3 migrations sequentially (Test only)
+        if: ${{ inputs.candidate == 'v3-test-remaining-batch' && inputs.target == 'test' }}
+        env:
+          TARGET: ${{ inputs.target }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN }}
+          CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
+          CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.CHAT_DB_SSL_ROOT_CERT_PEM }}
+          CHAT_DB_POOLER_HOST: ${{ vars.CHAT_DB_POOLER_HOST }}
         run: |
-          file="release-receipts/${{ inputs.candidate }}-fairswaptest.json"
+          node --input-type=module - <<'NODE'
+          import {createHash} from 'node:crypto';
+          import {readFileSync, writeFileSync} from 'node:fs';
+          import {getCandidate, verifyCandidateSha} from './scripts/release/reusable-candidates.mjs';
+          import {releaseReusable} from './scripts/release/reusable-supabase-release.mjs';
+          if (process.env.TARGET !== 'test') throw new Error('V3_BATCH_TEST_ONLY');
+          const ids = ['property-intake-v3', 'regulated-vehicle-drafts-v3', 'specialist-vehicle-draft-binding-v3', 'v3-require-active-seller-identity'];
+          const sums = [];
+          for (const id of ids) {
+            const candidate = getCandidate(id);
+            const {sha256} = verifyCandidateSha(id);
+            if (!candidate.unifiedPublishingV3 || !candidate.testOnly || candidate.autoPromote !== false || candidate.sha256 !== sha256)
+              throw new Error('V3_BATCH_CANDIDATE_PIN_INVALID_' + id);
+            // The existing runner performs the per-candidate dry-run, apply, ledger and disabled-contract postflight.
+            const receipt = await releaseReusable({
+              environment: 'FairSwapTest', candidateId: id,
+              context: {...process.env, CANDIDATE: id, EXPECTED_SHA: sha256, TARGET: 'test'},
+              receiptDir: 'release-receipts'
+            });
+            if (!['APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED','ALREADY_APPLIED_VERIFIED'].includes(receipt.status) ||
+                receipt.postflightVerified !== true || receipt.environment !== 'FairSwapTest' ||
+                receipt.projectRef !== 'wpppxlnbzqynvhpeuavd' || receipt.candidateId !== id ||
+                receipt.migrationVersion !== candidate.version || receipt.migrationSha256 !== sha256 ||
+                receipt.reviewedCommit !== process.env.GITHUB_SHA || receipt.releaseWorkflowRun !== process.env.GITHUB_RUN_ID)
+              throw new Error('V3_BATCH_POSTFLIGHT_REJECTED_' + id);
+            const name = id + '-fairswaptest.json';
+            const data = readFileSync('release-receipts/' + name);
+            if (JSON.stringify(JSON.parse(data.toString('utf8'))) !== JSON.stringify(receipt))
+              throw new Error('V3_BATCH_RECEIPT_MISMATCH_' + id);
+            sums.push(createHash('sha256').update(data).digest('hex') + '  ' + name);
+            console.log('V3 Test migration verified: ' + id);
+          }
+          writeFileSync('release-receipts/SHA256SUMS_fairswaptest', sums.join('\n') + '\n', {mode: 0o600});
+          NODE
+
+      - id: proof
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+        run: |
+          if [[ "$CANDIDATE" == 'v3-test-remaining-batch' ]]; then
+            file='release-receipts/SHA256SUMS_fairswaptest'
+          else
+            file="release-receipts/${CANDIDATE}-fairswaptest.json"
+          fi
           echo "sha256=$(sha256sum "$file" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - id: receipt
@@ -367,7 +429,30 @@ jobs:
         run: |
           cd test-evidence
           sha256sum --check SHA256SUMS_fairswaptest
-          printf '%s  %s-fairswaptest.json\n' "$EXPECTED_SHA" "$CANDIDATE" | sha256sum --check --status
+          if [[ "$CANDIDATE" == 'v3-test-remaining-batch' ]]; then
+            printf '%s  SHA256SUMS_fairswaptest\n' "$EXPECTED_SHA" | sha256sum --check --status
+          else
+            printf '%s  %s-fairswaptest.json\n' "$EXPECTED_SHA" "$CANDIDATE" | sha256sum --check --status
+          fi
+
+      - name: Verify all four V3 batch receipts
+        if: ${{ inputs.candidate == 'v3-test-remaining-batch' }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {readFileSync} from 'node:fs';
+          import {getCandidate, verifyCandidateSha} from './scripts/release/reusable-candidates.mjs';
+          for (const id of ['property-intake-v3', 'regulated-vehicle-drafts-v3', 'specialist-vehicle-draft-binding-v3', 'v3-require-active-seller-identity']) {
+            const c = getCandidate(id);
+            const {sha256} = verifyCandidateSha(id);
+            const r = JSON.parse(readFileSync('test-evidence/' + id + '-fairswaptest.json', 'utf8'));
+            if (!['APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED','ALREADY_APPLIED_VERIFIED'].includes(r.status) ||
+                !r.postflightVerified || r.environment !== 'FairSwapTest' ||
+                r.projectRef !== 'wpppxlnbzqynvhpeuavd' || r.candidateId !== id ||
+                r.migrationSha256 !== sha256 || r.migrationVersion !== c.version ||
+                r.reviewedCommit !== process.env.GITHUB_SHA || r.releaseWorkflowRun !== process.env.GITHUB_RUN_ID)
+              throw new Error('V3_BATCH_INDEPENDENT_RECEIPT_INVALID_' + id);
+          }
+          NODE
 
       - name: Verify Taxonomy V2 Test postflight receipt
         id: taxonomy_proof
@@ -429,7 +514,7 @@ jobs:
     needs: [verify, test, verify_test]
     if: >-
       ${{ always() && needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
-      inputs.candidate != 'idv-digilocker-v1' &&
+      inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'v3-test-remaining-batch' &&
       ((inputs.target == 'test' && needs.verify.outputs.auto_promote == 'true' && needs.test.result == 'success' && needs.verify_test.result == 'success' &&
       (inputs.candidate != 'mobile-catalogue-india-v1' || needs.verify_test.outputs.mobile_catalogue_ledger_sha != '') &&
       (inputs.candidate != 'idv-digilocker-v1' || needs.verify_test.outputs.idv_digilocker_ledger_sha != '') &&
