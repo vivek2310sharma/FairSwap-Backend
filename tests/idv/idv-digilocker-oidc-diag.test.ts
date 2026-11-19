@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { handleDigiLockerDiagnostic } from "../../supabase/functions/idv-digilocker-diagnostic/index";
 import {
-  readDiagRuntime, deriveDiagNonce, deriveDiagPkceVerifier, DIAG_TOKEN_PATH,
+  readDiagRuntime, deriveDiagNonce, deriveDiagPkceVerifier, DIAG_TOKEN_PATH, DIGILOCKER_OIDC_ISSUER, DIGILOCKER_OIDC_JWKS_URL,
 } from "../../supabase/functions/_shared/idv/digilocker-oidc-diag";
 import { DIGILOCKER_HOST, pkceChallenge, sha256Hex } from "../../supabase/functions/_shared/idv/digilocker-client";
 
@@ -10,8 +10,8 @@ const KEY = "s".repeat(40);
 const TESTER = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
 const STAGE_REDIRECT = "https://fairswap-web-git-staging-fairswap.vercel.app/api/idv/digilocker/callback";
-const JWKS_URL = `${DIGILOCKER_HOST}/public/oauth2/1/certs`;
-const ISSUER = DIGILOCKER_HOST;
+const JWKS_URL = DIGILOCKER_OIDC_JWKS_URL; // the provider-published jwks_uri (default, no env needed)
+const ISSUER = DIGILOCKER_OIDC_ISSUER;
 const CLIENT = "stage-client";
 const NOW = 1_800_000_000_000;
 
@@ -25,8 +25,6 @@ const env = (over: Record<string, string> = {}): Record<string, string> => ({
   DIGILOCKER_REDIRECT_URI: STAGE_REDIRECT,
   IDV_DIGILOCKER_STATE_KEY: KEY,
   DIGILOCKER_DIAG_TESTER_IDS: `${TESTER}`,
-  DIGILOCKER_DIAG_JWKS_URL: JWKS_URL,
-  DIGILOCKER_DIAG_EXPECTED_ISSUER: ISSUER,
   DIGILOCKER_DIAG_ACR_SEMANTICS_CONFIRMED: "true",
   ...over,
 });
@@ -152,7 +150,7 @@ describe("DigiLocker OIDC v2 Stage diagnostic", () => {
     expect(u.pathname).toBe("/public/oauth2/1/authorize");
     expect(u.searchParams.get("scope")).toBe("openid");
     expect(u.searchParams.get("acr")).toBe("aadhaar");
-    expect(u.searchParams.get("dl_flow")).toBe("signin");
+    expect(u.searchParams.has("dl_flow")).toBe(false); // documented only as "signup"; omission is sign-in
     expect(u.searchParams.get("redirect_uri")).toBe(STAGE_REDIRECT);
     expect(u.searchParams.get("code_challenge_method")).toBe("S256");
     expect(u.searchParams.get("code_challenge")).toBe(await pkceChallenge(await deriveDiagPkceVerifier(KEY, state)));
@@ -172,6 +170,7 @@ describe("DigiLocker OIDC v2 Stage diagnostic", () => {
     expect(r.body.result).toEqual({
       outcome: "VERIFIED", code: null, endpoints: { authorize: "1", token: "2" },
       checks: { signature: "verified", issuer: "verified", audience: true, expiry: true, subject: true, issuedAt: true, nonce: "match", acr: "aadhaar" },
+      claimNames: ["aadhaar", "acr", "aud", "exp", "iat", "iss", "nonce", "pan", "sub"],
     });
     const tok = p.log.find((l) => l.url === `${DIGILOCKER_HOST}${DIAG_TOKEN_PATH}`)!;
     const sent = new URLSearchParams(tok.body);
@@ -210,10 +209,10 @@ describe("DigiLocker OIDC v2 Stage diagnostic", () => {
     expect(r.body.result).toMatchObject({ outcome: "UNCONFIRMED", code: "ACR_MISSING" });
   });
 
-  it("unverifiable signing keys (no JWKS configured, JWKS unreachable, unknown kid) are UNCONFIRMED, never VERIFIED", async () => {
+  it("unverifiable signing keys (JWKS unreachable, empty, unknown kid) are UNCONFIRMED, never VERIFIED", async () => {
     for (const [e, p] of [
-      [env({ DIGILOCKER_DIAG_JWKS_URL: "" }), {}],
       [env(), { jwksStatus: 503 }],
+      [env(), { jwks: { keys: [] } }],
       [env(), { jwks: { keys: [{ ...pubJwk, kid: "other" }] } }],
     ] as const) {
       const w = makeWorld();
@@ -221,11 +220,24 @@ describe("DigiLocker OIDC v2 Stage diagnostic", () => {
       const r = await complete(w, provider({ ...p, idToken: await signJwt(await goodClaims(state)) }).f, state, undefined, e);
       expect(r.body.result).toMatchObject({ outcome: "UNCONFIRMED", code: "SIGNING_KEYS_UNCONFIRMED" });
     }
+  });
+
+  it("issuer and JWKS default to the provider-published values and can only be overridden within the provider host", () => {
+    const rt = readDiagRuntime(env())!;
+    expect(rt.expectedIssuer).toBe("https://digilocker.meripehchaan.gov.in");
+    expect(rt.jwksUrl).toBe("https://digilocker.meripehchaan.gov.in/public/oauth2/jwks");
+    expect(readDiagRuntime(env({ DIGILOCKER_DIAG_EXPECTED_ISSUER: "https://api.digitallocker.gov.in" }))).toBeNull();
+  });
+
+  it("claim census returns claim NAMES only, never values, and drops odd names", async () => {
     const w = makeWorld();
-    const e = env({ DIGILOCKER_DIAG_EXPECTED_ISSUER: "" });
-    const { state } = await start(w, e);
-    const r = await complete(w, provider({ idToken: await signJwt(await goodClaims(state)) }).f, state, undefined, e);
-    expect(r.body.result).toMatchObject({ outcome: "UNCONFIRMED", code: "ISSUER_UNCONFIRMED" });
+    const { state } = await start(w);
+    const claims = { ...(await goodClaims(state)), acr: undefined, "Bad-Name": "x", user_sso_id: "DL-secret-id", pan_number: "ABCDE1234F" };
+    const r = await complete(w, provider({ idToken: await signJwt(claims) }).f, state);
+    expect(r.body.result).toMatchObject({ outcome: "UNCONFIRMED", code: "ACR_MISSING" });
+    expect(r.body.result.claimNames).toEqual(expect.arrayContaining(["user_sso_id", "pan_number", "sub", "nonce"]));
+    expect(r.body.result.claimNames).not.toContain("Bad-Name");
+    for (const leak of ["DL-secret-id", "ABCDE1234F", "999999990019"]) expect(r.text).not.toContain(leak);
   });
 
   it("invalid token: forged signature, alg none, wrong issuer, wrong audience, expired, nonce mismatch, malformed", async () => {
@@ -311,6 +323,25 @@ describe("DigiLocker OIDC v2 Stage diagnostic", () => {
     expect(r.body.result).toMatchObject({ outcome: "CANCELLED", code: "CONSENT_DENIED" });
     expect(p.log).toEqual([]);
     expect((await complete(w, p.f, state)).status).toBe(409);
+  });
+
+  it("a non-cancellation provider error (e.g. after Aadhaar KYC) is reported as its own code, not CONSENT_DENIED", async () => {
+    for (const [err, outcome, code] of [
+      ["access_denied", "CANCELLED", "CONSENT_DENIED"],
+      ["denied", "CANCELLED", "CONSENT_DENIED"],
+      ["server_error", "FAILED", "PROVIDER_ERR_SERVER_ERROR"],
+      ["temporarily_unavailable", "FAILED", "PROVIDER_ERR_TEMPORARILY_UNAVAILABLE"],
+    ] as const) {
+      const w = makeWorld();
+      const { state } = await start(w);
+      const p = provider();
+      const r = await complete(w, p.f, state, { error: err });
+      expect(r.body.result).toMatchObject({ outcome, code });
+      expect(p.log).toEqual([]);
+    }
+    const w = makeWorld();
+    const { state } = await start(w);
+    expect((await complete(w, provider().f, state, { error: "<script>x</script>" })).status).toBe(400);
   });
 
   it("provider rejection and timeout are sanitized FAILED results", async () => {
