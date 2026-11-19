@@ -12,6 +12,7 @@ on:
           - moderation-analytics-v1
           - moderation-azure-v1
           - moderation-switching-v1
+          - moderation-google-cloud-v1
           - mobile-catalogue-india-v1
           - listing-validity-365
           - taxonomy-v2-foundation

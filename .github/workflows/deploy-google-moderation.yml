@@ -1,0 +1,640 @@
+name: Deploy Google Cloud Moderation (OIDC & Cloud Run)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Deployment target scope: test-and-prod (default) or test-only'
+        required: true
+        default: 'test-and-prod'
+        type: choice
+        options:
+          - test-and-prod
+          - test-only
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Phase 1: Build, Test & Verify Shared Microservice Images
+  # ---------------------------------------------------------------------------
+  build-and-verify:
+    name: Build & Verify Shared Microservices
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      controller_digest: ${{ steps.build-controller.outputs.digest }}
+      vision_digest: ${{ steps.build-vision.outputs.digest }}
+      ocr_digest: ${{ steps.build-ocr.outputs.digest }}
+      controller_image: ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller@${{ steps.build-controller.outputs.digest }}
+      vision_image: ghcr.io/${{ github.repository_owner }}/fairswap-node-vision@${{ steps.build-vision.outputs.digest }}
+      ocr_image: ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr@${{ steps.build-ocr.outputs.digest }}
+      image_tag: ${{ github.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+
+      - name: Run Backend verification, unit tests, and moderation tests
+        run: |
+          corepack pnpm install --frozen-lockfile
+          corepack pnpm verify:migrations
+          corepack pnpm typecheck
+          corepack pnpm test:unit
+          corepack pnpm exec vitest run --config vitest.moderation-azure.config.ts
+
+      - name: Run disposable PostgreSQL security integration tests
+        run: |
+          npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
+          node scripts/ci/test-google-cloud-moderation-pg17.mjs
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Controller Image
+        id: build-controller
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/moderation-azure/controller
+          file: ./services/moderation-azure/controller/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/fairswap-moderation-controller:latest
+
+      - name: Build and Push Node Vision Image
+        id: build-vision
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/moderation-azure/node-vision
+          file: ./services/moderation-azure/node-vision/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/fairswap-node-vision:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/fairswap-node-vision:latest
+
+      - name: Build and Push Python OCR Image
+        id: build-ocr
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/moderation-azure/python-ocr
+          file: ./services/moderation-azure/python-ocr/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/fairswap-python-ocr:latest
+
+  # ---------------------------------------------------------------------------
+  # Phase 2: Deploy to Google Cloud Run (FairSwapTest)
+  # ---------------------------------------------------------------------------
+  deploy-test:
+    name: Deploy & Verify Test (FairSwapTest)
+    needs: [build-and-verify]
+    runs-on: ubuntu-latest
+    environment: FairSwapTest
+    outputs:
+      controller_url: ${{ steps.deploy-services.outputs.controller_url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud via Workload Identity Federation (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Cloud Run Services to Test (Mumbai asia-south1)
+        id: deploy-services
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_REGION: asia-south1
+          IMAGE_TAG: ${{ needs.build-and-verify.outputs.image_tag }}
+          CONTROLLER_IMAGE: ${{ needs.build-and-verify.outputs.controller_image }}
+          NODE_VISION_IMAGE: ${{ needs.build-and-verify.outputs.vision_image }}
+          PYTHON_OCR_IMAGE: ${{ needs.build-and-verify.outputs.ocr_image }}
+          MODERATION_SECRET: ${{ secrets.GOOGLE_CLOUD_MODERATION_SECRET }}
+        run: |
+          bash infra/gcp/moderation/deploy-cloudrun.sh test
+          CTRL_URL=$(gcloud run services describe cr-moderation-controller-test --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(status.url)")
+          echo "controller_url=$CTRL_URL" >> $GITHUB_OUTPUT
+
+      # Postflight Gate 1: Verify Workers IAM Protection and Authorized Cold-Wake
+      - name: Verify Test Workers IAM Protection
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          V_URL=$(gcloud run services describe cr-node-vision-test --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(status.url)")
+          O_URL=$(gcloud run services describe cr-python-ocr-test --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(status.url)")
+          
+          # Unauthenticated calls must receive 403 Forbidden
+          V_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$V_URL/healthz" || true)
+          O_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$O_URL/healthz" || true)
+          if [[ "$V_CODE" != "403" ]]; then
+            echo "::error::Node Vision worker returned HTTP $V_CODE without IAM auth (expected 403)!"
+            exit 1
+          fi
+          if [[ "$O_CODE" != "403" ]]; then
+            echo "::error::Python OCR worker returned HTTP $O_CODE without IAM auth (expected 403)!"
+            exit 1
+          fi
+
+          # Authenticated calls with audience-specific ID token must return 200 with status 'ready'
+          V_TOKEN=$(gcloud auth print-identity-token --audiences="$V_URL")
+          O_TOKEN=$(gcloud auth print-identity-token --audiences="$O_URL")
+          V_STATUS=$(curl --fail --silent -H "Authorization: Bearer $V_TOKEN" "$V_URL/healthz" | jq -r '.status')
+          O_STATUS=$(curl --fail --silent -H "Authorization: Bearer $O_TOKEN" "$O_URL/healthz" | jq -r '.status')
+          if [[ "$V_STATUS" != "ready" ]]; then
+            echo "::error::Node Vision worker health check returned status '$V_STATUS' (expected 'ready')!"
+            exit 1
+          fi
+          if [[ "$O_STATUS" != "ready" ]]; then
+            echo "::error::Python OCR worker health check returned status '$O_STATUS' (expected 'ready')!"
+            exit 1
+          fi
+          echo "PASS: Workers strictly enforce Cloud Run IAM authentication and report ready when authorized."
+
+      # Postflight Gate 2: Verify Min Instances = 0 (Request-Based Billing)
+      - name: Verify Test Scale-to-Zero Configuration
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          MIN_CTRL=$(gcloud run services describe cr-moderation-controller-test --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(spec.template.metadata.annotations['run.googleapis.com/minScale'])")
+          MIN_VIS=$(gcloud run services describe cr-node-vision-test --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(spec.template.metadata.annotations['run.googleapis.com/minScale'])")
+          MIN_OCR=$(gcloud run services describe cr-python-ocr-test --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(spec.template.metadata.annotations['run.googleapis.com/minScale'])")
+          if [[ -n "$MIN_CTRL" && "$MIN_CTRL" != "0" ]] || [[ -n "$MIN_VIS" && "$MIN_VIS" != "0" ]] || [[ -n "$MIN_OCR" && "$MIN_OCR" != "0" ]]; then
+            echo "::error::Non-zero min instances detected (ctrl: $MIN_CTRL, vis: $MIN_VIS, ocr: $MIN_OCR). Request-based billing requires min-instances=0."
+            exit 1
+          fi
+          echo "PASS: min-instances=0 confirmed on controller and workers."
+
+      # Postflight Gate 3: Cold-Start Probe & Health Status Alignment
+      - name: Verify Test Controller Health & Cold Start
+        timeout-minutes: 3
+        env:
+          CONTROLLER_URL: ${{ steps.deploy-services.outputs.controller_url }}
+        run: |
+          set -euo pipefail
+          RESPONSE=$(curl --fail --silent --show-error \
+            --connect-timeout 15 --max-time 30 \
+            --retry 5 --retry-delay 5 --retry-connrefused --retry-all-errors \
+            --retry-max-time 120 \
+            "${CONTROLLER_URL}/healthz")
+          STATUS=$(echo "$RESPONSE" | jq -r '.status')
+          if [[ "$STATUS" != "healthy" ]]; then
+            echo "::error::Test Controller /healthz status is '$STATUS', expected 'healthy'!"
+            exit 1
+          fi
+          echo "PASS: Test Controller /healthz responded with status 'healthy'."
+
+      # Postflight Gate 4: Fail-Closed Authentication Boundary
+      - name: Verify Test Controller Authentication Boundary
+        env:
+          CONTROLLER_URL: ${{ steps.deploy-services.outputs.controller_url }}
+        run: |
+          set -euo pipefail
+          UNAUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${CONTROLLER_URL}/v1/moderate" -H "Content-Type: application/json" -d '{}' || true)
+          if [[ "$UNAUTH_CODE" != "401" ]]; then
+            echo "::error::Unauthenticated POST returned HTTP $UNAUTH_CODE instead of 401."
+            exit 1
+          fi
+          echo "PASS: Unauthenticated access blocked with 401."
+
+      # Postflight Gate 5: Authenticated Controller End-to-End Image Scan (Vision & OCR Verification)
+      - name: Verify Test Controller Authenticated Integration
+        env:
+          CONTROLLER_URL: ${{ steps.deploy-services.outputs.controller_url }}
+          MODERATION_SECRET: ${{ secrets.GOOGLE_CLOUD_MODERATION_SECRET }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.FAIRSWAP_TEST_SERVICE_ROLE_KEY || secrets.SUPABASE_TEST_SERVICE_ROLE_KEY || secrets.SUPABASE_SERVICE_ROLE_KEY || secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_SERVICE_KEY:-}" ]]; then
+            echo "::error::SUPABASE_SERVICE_KEY is required for postflight integration scan."
+            exit 1
+          fi
+
+          echo "Preparing synthetic image fixture to exercise Controller, Node Vision, and Python OCR workers..."
+          PROJECT_REF="wpppxlnbzqynvhpeuavd"
+          CANONICAL_PNG_B64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          FIXTURE_PATH="/tmp/postflight-synthetic-${GITHUB_SHA:0:12}.png"
+          echo "$CANONICAL_PNG_B64" | base64 -d > "$FIXTURE_PATH"
+          MEDIA_SHA=$(sha256sum "$FIXTURE_PATH" | cut -d' ' -f1)
+          MEDIA_ID="00000000-0000-0000-0000-000000000003"
+          STORAGE_OBJECT="fixtures/synthetic-${GITHUB_SHA:0:12}.png"
+
+          cleanup() {
+            rm -f "$FIXTURE_PATH"
+            echo "Cleaning up fixture from Supabase Storage: ${STORAGE_OBJECT}..."
+            curl -fsSL -X DELETE \
+              -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "{\"prefixes\": [\"${STORAGE_OBJECT}\"]}" \
+              "https://${PROJECT_REF}.supabase.co/storage/v1/object/listing-originals" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          echo "Uploading fixture to Supabase Storage..."
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+            -H "Content-Type: image/png" \
+            -H "x-upsert: true" \
+            --data-binary "@$FIXTURE_PATH" \
+            "https://${PROJECT_REF}.supabase.co/storage/v1/object/listing-originals/${STORAGE_OBJECT}"
+
+          echo "Generating signed URL for fixture..."
+          RAW_SIGN=$(curl -fsSL -X POST \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"expiresIn": 600}' \
+            "https://${PROJECT_REF}.supabase.co/storage/v1/object/sign/listing-originals/${STORAGE_OBJECT}")
+
+          RAW_SIGNED_URL=$(echo "$RAW_SIGN" | jq -r '.signedURL // empty')
+          if [[ -z "$RAW_SIGNED_URL" ]]; then
+            echo "::error::Failed to obtain signedURL from Supabase Storage"
+            exit 1
+          fi
+
+          SIGNED_URL=$(node scripts/ci/normalize-storage-signed-url.mjs "$PROJECT_REF" "$STORAGE_OBJECT" "$RAW_SIGNED_URL")
+          echo "Storage signed URL generated and normalized successfully."
+
+          MANIFEST_LINE="${MEDIA_ID}:${STORAGE_OBJECT}:${MEDIA_SHA}"
+          MEDIA_DIGEST=$(echo -n "$MANIFEST_LINE" | sha256sum | cut -d' ' -f1)
+
+          echo "Executing authenticated end-to-end scan against Google Cloud Run controller..."
+          SCAN_RES=$(curl --fail --silent --show-error -X POST "${CONTROLLER_URL}/v1/moderate" \
+            -H "Content-Type: application/json" \
+            -H "X-Moderation-Secret: ${MODERATION_SECRET}" \
+            -d "{
+              \"listingId\": \"00000000-0000-0000-0000-000000000001\",
+              \"listingRevision\": 1,
+              \"generationId\": \"00000000-0000-0000-0000-000000000002\",
+              \"title\": \"Clean Integration Test Title\",
+              \"description\": \"Clean description with no fraud keywords.\",
+              \"categorySlug\": \"electronics\",
+              \"mediaDigest\": \"${MEDIA_DIGEST}\",
+              \"media\": [{
+                \"id\": \"${MEDIA_ID}\",
+                \"originalStoragePath\": \"${STORAGE_OBJECT}\",
+                \"scopedSignedUrl\": \"${SIGNED_URL}\",
+                \"mediaSha256\": \"${MEDIA_SHA}\"
+              }]
+            }")
+
+          VERDICT=$(echo "$SCAN_RES" | jq -r '.verdict')
+          FAILED_COUNT=$(echo "$SCAN_RES" | jq -r '.failedChecks | length')
+          SCANNED_COUNT=$(echo "$SCAN_RES" | jq -r '.scannedMediaCount // 0')
+          RESP_MANIFEST_SHA=$(echo "$SCAN_RES" | jq -r '.manifest[0].sha256 // empty')
+          COMPLETED_CHECKS=$(echo "$SCAN_RES" | jq -r '.completedChecks // []')
+
+          echo "Controller response verdict: $VERDICT, failedChecks: $FAILED_COUNT, scannedMediaCount: $SCANNED_COUNT"
+
+          if [[ "$VERDICT" != "APPROVE" ]] || [[ "$FAILED_COUNT" != "0" ]]; then
+            echo "::error::Authenticated scan failed: expected verdict 'APPROVE' with 0 failed checks, got verdict '$VERDICT' ($FAILED_COUNT failed checks)"
+            exit 1
+          fi
+
+          if [[ "$SCANNED_COUNT" != "1" ]]; then
+            echo "::error::scannedMediaCount is $SCANNED_COUNT (expected 1 image processed)!"
+            exit 1
+          fi
+
+          if [[ "$RESP_MANIFEST_SHA" != "$MEDIA_SHA" ]]; then
+            echo "::error::Response manifest SHA256 mismatch! Expected $MEDIA_SHA, got $RESP_MANIFEST_SHA"
+            exit 1
+          fi
+
+          for required_chk in "check_vision_nsfw" "check_vision_category" "check_ocr_qr"; do
+            HAS_CHK=$(echo "$COMPLETED_CHECKS" | jq --arg c "$required_chk" 'contains([$c])')
+            if [[ "$HAS_CHK" != "true" ]]; then
+              echo "::error::Required check '$required_chk' not found in completedChecks: $COMPLETED_CHECKS"
+              exit 1
+            fi
+          done
+
+          echo "PASS: Authenticated controller integration scan passed with 1 image verified across Node Vision and Python OCR workers."
+
+      # Postflight Gate 6: Configure Supabase Test Secrets & Deploy Edge Function
+      - name: Configure Supabase Test Secrets & Deploy Function
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          GOOGLE_CLOUD_MODERATION_SECRET: ${{ secrets.GOOGLE_CLOUD_MODERATION_SECRET }}
+          CONTROLLER_URL: ${{ steps.deploy-services.outputs.controller_url }}
+        run: |
+          set -euo pipefail
+          CLI_DIR="$(mktemp -d "${RUNNER_TEMP:?}/supabase-cli.XXXXXX")"
+          curl -fsSL https://github.com/supabase/cli/releases/download/v2.117.0/supabase_linux_amd64.tar.gz -o "$CLI_DIR/supabase.tar.gz"
+          tar -xzf "$CLI_DIR/supabase.tar.gz" -C "$CLI_DIR"
+          chmod +x "$CLI_DIR/supabase"
+          
+          "$CLI_DIR/supabase" secrets set \
+            GOOGLE_CLOUD_MODERATION_ENDPOINT="${CONTROLLER_URL}/v1/moderate" \
+            GOOGLE_CLOUD_MODERATION_SECRET="$GOOGLE_CLOUD_MODERATION_SECRET" \
+            --project-ref "wpppxlnbzqynvhpeuavd"
+
+          "$CLI_DIR/supabase" functions deploy process-listing-moderation \
+            --project-ref "wpppxlnbzqynvhpeuavd" \
+            --no-verify-jwt
+          echo "PASS: Supabase Test secrets configured and process-listing-moderation Edge Function deployed."
+
+      # Postflight Gate 7: Verify Edge Function Security Gate
+      - name: Verify Test Supabase Edge Function Gate
+        run: |
+          set -euo pipefail
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://wpppxlnbzqynvhpeuavd.supabase.co/functions/v1/process-listing-moderation" || true)
+          if [[ "$HTTP_CODE" != "401" ]]; then
+            echo "::error::process-listing-moderation returned HTTP $HTTP_CODE instead of 401."
+            exit 1
+          fi
+          echo "PASS: Supabase Edge Function fail-closed authentication verified."
+
+  # ---------------------------------------------------------------------------
+  # Phase 3: Deploy to Google Cloud Run (FairSwapProd)
+  # ---------------------------------------------------------------------------
+  deploy-prod:
+    name: Deploy & Verify Prod (FairSwapProd)
+    needs: [build-and-verify, deploy-test]
+    if: inputs.target == 'test-and-prod'
+    runs-on: ubuntu-latest
+    environment: FairSwapProd
+    outputs:
+      controller_url: ${{ steps.deploy-services-prod.outputs.controller_url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud via Workload Identity Federation (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Cloud Run Services to Prod (Mumbai asia-south1)
+        id: deploy-services-prod
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_REGION: asia-south1
+          IMAGE_TAG: ${{ needs.build-and-verify.outputs.image_tag }}
+          CONTROLLER_IMAGE: ${{ needs.build-and-verify.outputs.controller_image }}
+          NODE_VISION_IMAGE: ${{ needs.build-and-verify.outputs.vision_image }}
+          PYTHON_OCR_IMAGE: ${{ needs.build-and-verify.outputs.ocr_image }}
+          MODERATION_SECRET: ${{ secrets.GOOGLE_CLOUD_MODERATION_SECRET }}
+        run: |
+          bash infra/gcp/moderation/deploy-cloudrun.sh prod
+          CTRL_URL=$(gcloud run services describe cr-moderation-controller-prod --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(status.url)")
+          echo "controller_url=$CTRL_URL" >> $GITHUB_OUTPUT
+
+      # Postflight Gate 1: Verify Production Workers IAM Protection and Authorized Cold-Wake
+      - name: Verify Production Workers IAM Protection
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          V_URL=$(gcloud run services describe cr-node-vision-prod --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(status.url)")
+          O_URL=$(gcloud run services describe cr-python-ocr-prod --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(status.url)")
+          
+          # Unauthenticated calls must receive 403 Forbidden
+          V_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$V_URL/healthz" || true)
+          O_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$O_URL/healthz" || true)
+          if [[ "$V_CODE" != "403" ]]; then
+            echo "::error::Production Node Vision worker returned HTTP $V_CODE without IAM auth (expected 403)!"
+            exit 1
+          fi
+          if [[ "$O_CODE" != "403" ]]; then
+            echo "::error::Production Python OCR worker returned HTTP $O_CODE without IAM auth (expected 403)!"
+            exit 1
+          fi
+
+          # Authenticated calls with audience-specific ID token must return 200 with status 'ready'
+          V_TOKEN=$(gcloud auth print-identity-token --audiences="$V_URL")
+          O_TOKEN=$(gcloud auth print-identity-token --audiences="$O_URL")
+          V_STATUS=$(curl --fail --silent -H "Authorization: Bearer $V_TOKEN" "$V_URL/healthz" | jq -r '.status')
+          O_STATUS=$(curl --fail --silent -H "Authorization: Bearer $O_TOKEN" "$O_URL/healthz" | jq -r '.status')
+          if [[ "$V_STATUS" != "ready" ]]; then
+            echo "::error::Production Node Vision worker health check returned status '$V_STATUS' (expected 'ready')!"
+            exit 1
+          fi
+          if [[ "$O_STATUS" != "ready" ]]; then
+            echo "::error::Production Python OCR worker health check returned status '$O_STATUS' (expected 'ready')!"
+            exit 1
+          fi
+          echo "PASS: Production workers strictly enforce Cloud Run IAM authentication and report ready when authorized."
+
+      # Postflight Gate 2: Verify Min Instances = 0 (Request-Based Billing)
+      - name: Verify Production Scale-to-Zero Configuration
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          MIN_CTRL=$(gcloud run services describe cr-moderation-controller-prod --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(spec.template.metadata.annotations['run.googleapis.com/minScale'])")
+          MIN_VIS=$(gcloud run services describe cr-node-vision-prod --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(spec.template.metadata.annotations['run.googleapis.com/minScale'])")
+          MIN_OCR=$(gcloud run services describe cr-python-ocr-prod --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(spec.template.metadata.annotations['run.googleapis.com/minScale'])")
+          if [[ -n "$MIN_CTRL" && "$MIN_CTRL" != "0" ]] || [[ -n "$MIN_VIS" && "$MIN_VIS" != "0" ]] || [[ -n "$MIN_OCR" && "$MIN_OCR" != "0" ]]; then
+            echo "::error::Non-zero min instances detected (ctrl: $MIN_CTRL, vis: $MIN_VIS, ocr: $MIN_OCR). Request-based billing requires min-instances=0."
+            exit 1
+          fi
+          echo "PASS: min-instances=0 confirmed on production controller and workers."
+
+      # Postflight Gate 3: Cold-Start Probe & Health Status Alignment
+      - name: Verify Production Controller Health & Cold Start
+        timeout-minutes: 3
+        env:
+          CONTROLLER_URL: ${{ steps.deploy-services-prod.outputs.controller_url }}
+        run: |
+          set -euo pipefail
+          RESPONSE=$(curl --fail --silent --show-error \
+            --connect-timeout 15 --max-time 30 \
+            --retry 5 --retry-delay 5 --retry-connrefused --retry-all-errors \
+            --retry-max-time 120 \
+            "${CONTROLLER_URL}/healthz")
+          STATUS=$(echo "$RESPONSE" | jq -r '.status')
+          if [[ "$STATUS" != "healthy" ]]; then
+            echo "::error::Production Controller /healthz status is '$STATUS', expected 'healthy'!"
+            exit 1
+          fi
+          echo "PASS: Production Controller /healthz responded with status 'healthy'."
+
+      # Postflight Gate 4: Fail-Closed Authentication Boundary
+      - name: Verify Production Controller Authentication Boundary
+        env:
+          CONTROLLER_URL: ${{ steps.deploy-services-prod.outputs.controller_url }}
+        run: |
+          set -euo pipefail
+          UNAUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${CONTROLLER_URL}/v1/moderate" -H "Content-Type: application/json" -d '{}' || true)
+          if [[ "$UNAUTH_CODE" != "401" ]]; then
+            echo "::error::Production unauthenticated POST returned HTTP $UNAUTH_CODE instead of 401."
+            exit 1
+          fi
+          echo "PASS: Production unauthenticated access blocked with 401."
+
+      # Postflight Gate 5: Authenticated Controller End-to-End Image Scan (Vision & OCR Verification)
+      - name: Verify Production Controller Authenticated Integration
+        env:
+          CONTROLLER_URL: ${{ steps.deploy-services-prod.outputs.controller_url }}
+          MODERATION_SECRET: ${{ secrets.GOOGLE_CLOUD_MODERATION_SECRET }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.FAIRSWAP_PROD_SERVICE_ROLE_KEY || secrets.SUPABASE_PROD_SERVICE_ROLE_KEY || secrets.SUPABASE_SERVICE_ROLE_KEY || secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_SERVICE_KEY:-}" ]]; then
+            echo "::error::SUPABASE_SERVICE_KEY is required for postflight integration scan."
+            exit 1
+          fi
+
+          echo "Preparing synthetic image fixture to exercise Controller, Node Vision, and Python OCR workers (Prod)..."
+          PROJECT_REF="kriuhwppxgxsyyrbjsau"
+          CANONICAL_PNG_B64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          FIXTURE_PATH="/tmp/postflight-synthetic-${GITHUB_SHA:0:12}.png"
+          echo "$CANONICAL_PNG_B64" | base64 -d > "$FIXTURE_PATH"
+          MEDIA_SHA=$(sha256sum "$FIXTURE_PATH" | cut -d' ' -f1)
+          MEDIA_ID="00000000-0000-0000-0000-000000000003"
+          STORAGE_OBJECT="fixtures/synthetic-${GITHUB_SHA:0:12}.png"
+
+          cleanup() {
+            rm -f "$FIXTURE_PATH"
+            echo "Cleaning up fixture from Supabase Production Storage: ${STORAGE_OBJECT}..."
+            curl -fsSL -X DELETE \
+              -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "{\"prefixes\": [\"${STORAGE_OBJECT}\"]}" \
+              "https://${PROJECT_REF}.supabase.co/storage/v1/object/listing-originals" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          echo "Uploading fixture to Supabase Production Storage..."
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+            -H "Content-Type: image/png" \
+            -H "x-upsert: true" \
+            --data-binary "@$FIXTURE_PATH" \
+            "https://${PROJECT_REF}.supabase.co/storage/v1/object/listing-originals/${STORAGE_OBJECT}"
+
+          echo "Generating signed URL for fixture..."
+          RAW_SIGN=$(curl -fsSL -X POST \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"expiresIn": 600}' \
+            "https://${PROJECT_REF}.supabase.co/storage/v1/object/sign/listing-originals/${STORAGE_OBJECT}")
+
+          RAW_SIGNED_URL=$(echo "$RAW_SIGN" | jq -r '.signedURL // empty')
+          if [[ -z "$RAW_SIGNED_URL" ]]; then
+            echo "::error::Failed to obtain signedURL from Supabase Storage"
+            exit 1
+          fi
+
+          SIGNED_URL=$(node scripts/ci/normalize-storage-signed-url.mjs "$PROJECT_REF" "$STORAGE_OBJECT" "$RAW_SIGNED_URL")
+          echo "Storage signed URL generated and normalized successfully."
+
+          MANIFEST_LINE="${MEDIA_ID}:${STORAGE_OBJECT}:${MEDIA_SHA}"
+          MEDIA_DIGEST=$(echo -n "$MANIFEST_LINE" | sha256sum | cut -d' ' -f1)
+
+          echo "Executing authenticated end-to-end scan against Production Google Cloud Run controller..."
+          SCAN_RES=$(curl --fail --silent --show-error -X POST "${CONTROLLER_URL}/v1/moderate" \
+            -H "Content-Type: application/json" \
+            -H "X-Moderation-Secret: ${MODERATION_SECRET}" \
+            -d "{
+              \"listingId\": \"00000000-0000-0000-0000-000000000001\",
+              \"listingRevision\": 1,
+              \"generationId\": \"00000000-0000-0000-0000-000000000002\",
+              \"title\": \"Clean Integration Test Title\",
+              \"description\": \"Clean description with no fraud keywords.\",
+              \"categorySlug\": \"electronics\",
+              \"mediaDigest\": \"${MEDIA_DIGEST}\",
+              \"media\": [{
+                \"id\": \"${MEDIA_ID}\",
+                \"originalStoragePath\": \"${STORAGE_OBJECT}\",
+                \"scopedSignedUrl\": \"${SIGNED_URL}\",
+                \"mediaSha256\": \"${MEDIA_SHA}\"
+              }]
+            }")
+
+          VERDICT=$(echo "$SCAN_RES" | jq -r '.verdict')
+          FAILED_COUNT=$(echo "$SCAN_RES" | jq -r '.failedChecks | length')
+          SCANNED_COUNT=$(echo "$SCAN_RES" | jq -r '.scannedMediaCount // 0')
+          RESP_MANIFEST_SHA=$(echo "$SCAN_RES" | jq -r '.manifest[0].sha256 // empty')
+          COMPLETED_CHECKS=$(echo "$SCAN_RES" | jq -r '.completedChecks // []')
+
+          echo "Production Controller response verdict: $VERDICT, failedChecks: $FAILED_COUNT, scannedMediaCount: $SCANNED_COUNT"
+
+          if [[ "$VERDICT" != "APPROVE" ]] || [[ "$FAILED_COUNT" != "0" ]]; then
+            echo "::error::Production integration test expected verdict 'APPROVE' with 0 failed checks, got verdict '$VERDICT' ($FAILED_COUNT failed checks)"
+            exit 1
+          fi
+
+          if [[ "$SCANNED_COUNT" != "1" ]]; then
+            echo "::error::scannedMediaCount is $SCANNED_COUNT (expected 1 image processed)!"
+            exit 1
+          fi
+
+          if [[ "$RESP_MANIFEST_SHA" != "$MEDIA_SHA" ]]; then
+            echo "::error::Response manifest SHA256 mismatch! Expected $MEDIA_SHA, got $RESP_MANIFEST_SHA"
+            exit 1
+          fi
+
+          for required_chk in "check_vision_nsfw" "check_vision_category" "check_ocr_qr"; do
+            HAS_CHK=$(echo "$COMPLETED_CHECKS" | jq --arg c "$required_chk" 'contains([$c])')
+            if [[ "$HAS_CHK" != "true" ]]; then
+              echo "::error::Required check '$required_chk' not found in completedChecks: $COMPLETED_CHECKS"
+              exit 1
+            fi
+          done
+
+          echo "PASS: Production authenticated controller integration scan passed with 1 image verified across Node Vision and Python OCR workers."
+
+      # Postflight Gate 6: Configure Supabase Production Secrets & Deploy Edge Function
+      - name: Configure Supabase Production Secrets & Deploy Function
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          GOOGLE_CLOUD_MODERATION_SECRET: ${{ secrets.GOOGLE_CLOUD_MODERATION_SECRET }}
+          CONTROLLER_URL: ${{ steps.deploy-services-prod.outputs.controller_url }}
+        run: |
+          set -euo pipefail
+          CLI_DIR="$(mktemp -d "${RUNNER_TEMP:?}/supabase-cli.XXXXXX")"
+          curl -fsSL https://github.com/supabase/cli/releases/download/v2.117.0/supabase_linux_amd64.tar.gz -o "$CLI_DIR/supabase.tar.gz"
+          tar -xzf "$CLI_DIR/supabase.tar.gz" -C "$CLI_DIR"
+          chmod +x "$CLI_DIR/supabase"
+          
+          "$CLI_DIR/supabase" secrets set \
+            GOOGLE_CLOUD_MODERATION_ENDPOINT="${CONTROLLER_URL}/v1/moderate" \
+            GOOGLE_CLOUD_MODERATION_SECRET="$GOOGLE_CLOUD_MODERATION_SECRET" \
+            --project-ref "kriuhwppxgxsyyrbjsau"
+
+          "$CLI_DIR/supabase" functions deploy process-listing-moderation \
+            --project-ref "kriuhwppxgxsyyrbjsau" \
+            --no-verify-jwt
+          echo "PASS: Supabase Production secrets configured and process-listing-moderation Edge Function deployed."
+
+      # Postflight Gate 7: Verify Edge Function Security Gate
+      - name: Verify Production Supabase Edge Function Gate
+        run: |
+          set -euo pipefail
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://kriuhwppxgxsyyrbjsau.supabase.co/functions/v1/process-listing-moderation" || true)
+          if [[ "$HTTP_CODE" != "401" ]]; then
+            echo "::error::Production process-listing-moderation returned HTTP $HTTP_CODE instead of 401."
+            exit 1
+          fi
+          echo "PASS: Production Edge Function fail-closed authentication verified."
