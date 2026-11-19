@@ -25,6 +25,14 @@ on:
           - wearables-v11-catalogue
           - wearables-v1-foundation
           - wearables-v1-activation
+          # Unified Publishing V3: disabled-schema preparation in Test only.
+          - ordinary-goods-v3
+          - bounded-goods-v3
+          - pedal-and-parts-v3
+          - property-intake-v3
+          - regulated-vehicle-drafts-v3
+          - specialist-vehicle-draft-binding-v3
+          - v3-require-active-seller-identity
       approved_sha:
         description: 'Exact reviewed commit SHA on main'
         required: true

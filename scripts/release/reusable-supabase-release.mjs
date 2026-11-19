@@ -8,9 +8,9 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
-import {CANDIDATES, adoptionAttestation, getAdoption, getCandidate, planDispatch, verifyCandidateSha, PROJECT_REFS, MOBILE_CATALOGUE_CANDIDATE} from './reusable-candidates.mjs';
+import {CANDIDATES, adoptionAttestation, getAdoption, getCandidate, planDispatch, verifyCandidateSha, PROJECT_REFS, MOBILE_CATALOGUE_CANDIDATE, V3_TEST_DIAGNOSTIC_LEDGER} from './reusable-candidates.mjs';
 import {
-  assertLedgerOrdering, assertStageInputs, requireStageEvidence, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved, verifyAccessoriesLedger
+  assertLedgerOrdering, parseLedgerVersions, assertStageInputs, requireStageEvidence, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved, verifyAccessoriesLedger
 } from './accessories-v1-release.mjs';
 
 import {runWearablesV11Preflight, runWearablesV11Postflight} from './wearables-v11-release.mjs';
@@ -259,8 +259,35 @@ export function verifyMobileCataloguePostflight(before, exec) {
   return {verified: true};
 }
 
+function verifyDisabledV3(count, exec) {
+  const raw = exec(`
+    BEGIN READ ONLY;
+    SET LOCAL statement_timeout = '15s';
+    SELECT jsonb_build_object(
+      'contracts', count(*)::integer,
+      'disabled', count(*) FILTER (
+        WHERE NOT g.enabled AND c.slug=g.slug AND p.slug=g.parent_slug
+          AND c.macro_category=coalesce(to_jsonb(g)->>'macro_category','goods') AND c.posting_flow=coalesce(to_jsonb(g)->>'posting_flow','generic')
+          AND NOT c.is_active AND NOT c.new_listing_enabled AND c.status='coming_soon'
+      )::integer
+    )::text
+    FROM app_security.ordinary_goods_contracts_v3 g
+    LEFT JOIN public.categories c ON c.id=g.category_id
+    LEFT JOIN public.categories p ON p.id=c.parent_id;
+    COMMIT;
+  `);
+  const result = JSON.parse(raw.trim());
+  if (result?.contracts !== count || result?.disabled !== count) {
+    throw new Error('REUSABLE_RELEASE_V3_DISABLED_CONTRACT_MISMATCH');
+  }
+  return result;
+}
+
 export async function verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore) {
   const candidate = getCandidate(candidateId);
+  if (candidate.unifiedPublishingV3) {
+    return verifyDisabledV3(candidate.unifiedPublishingV3.count, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+  }
   if (candidate.id === 'moderation-analytics-v1') {
     // Read-only SQL query to verify exact function attributes, empty search_path, volatility, definer/invoker, and permissions.
     // Uses standard PostgreSQL array containment: p.proconfig @> ARRAY['search_path=""']::text[]
@@ -730,9 +757,10 @@ export async function releaseReusable({
     const wearables = candidate.id.startsWith('wearables-v1-');
     // Tablets, Wearables and Mobile Catalogue pin the ledger: history is read before apply, must not change, and the installed
     // statements hash is carried Test -> Production through the receipts.
-    const pinned = tablets || wearables || mobileCatalogue || listingValidity || taxonomy || catalogueUpdate || idvDigilocker;
-    const ordered = candidate.strict || mobileCatalogue || listingValidity || taxonomy || idvDigilocker;
-    const label = idvDigilocker ? 'IDV_DIGILOCKER' : taxonomy ? 'TAXONOMY' : listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
+    const v3 = Boolean(candidate.unifiedPublishingV3);
+    const pinned = v3 || tablets || wearables || mobileCatalogue || listingValidity || taxonomy || catalogueUpdate || idvDigilocker;
+    const ordered = v3 || candidate.strict || mobileCatalogue || listingValidity || taxonomy || idvDigilocker;
+    const label = v3 ? 'V3' : idvDigilocker ? 'IDV_DIGILOCKER' : taxonomy ? 'TAXONOMY' : listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
     const foundationVersion = wearables ? '20261104120000' : '20261102165946';
     const readLedger = () => readTabletsLedger(sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
     let catalogueBefore;
@@ -744,6 +772,12 @@ export async function releaseReusable({
       const ordering = assertLedgerOrdering(candidate, initialLedger);
       isAlreadyApplied = ordering.state === 'applied';
       beforeRemote = ordering.remote;
+      if (v3) {
+        const {local} = parseLedgerVersions(initialLedger);
+        if (local.size !== beforeRemote.size || [...local].some(version => !beforeRemote.has(version))) {
+          throw new Error('REUSABLE_RELEASE_V3_LEDGER_MISMATCH');
+        }
+      }
     } else {
       try {
         verifyLedgerVersion(initialLedger, candidate.version);
@@ -764,6 +798,16 @@ export async function releaseReusable({
       }
       // Environment-specific hosted foundation row and the exact reviewed newer tail; never repaired or rewritten.
       if (idvDigilocker) outOfOrder = assertIdvDigilockerLedger(environment, ledgerBefore);
+      if (v3) {
+        const diagnostic = ledgerBefore.find(row => row.version === V3_TEST_DIAGNOSTIC_LEDGER.version);
+        if (diagnostic && (environment !== 'FairSwapTest' || diagnostic.name !== V3_TEST_DIAGNOSTIC_LEDGER.name ||
+            !diagnostic.hasStatements || diagnostic.statementCount < 1)) {
+          throw new Error('REUSABLE_RELEASE_V3_DIAGNOSTIC_LEDGER_MISMATCH');
+        }
+        if (diagnostic && diagnostic.version > candidate.version) {
+          outOfOrder = {includeAll: true, ahead: [diagnostic.version]};
+        }
+      }
       for (const version of candidate.requiredLedgerVersions ?? []) {
         const prerequisite = Object.values(CANDIDATES).find(entry => entry.version === version);
         const row = ledgerBefore.find(entry => entry.version === version);
@@ -819,6 +863,10 @@ export async function releaseReusable({
       status = 'ALREADY_APPLIED_VERIFIED';
       dryRunPending = [];
     } else {
+      if (candidate.unifiedPublishingV3?.previousCount) {
+        phase = 'preflight';
+        verifyDisabledV3(candidate.unifiedPublishingV3.previousCount, sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
+      }
       // Standard path: candidate-only dry run, migration apply, ledger verification and postflight
       if (taxonomy) {
         phase = 'preflight';
@@ -853,7 +901,7 @@ export async function releaseReusable({
 
       // 5. Dry run push to verify EXACTLY only this candidate is pending (capturing stdout + stderr)
       phase = 'dry_run';
-      // Out-of-order flag only for the approved Production Wearables foundation case, after the pinned CLI advertises it.
+      // Allow the flag only for a reviewed ledger exception after the pinned CLI advertises support.
       if (outOfOrder.includeAll) {
         assertCliSupportsIncludeAll(run('supabase', ['db', 'push', '--help'], env, undefined, true));
       }
