@@ -17,6 +17,11 @@ export const DIAG_ALLOWED_PROJECT_REF = "wpppxlnbzqynvhpeuavd";
 export const DIAG_STATE_TTL_SECONDS = 300;
 export const DIAG_ACR = "aadhaar";
 export const DIAG_TOKEN_PATH = "/public/oauth2/2/token";
+// Provider-published OIDC discovery (GET {host}/.well-known/openid-configuration, checked 19 Nov 2026): issuer, jwks_uri,
+// RS256 signing, token_endpoint /public/oauth2/2/token, authorization_endpoint /public/oauth2/1/authorize. The signing kid
+// matches the kid in the provider's specification sample token. The specification (v2.3) documents no `acr` claim.
+export const DIGILOCKER_OIDC_ISSUER = DIGILOCKER_HOST;
+export const DIGILOCKER_OIDC_JWKS_URL = `${DIGILOCKER_HOST}/public/oauth2/jwks`;
 const MIN_KEY_LENGTH = 32;
 const MAX_TESTERS = 5;
 const TIMEOUT_MS = 8000;
@@ -33,10 +38,10 @@ export interface DiagRuntime {
   stateKey: string;
   authorizeVersion: AuthorizeVersion;
   testerIds: ReadonlySet<string>;
-  /** Provider JWKS URL on the DigiLocker host. Absent: signatures cannot be verified, so the result is UNCONFIRMED. */
-  jwksUrl: string | null;
-  /** Documented issuer. Absent: issuer cannot be confirmed, so the result is UNCONFIRMED. */
-  expectedIssuer: string | null;
+  /** Provider JWKS URL (default: the provider's published jwks_uri). Must stay on the DigiLocker host. */
+  jwksUrl: string;
+  /** Provider issuer (default: the provider's published issuer). Must stay on the DigiLocker host. */
+  expectedIssuer: string;
   /** Owner attests, from provider documentation, that acr=aadhaar in the ID token means Aadhaar-verified assurance.
    *  Default false: an otherwise valid acr=aadhaar token is UNCONFIRMED, never VERIFIED. */
   acrSemanticsConfirmed: boolean;
@@ -84,8 +89,8 @@ export function readDiagRuntime(env: Record<string, string | undefined>): DiagRu
     clientId, clientSecret, redirectUri, stateKey,
     authorizeVersion: av,
     testerIds: new Set(testers),
-    jwksUrl: jwks || null,
-    expectedIssuer: iss || null,
+    jwksUrl: jwks || DIGILOCKER_OIDC_JWKS_URL,
+    expectedIssuer: iss || DIGILOCKER_OIDC_ISSUER,
     acrSemanticsConfirmed: (env["DIGILOCKER_DIAG_ACR_SEMANTICS_CONFIRMED"] ?? "false").toLowerCase() === "true",
   };
 }
@@ -113,7 +118,7 @@ export async function buildDiagAuthorizeUrl(rt: DiagRuntime, state: string): Pro
   u.searchParams.set("code_challenge_method", "S256");
   u.searchParams.set("scope", "openid");
   u.searchParams.set("acr", DIAG_ACR);
-  u.searchParams.set("dl_flow", "signin");
+  // dl_flow is documented only as "signup"; omitting it is the documented sign-in flow. Never send an undocumented value.
   u.searchParams.set("nonce", await deriveDiagNonce(rt.stateKey, state));
   u.searchParams.set("purpose", DIGILOCKER_PURPOSE);
   u.searchParams.set("service_name", DIGILOCKER_SERVICE_NAME);
@@ -191,6 +196,9 @@ export interface DiagResult {
   code: string | null;
   endpoints: { authorize: AuthorizeVersion; token: "2" };
   checks: DiagChecks | null;
+  /** Names (never values) of the claims present in the ID token, so the owner can see which assurance evidence the
+   *  provider actually sends. Only plain claim names are kept; at most 40. */
+  claimNames: string[] | null;
 }
 
 function decodeSegment(seg: string): Record<string, unknown> | null {
@@ -219,7 +227,7 @@ async function verifySignature(
 ): Promise<Tri> {
   const alg = header["alg"];
   if (typeof alg !== "string" || alg === "none" || alg.startsWith("HS")) return "failed"; // never accept unsigned/symmetric
-  if (alg !== "RS256" || !rt.jwksUrl) return "unconfirmed";
+  if (alg !== "RS256") return "unconfirmed";
   let keys: unknown;
   try {
     const res = await call(fetchImpl, rt.jwksUrl, { method: "GET", headers: { Accept: "application/json" } });
@@ -258,11 +266,12 @@ export async function evaluateIdToken(
   const parts = idToken.split(".");
   const header = parts.length === 3 ? decodeSegment(parts[0]) : null;
   const claims = parts.length === 3 ? decodeSegment(parts[1]) : null;
-  if (!header || !claims) return { outcome: "FAILED", code: "INVALID_ID_TOKEN", endpoints, checks: null };
+  if (!header || !claims) return { outcome: "FAILED", code: "INVALID_ID_TOKEN", endpoints, checks: null, claimNames: null };
 
+  const claimNames = Object.keys(claims).filter((k) => /^[a-z][a-z0-9_]{0,31}$/.test(k)).sort().slice(0, 40);
   const signature = await verifySignature(rt, header, `${parts[0]}.${parts[1]}`, parts[2], fetchImpl);
   const iss = claims["iss"];
-  const issuer: Tri = !rt.expectedIssuer ? "unconfirmed" : iss === rt.expectedIssuer ? "verified" : "failed";
+  const issuer: Tri = iss === rt.expectedIssuer ? "verified" : "failed";
   const aud = claims["aud"];
   const azp = claims["azp"];
   const audList = typeof aud === "string" ? [aud] : Array.isArray(aud) && aud.every((x) => typeof x === "string") ? (aud as string[]) : [];
@@ -282,14 +291,14 @@ export async function evaluateIdToken(
   const checks: DiagChecks = { signature, issuer, audience, expiry, subject, issuedAt, nonce, acr };
 
   if (signature === "failed" || issuer === "failed" || !audience || !expiry || !subject || !issuedAt || nonce === "mismatch") {
-    return { outcome: "FAILED", code: "INVALID_ID_TOKEN", endpoints, checks };
+    return { outcome: "FAILED", code: "INVALID_ID_TOKEN", endpoints, checks, claimNames };
   }
-  if (acr === "other") return { outcome: "NOT_VERIFIED", code: "ACR_NOT_AADHAAR", endpoints, checks };
-  if (acr === "missing") return { outcome: "UNCONFIRMED", code: "ACR_MISSING", endpoints, checks };
-  if (nonce !== "match") return { outcome: "UNCONFIRMED", code: "NONCE_MISSING", endpoints, checks };
-  if (signature !== "verified") return { outcome: "UNCONFIRMED", code: "SIGNING_KEYS_UNCONFIRMED", endpoints, checks };
-  if (issuer !== "verified") return { outcome: "UNCONFIRMED", code: "ISSUER_UNCONFIRMED", endpoints, checks };
-  if (!rt.acrSemanticsConfirmed) return { outcome: "UNCONFIRMED", code: "ASSURANCE_SEMANTICS_UNCONFIRMED", endpoints, checks };
+  if (acr === "other") return { outcome: "NOT_VERIFIED", code: "ACR_NOT_AADHAAR", endpoints, checks, claimNames };
+  if (acr === "missing") return { outcome: "UNCONFIRMED", code: "ACR_MISSING", endpoints, checks, claimNames };
+  if (nonce !== "match") return { outcome: "UNCONFIRMED", code: "NONCE_MISSING", endpoints, checks, claimNames };
+  if (signature !== "verified") return { outcome: "UNCONFIRMED", code: "SIGNING_KEYS_UNCONFIRMED", endpoints, checks, claimNames };
+  if (issuer !== "verified") return { outcome: "UNCONFIRMED", code: "ISSUER_UNCONFIRMED", endpoints, checks, claimNames };
+  if (!rt.acrSemanticsConfirmed) return { outcome: "UNCONFIRMED", code: "ASSURANCE_SEMANTICS_UNCONFIRMED", endpoints, checks, claimNames };
   // Only reachable with: verified signature, issuer, audience/azp, exp, iat, sub, matching nonce and acr=aadhaar.
-  return { outcome: "VERIFIED", code: null, endpoints, checks };
+  return { outcome: "VERIFIED", code: null, endpoints, checks, claimNames };
 }
