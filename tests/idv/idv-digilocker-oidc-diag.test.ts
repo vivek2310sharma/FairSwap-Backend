@@ -27,6 +27,7 @@ const env = (over: Record<string, string> = {}): Record<string, string> => ({
   DIGILOCKER_DIAG_TESTER_IDS: `${TESTER}`,
   DIGILOCKER_DIAG_JWKS_URL: JWKS_URL,
   DIGILOCKER_DIAG_EXPECTED_ISSUER: ISSUER,
+  DIGILOCKER_DIAG_ACR_SEMANTICS_CONFIRMED: "true",
   ...over,
 });
 
@@ -170,7 +171,7 @@ describe("DigiLocker OIDC v2 Stage diagnostic", () => {
     expect(r.status).toBe(200);
     expect(r.body.result).toEqual({
       outcome: "VERIFIED", code: null, endpoints: { authorize: "1", token: "2" },
-      checks: { signature: "verified", issuer: "verified", audience: true, expiry: true, nonce: "match", acr: "aadhaar" },
+      checks: { signature: "verified", issuer: "verified", audience: true, expiry: true, subject: true, issuedAt: true, nonce: "match", acr: "aadhaar" },
     });
     const tok = p.log.find((l) => l.url === `${DIGILOCKER_HOST}${DIAG_TOKEN_PATH}`)!;
     const sent = new URLSearchParams(tok.body);
@@ -249,6 +250,57 @@ describe("DigiLocker OIDC v2 Stage diagnostic", () => {
     const { state } = await start(w);
     const r = await complete(w, provider({ idToken: null }).f, state);
     expect(r.body.result).toMatchObject({ outcome: "FAILED", code: "INVALID_PROVIDER_RESPONSE" });
+  });
+
+  // undefined values are dropped by JSON.stringify, i.e. the claim is absent from the token.
+  it.each([
+    ["sub missing", { sub: undefined }],
+    ["sub empty", { sub: "" }],
+    ["sub whitespace", { sub: "   " }],
+    ["sub not a string", { sub: 12345 }],
+    ["sub too long", { sub: "x".repeat(256) }],
+    ["iat missing", { iat: undefined }],
+    ["iat not a number", { iat: "1800000000" }],
+    ["iat in the future", { iat: NOW / 1000 + 3600 }],
+    ["iat older than the state lifetime", { iat: NOW / 1000 - 3600, exp: NOW / 1000 + 300 }],
+    ["exp missing", { exp: undefined }],
+    ["exp not after iat", { iat: NOW / 1000 - 5, exp: NOW / 1000 - 5 }],
+    ["aud missing", { aud: undefined }],
+    ["aud not strings", { aud: [CLIENT, 7] }],
+    ["multiple audiences without azp", { aud: [CLIENT, "other-client"] }],
+    ["multiple audiences with foreign azp", { aud: [CLIENT, "other-client"], azp: "other-client" }],
+    ["single audience with foreign azp", { azp: "other-client" }],
+    ["nonce not a string", { nonce: 123 }],
+  ])("invalid claim (%s) is FAILED, never VERIFIED", async (_name, over) => {
+    const w = makeWorld();
+    const { state } = await start(w);
+    const r = await complete(w, provider({ idToken: await signJwt(await goodClaims(state, over)) }).f, state);
+    expect(r.body.result).toMatchObject({ outcome: "FAILED", code: "INVALID_ID_TOKEN" });
+  });
+
+  it("multiple audiences with azp = client_id are accepted", async () => {
+    const w = makeWorld();
+    const { state } = await start(w);
+    const t = await signJwt(await goodClaims(state, { aud: [CLIENT, "other-client"], azp: CLIENT }));
+    expect((await complete(w, provider({ idToken: t }).f, state)).body.result.outcome).toBe("VERIFIED");
+  });
+
+  it("absent nonce is UNCONFIRMED, never VERIFIED, even with a verified signature and acr=aadhaar", async () => {
+    const w = makeWorld();
+    const { state } = await start(w);
+    const r = await complete(w, provider({ idToken: await signJwt(await goodClaims(state, { nonce: undefined })) }).f, state);
+    expect(r.body.result).toMatchObject({ outcome: "UNCONFIRMED", code: "NONCE_MISSING" });
+    expect(r.body.result.checks).toMatchObject({ signature: "verified", acr: "aadhaar", nonce: "absent" });
+  });
+
+  it("unconfirmed provider assurance semantics (default) are UNCONFIRMED, never VERIFIED", async () => {
+    const { DIGILOCKER_DIAG_ACR_SEMANTICS_CONFIRMED: _drop, ...noAttest } = env();
+    for (const e of [noAttest, env({ DIGILOCKER_DIAG_ACR_SEMANTICS_CONFIRMED: "false" })]) {
+      const w = makeWorld();
+      const { state } = await start(w, e);
+      const r = await complete(w, provider({ idToken: await signJwt(await goodClaims(state)) }).f, state, undefined, e);
+      expect(r.body.result).toMatchObject({ outcome: "UNCONFIRMED", code: "ASSURANCE_SEMANTICS_UNCONFIRMED" });
+    }
   });
 
   it("cancelled login: provider error is CANCELLED, consumes the state and never calls the token endpoint", async () => {

@@ -37,6 +37,9 @@ export interface DiagRuntime {
   jwksUrl: string | null;
   /** Documented issuer. Absent: issuer cannot be confirmed, so the result is UNCONFIRMED. */
   expectedIssuer: string | null;
+  /** Owner attests, from provider documentation, that acr=aadhaar in the ID token means Aadhaar-verified assurance.
+   *  Default false: an otherwise valid acr=aadhaar token is UNCONFIRMED, never VERIFIED. */
+  acrSemanticsConfirmed: boolean;
 }
 
 function onDigiLockerHost(value: string): boolean {
@@ -83,6 +86,7 @@ export function readDiagRuntime(env: Record<string, string | undefined>): DiagRu
     testerIds: new Set(testers),
     jwksUrl: jwks || null,
     expectedIssuer: iss || null,
+    acrSemanticsConfirmed: (env["DIGILOCKER_DIAG_ACR_SEMANTICS_CONFIRMED"] ?? "false").toLowerCase() === "true",
   };
 }
 
@@ -171,8 +175,13 @@ export type Tri = "verified" | "unconfirmed" | "failed";
 export interface DiagChecks {
   signature: Tri;
   issuer: Tri;
+  /** aud contains client_id; with several audiences (or any azp) azp must equal client_id. */
   audience: boolean;
   expiry: boolean;
+  /** sub present: a non-empty string of at most 255 chars. Its value is never returned. */
+  subject: boolean;
+  /** iat present, numeric, not in the future and no older than the state lifetime. */
+  issuedAt: boolean;
   nonce: "match" | "absent" | "mismatch";
   acr: "aadhaar" | "missing" | "other";
 }
@@ -255,23 +264,32 @@ export async function evaluateIdToken(
   const iss = claims["iss"];
   const issuer: Tri = !rt.expectedIssuer ? "unconfirmed" : iss === rt.expectedIssuer ? "verified" : "failed";
   const aud = claims["aud"];
-  const audience = aud === rt.clientId || (Array.isArray(aud) && aud.length > 0 && aud.every((a) => typeof a === "string") && aud.includes(rt.clientId));
+  const azp = claims["azp"];
+  const audList = typeof aud === "string" ? [aud] : Array.isArray(aud) && aud.every((x) => typeof x === "string") ? (aud as string[]) : [];
+  const audience = audList.includes(rt.clientId) &&
+    (azp === undefined ? audList.length === 1 : azp === rt.clientId); // OIDC Core 3.1.3.7 (8)-(9)
   const exp = claims["exp"];
   const iat = claims["iat"];
-  const expiry = typeof exp === "number" && exp + CLOCK_SKEW_S > nowSeconds &&
-    (iat === undefined || (typeof iat === "number" && iat - CLOCK_SKEW_S <= nowSeconds));
+  const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+  const issuedAt = finite(iat) && iat - CLOCK_SKEW_S <= nowSeconds && iat + DIAG_STATE_TTL_SECONDS + CLOCK_SKEW_S >= nowSeconds;
+  const expiry = finite(exp) && exp + CLOCK_SKEW_S > nowSeconds && (!finite(iat) || exp > iat);
+  const sub = claims["sub"];
+  const subject = typeof sub === "string" && sub.trim().length > 0 && sub.length <= 255;
   const n = claims["nonce"];
-  const nonce = n === undefined ? "absent" : n === expectedNonce ? "match" : "mismatch";
+  const nonce = n === undefined ? "absent" : typeof n === "string" && n === expectedNonce ? "match" : "mismatch";
   const a = claims["acr"];
   const acr = a === undefined || a === null || a === "" ? "missing" : a === DIAG_ACR ? "aadhaar" : "other";
-  const checks: DiagChecks = { signature, issuer, audience, expiry, nonce, acr };
+  const checks: DiagChecks = { signature, issuer, audience, expiry, subject, issuedAt, nonce, acr };
 
-  if (signature === "failed" || issuer === "failed" || !audience || !expiry || nonce === "mismatch") {
+  if (signature === "failed" || issuer === "failed" || !audience || !expiry || !subject || !issuedAt || nonce === "mismatch") {
     return { outcome: "FAILED", code: "INVALID_ID_TOKEN", endpoints, checks };
   }
   if (acr === "other") return { outcome: "NOT_VERIFIED", code: "ACR_NOT_AADHAAR", endpoints, checks };
   if (acr === "missing") return { outcome: "UNCONFIRMED", code: "ACR_MISSING", endpoints, checks };
+  if (nonce !== "match") return { outcome: "UNCONFIRMED", code: "NONCE_MISSING", endpoints, checks };
   if (signature !== "verified") return { outcome: "UNCONFIRMED", code: "SIGNING_KEYS_UNCONFIRMED", endpoints, checks };
   if (issuer !== "verified") return { outcome: "UNCONFIRMED", code: "ISSUER_UNCONFIRMED", endpoints, checks };
+  if (!rt.acrSemanticsConfirmed) return { outcome: "UNCONFIRMED", code: "ASSURANCE_SEMANTICS_UNCONFIRMED", endpoints, checks };
+  // Only reachable with: verified signature, issuer, audience/azp, exp, iat, sub, matching nonce and acr=aadhaar.
   return { outcome: "VERIFIED", code: null, endpoints, checks };
 }
