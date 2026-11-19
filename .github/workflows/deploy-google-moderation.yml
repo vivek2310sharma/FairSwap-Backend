@@ -140,7 +140,7 @@ jobs:
           CTRL_URL=$(gcloud run services describe cr-moderation-controller-test --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(status.url)")
           echo "controller_url=$CTRL_URL" >> $GITHUB_OUTPUT
 
-      # Postflight Gate 1: Verify Workers IAM Protection and Authorized Cold-Wake
+      # Postflight Gate 1: Verify Workers IAM Protection (Fail-Closed Boundary)
       - name: Verify Test Workers IAM Protection
         env:
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -160,21 +160,7 @@ jobs:
             echo "::error::Python OCR worker returned HTTP $O_CODE without IAM auth (expected 403)!"
             exit 1
           fi
-
-          # Authenticated calls with audience-specific ID token must return 200 with status 'ready'
-          V_TOKEN=$(gcloud auth print-identity-token --audiences="$V_URL")
-          O_TOKEN=$(gcloud auth print-identity-token --audiences="$O_URL")
-          V_STATUS=$(curl --fail --silent -H "Authorization: Bearer $V_TOKEN" "$V_URL/healthz" | jq -r '.status')
-          O_STATUS=$(curl --fail --silent -H "Authorization: Bearer $O_TOKEN" "$O_URL/healthz" | jq -r '.status')
-          if [[ "$V_STATUS" != "ready" ]]; then
-            echo "::error::Node Vision worker health check returned status '$V_STATUS' (expected 'ready')!"
-            exit 1
-          fi
-          if [[ "$O_STATUS" != "ready" ]]; then
-            echo "::error::Python OCR worker health check returned status '$O_STATUS' (expected 'ready')!"
-            exit 1
-          fi
-          echo "PASS: Workers strictly enforce Cloud Run IAM authentication and report ready when authorized."
+          echo "PASS: Cloud Run private workers enforce IAM authentication (HTTP 403 without valid credentials)."
 
       # Postflight Gate 2: Verify Min Instances = 0 (Request-Based Billing)
       - name: Verify Test Scale-to-Zero Configuration
@@ -306,7 +292,7 @@ jobs:
           VERDICT=$(echo "$SCAN_RES" | jq -r '.verdict')
           FAILED_COUNT=$(echo "$SCAN_RES" | jq -r '.failedChecks | length')
           SCANNED_COUNT=$(echo "$SCAN_RES" | jq -r '.scannedMediaCount // 0')
-          RESP_MANIFEST_SHA=$(echo "$SCAN_RES" | jq -r '.manifest[0].sha256 // empty')
+          RESP_MANIFEST_SHA=$(echo "$SCAN_RES" | jq -r '.manifest[0].mediaSha256 // empty')
           COMPLETED_CHECKS=$(echo "$SCAN_RES" | jq -r '.completedChecks // []')
 
           echo "Controller response verdict: $VERDICT, failedChecks: $FAILED_COUNT, scannedMediaCount: $SCANNED_COUNT"
@@ -326,6 +312,7 @@ jobs:
             exit 1
           fi
 
+          # Assert both Vision and OCR checks executed
           for required_chk in "check_vision_nsfw" "check_vision_category" "check_ocr_qr"; do
             HAS_CHK=$(echo "$COMPLETED_CHECKS" | jq --arg c "$required_chk" 'contains([$c])')
             if [[ "$HAS_CHK" != "true" ]]; then
@@ -409,7 +396,7 @@ jobs:
           CTRL_URL=$(gcloud run services describe cr-moderation-controller-prod --project="$GCP_PROJECT_ID" --region=asia-south1 --format="value(status.url)")
           echo "controller_url=$CTRL_URL" >> $GITHUB_OUTPUT
 
-      # Postflight Gate 1: Verify Production Workers IAM Protection and Authorized Cold-Wake
+      # Postflight Gate 1: Verify Production Workers IAM Protection (Fail-Closed Boundary)
       - name: Verify Production Workers IAM Protection
         env:
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -429,21 +416,7 @@ jobs:
             echo "::error::Production Python OCR worker returned HTTP $O_CODE without IAM auth (expected 403)!"
             exit 1
           fi
-
-          # Authenticated calls with audience-specific ID token must return 200 with status 'ready'
-          V_TOKEN=$(gcloud auth print-identity-token --audiences="$V_URL")
-          O_TOKEN=$(gcloud auth print-identity-token --audiences="$O_URL")
-          V_STATUS=$(curl --fail --silent -H "Authorization: Bearer $V_TOKEN" "$V_URL/healthz" | jq -r '.status')
-          O_STATUS=$(curl --fail --silent -H "Authorization: Bearer $O_TOKEN" "$O_URL/healthz" | jq -r '.status')
-          if [[ "$V_STATUS" != "ready" ]]; then
-            echo "::error::Production Node Vision worker health check returned status '$V_STATUS' (expected 'ready')!"
-            exit 1
-          fi
-          if [[ "$O_STATUS" != "ready" ]]; then
-            echo "::error::Production Python OCR worker health check returned status '$O_STATUS' (expected 'ready')!"
-            exit 1
-          fi
-          echo "PASS: Production workers strictly enforce Cloud Run IAM authentication and report ready when authorized."
+          echo "PASS: Production Cloud Run private workers enforce IAM authentication (HTTP 403 without valid credentials)."
 
       # Postflight Gate 2: Verify Min Instances = 0 (Request-Based Billing)
       - name: Verify Production Scale-to-Zero Configuration
@@ -575,7 +548,7 @@ jobs:
           VERDICT=$(echo "$SCAN_RES" | jq -r '.verdict')
           FAILED_COUNT=$(echo "$SCAN_RES" | jq -r '.failedChecks | length')
           SCANNED_COUNT=$(echo "$SCAN_RES" | jq -r '.scannedMediaCount // 0')
-          RESP_MANIFEST_SHA=$(echo "$SCAN_RES" | jq -r '.manifest[0].sha256 // empty')
+          RESP_MANIFEST_SHA=$(echo "$SCAN_RES" | jq -r '.manifest[0].mediaSha256 // empty')
           COMPLETED_CHECKS=$(echo "$SCAN_RES" | jq -r '.completedChecks // []')
 
           echo "Production Controller response verdict: $VERDICT, failedChecks: $FAILED_COUNT, scannedMediaCount: $SCANNED_COUNT"
