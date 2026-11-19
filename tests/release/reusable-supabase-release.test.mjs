@@ -3650,3 +3650,49 @@ test('V3 Test denies unsafe out-of-order state and checks ledger fingerprints be
   assert.equal(idvApplies(drift.calls).length, 1);
   assert.equal(drift.receipt, undefined);
 });
+
+test('native PostgreSQL: V3 property lifecycle accepts LF and CRLF but rejects missing or repeated blocks',
+  {skip: pgBin ? false : 'no local PostgreSQL binaries'}, () => {
+    const {fullPath} = verifyCandidateSha('property-intake-v3');
+    const migration = readFileSync(fullPath, 'utf8');
+    const blockStart = migration.indexOf('do $$\ndeclare def text; item_terms');
+    assert.notEqual(blockStart, -1);
+    const lifecycle = migration.slice(blockStart, migration.lastIndexOf('commit;'));
+    const terms = /\$terms\$([\s\S]+?)\$terms\$/.exec(lifecycle)[1];
+    const source = readFileSync('supabase/migrations/20261011092234_test_family_submission_v1.sql', 'utf8');
+    const functionStart = source.indexOf('CREATE OR REPLACE FUNCTION app_security.impl_seller_submit_listing(');
+    assert.notEqual(functionStart, -1);
+    const terminator = '\n$function$\n;';
+    const functionEnd = source.indexOf(terminator, functionStart);
+    assert.ok(functionEnd > functionStart);
+    const seller = source.slice(functionStart, functionEnd + terminator.length);
+    assert.ok(seller.includes(terms));
+    assert.ok(seller.includes('app_security.submission_family('));
+
+    const pg = startPg(pgBin);
+    try {
+      pg.run('CREATE SCHEMA app_security');
+      const readDefinition = () => pg.run("SELECT pg_get_functiondef('app_security.impl_seller_submit_listing(uuid)'::regprocedure)");
+      pg.run(seller);
+      assert.ok(!readDefinition().includes('\r'));
+      pg.run(lifecycle);
+      const expected = readDefinition();
+      assert.match(expected, /app_security\.submission_family\(/);
+      assert.ok(expected.includes(terms));
+      assert.match(expected, /s\.owner_id=v_caller_id AND s\.state='finalizing'/);
+
+      pg.run(seller.replaceAll('\n', '\r\n'));
+      assert.ok(readDefinition().includes('\r\n'));
+      pg.run(lifecycle);
+      assert.equal(readDefinition(), expected);
+
+      for (const changed of ['', `${terms}\n\n  ${terms}`]) {
+        pg.run(seller.replace(terms, changed).replaceAll('\n', '\r\n'));
+        const before = readDefinition();
+        assert.throws(() => pg.run(lifecycle), /PROPERTY_SELLER_LIFECYCLE_DRIFT/);
+        assert.equal(readDefinition(), before);
+      }
+    } finally {
+      pg.stop();
+    }
+  });

@@ -105,7 +105,8 @@ declare def text; item_terms text := $terms$IF v_listing.condition IS NULL THEN
     RAISE EXCEPTION 'price in paise is required for non-free listings';
   END IF;$terms$;
 begin
-  def := pg_catalog.pg_get_functiondef('app_security.impl_seller_submit_listing(uuid)'::regprocedure);
+  -- PostgreSQL retains line endings inside dollar-quoted function bodies.
+  def := replace(pg_catalog.pg_get_functiondef('app_security.impl_seller_submit_listing(uuid)'::regprocedure), E'\r\n', E'\n');
   if (length(def)-length(replace(def,item_terms,''))) <> length(item_terms)
     then raise exception 'PROPERTY_SELLER_LIFECYCLE_DRIFT'; end if;
   execute replace(def,item_terms,$branch$IF NOT EXISTS (
