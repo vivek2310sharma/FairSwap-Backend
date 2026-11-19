@@ -1,0 +1,1357 @@
+{
+  "note": "Read-only observed 2026-11-19. Existing subtype IDs differ by environment. No inferred canonical many-to-one reclassification is authorized.",
+  "test": [
+    {
+      "slug": "car-compact-suv",
+      "id": "ebe0a760-4a73-4088-bb84-524dafef7dbf",
+      "family": "car",
+      "version_id": "7b71b6fd-0b82-4881-8db4-ccaa847bab8e",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Compact SUV"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-coupe-convertible",
+      "id": "0dc0bccf-ddd3-4aa8-b81d-ddf6339243eb",
+      "family": "car",
+      "version_id": "7b71b6fd-0b82-4881-8db4-ccaa847bab8e",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Coupe & Convertible"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-electric-hybrid-cars",
+      "id": "b998a41e-4fc6-46df-bc14-3aabe6f9ab2c",
+      "family": "car",
+      "version_id": "7b71b6fd-0b82-4881-8db4-ccaa847bab8e",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Electric & Hybrid Cars"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "battery_capacity_kwh",
+        "range_km",
+        "battery_warranty_left",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-hatchback",
+      "id": "1c888722-9e3a-4001-b8f7-22d5781fa1df",
+      "family": "car",
+      "version_id": "7b71b6fd-0b82-4881-8db4-ccaa847bab8e",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Hatchback"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-luxury-cars",
+      "id": "34e90ba7-bfe9-43f1-89a4-e13183282893",
+      "family": "car",
+      "version_id": "7b71b6fd-0b82-4881-8db4-ccaa847bab8e",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Luxury Cars"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-muv-mpv",
+      "id": "eda7113b-5235-4438-8ebc-85d9b18ed7f2",
+      "family": "car",
+      "version_id": "7b71b6fd-0b82-4881-8db4-ccaa847bab8e",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "MUV & MPV"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "seating_capacity",
+        "registration_state",
+        "insurance_valid_till",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-sedan",
+      "id": "8a4de1bb-6e1a-48b5-a61b-b28558d88dd9",
+      "family": "car",
+      "version_id": "7b71b6fd-0b82-4881-8db4-ccaa847bab8e",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Sedan"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-suv",
+      "id": "0c9ad0f6-5f67-42e5-848c-ad1fb2bae4ea",
+      "family": "car",
+      "version_id": "7b71b6fd-0b82-4881-8db4-ccaa847bab8e",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "SUV"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-vintage-classic-cars",
+      "id": "11ccbc7c-bfa7-4f50-8aa5-3907f31da681",
+      "family": "car",
+      "version_id": "7b71b6fd-0b82-4881-8db4-ccaa847bab8e",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Vintage & Classic Cars"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "year",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "condition",
+        "price"
+      ]
+    },
+    {
+      "slug": "rental-apartment-or-flat",
+      "id": "5a8043c1-c8f6-4543-8537-06b9bb8e5fe5",
+      "family": "property",
+      "version_id": "87867d25-57f8-41b2-a338-73477b6ceabe",
+      "path": [
+        "Property",
+        "Residential for Rent",
+        "Apartment or Flat"
+      ],
+      "fields": [
+        "bhk",
+        "bathrooms",
+        "area_sqft",
+        "floor",
+        "total_floors",
+        "furnishing",
+        "monthly_rent",
+        "security_deposit",
+        "maintenance",
+        "available_from",
+        "preferred_tenants",
+        "parking",
+        "society_name",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-boys-pg",
+      "id": "6b1ea11e-b71e-438c-aa92-4617e69080f3",
+      "family": "property",
+      "version_id": "87867d25-57f8-41b2-a338-73477b6ceabe",
+      "path": [
+        "Property",
+        "PG & Co-living",
+        "Boys PG"
+      ],
+      "fields": [
+        "monthly_rent_per_bed",
+        "sharing_type",
+        "food_included",
+        "attached_bathroom",
+        "ac",
+        "wifi",
+        "security_deposit",
+        "available_from",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-builder-floor",
+      "id": "8e609ebf-e4b2-48b7-bf26-5628d294eb6f",
+      "family": "property",
+      "version_id": "87867d25-57f8-41b2-a338-73477b6ceabe",
+      "path": [
+        "Property",
+        "Residential for Rent",
+        "Builder Floor"
+      ],
+      "fields": [
+        "bhk",
+        "bathrooms",
+        "area_sqft",
+        "floor",
+        "furnishing",
+        "monthly_rent",
+        "security_deposit",
+        "available_from",
+        "preferred_tenants",
+        "parking",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-co-living-spaces",
+      "id": "a86b4a1d-f746-4016-b375-f9daf9105ac1",
+      "family": "property",
+      "version_id": "87867d25-57f8-41b2-a338-73477b6ceabe",
+      "path": [
+        "Property",
+        "PG & Co-living",
+        "Co-living Spaces"
+      ],
+      "fields": [
+        "monthly_rent_per_bed",
+        "sharing_type",
+        "food_included",
+        "ac",
+        "wifi",
+        "housekeeping",
+        "security_deposit",
+        "available_from",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-flatmates-shared-rooms",
+      "id": "12f81d76-739b-428b-811f-b7a98d48a82c",
+      "family": "property",
+      "version_id": "87867d25-57f8-41b2-a338-73477b6ceabe",
+      "path": [
+        "Property",
+        "PG & Co-living",
+        "Flatmates & Shared Rooms"
+      ],
+      "fields": [
+        "monthly_rent",
+        "gender_preference",
+        "furnishing",
+        "available_from",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-girls-pg",
+      "id": "23e51125-ed8c-445b-87f7-dac02ff2cd06",
+      "family": "property",
+      "version_id": "87867d25-57f8-41b2-a338-73477b6ceabe",
+      "path": [
+        "Property",
+        "PG & Co-living",
+        "Girls PG"
+      ],
+      "fields": [
+        "monthly_rent_per_bed",
+        "sharing_type",
+        "food_included",
+        "attached_bathroom",
+        "ac",
+        "wifi",
+        "security_deposit",
+        "available_from",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-hostels",
+      "id": "efb6ded4-13fc-4179-a192-7101f1dd5d32",
+      "family": "property",
+      "version_id": "87867d25-57f8-41b2-a338-73477b6ceabe",
+      "path": [
+        "Property",
+        "PG & Co-living",
+        "Hostels"
+      ],
+      "fields": [
+        "monthly_rent_per_bed",
+        "sharing_type",
+        "gender",
+        "food_included",
+        "security_deposit",
+        "available_from",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-independent-house-or-villa",
+      "id": "267881b7-a5a3-4438-b9ac-a44bbcaaa6e2",
+      "family": "property",
+      "version_id": "87867d25-57f8-41b2-a338-73477b6ceabe",
+      "path": [
+        "Property",
+        "Residential for Rent",
+        "Independent House or Villa"
+      ],
+      "fields": [
+        "bhk",
+        "bathrooms",
+        "area_sqft",
+        "floors",
+        "furnishing",
+        "monthly_rent",
+        "security_deposit",
+        "available_from",
+        "preferred_tenants",
+        "parking",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-single-room",
+      "id": "c337773d-23ad-4cfc-a952-36f79a6d7351",
+      "family": "property",
+      "version_id": "87867d25-57f8-41b2-a338-73477b6ceabe",
+      "path": [
+        "Property",
+        "Residential for Rent",
+        "Single Room"
+      ],
+      "fields": [
+        "area_sqft",
+        "attached_bathroom",
+        "furnishing",
+        "monthly_rent",
+        "security_deposit",
+        "available_from",
+        "preferred_tenants",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-studio-apartment",
+      "id": "621f504d-b864-4353-a989-d99813ad4ad4",
+      "family": "property",
+      "version_id": "87867d25-57f8-41b2-a338-73477b6ceabe",
+      "path": [
+        "Property",
+        "Residential for Rent",
+        "Studio Apartment"
+      ],
+      "fields": [
+        "area_sqft",
+        "floor",
+        "furnishing",
+        "monthly_rent",
+        "security_deposit",
+        "available_from",
+        "preferred_tenants",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "tw-adventure-touring-bikes",
+      "id": "c283ef64-95fe-49a3-9442-06e1d49c5546",
+      "family": "two_wheeler",
+      "version_id": "0506a02a-b66a-4abe-b168-db58eb87c43d",
+      "path": [
+        "Vehicles",
+        "Motorcycles",
+        "Adventure & Touring Bikes"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-classic-retro-bikes",
+      "id": "9c86c2a5-18fd-4066-a168-8296ae60c6b1",
+      "family": "two_wheeler",
+      "version_id": "0506a02a-b66a-4abe-b168-db58eb87c43d",
+      "path": [
+        "Vehicles",
+        "Motorcycles",
+        "Classic & Retro Bikes"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-commuter-bikes",
+      "id": "94969a67-4d44-4e2a-81e3-0ece8d6de153",
+      "family": "two_wheeler",
+      "version_id": "0506a02a-b66a-4abe-b168-db58eb87c43d",
+      "path": [
+        "Vehicles",
+        "Motorcycles",
+        "Commuter Bikes"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-cruiser-bikes",
+      "id": "e7ac435a-a20b-42fc-90a7-10c2195a77fb",
+      "family": "two_wheeler",
+      "version_id": "0506a02a-b66a-4abe-b168-db58eb87c43d",
+      "path": [
+        "Vehicles",
+        "Motorcycles",
+        "Cruiser Bikes"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-electric-motorcycles",
+      "id": "d95b6a8c-297c-427c-a904-76078dc7eadf",
+      "family": "two_wheeler",
+      "version_id": "0506a02a-b66a-4abe-b168-db58eb87c43d",
+      "path": [
+        "Vehicles",
+        "Motorcycles",
+        "Electric Motorcycles"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "year",
+        "range_km",
+        "battery_warranty_left",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-electric-scooters",
+      "id": "4eb20c2f-6e3c-4d9e-93f4-fc11c29a5fe3",
+      "family": "two_wheeler",
+      "version_id": "0506a02a-b66a-4abe-b168-db58eb87c43d",
+      "path": [
+        "Vehicles",
+        "Scooters",
+        "Electric Scooters"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "year",
+        "range_km",
+        "battery_warranty_left",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-maxi-scooters-mopeds",
+      "id": "9f03a23a-663d-4586-9ef6-2654fbef4073",
+      "family": "two_wheeler",
+      "version_id": "0506a02a-b66a-4abe-b168-db58eb87c43d",
+      "path": [
+        "Vehicles",
+        "Scooters",
+        "Maxi Scooters & Mopeds"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-petrol-scooters",
+      "id": "f4e656c1-4dd3-4149-b803-40984227d2ba",
+      "family": "two_wheeler",
+      "version_id": "0506a02a-b66a-4abe-b168-db58eb87c43d",
+      "path": [
+        "Vehicles",
+        "Scooters",
+        "Petrol Scooters"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-sports-superbikes",
+      "id": "2ae9347c-361d-4bb6-b3f2-2a19a2791ba8",
+      "family": "two_wheeler",
+      "version_id": "0506a02a-b66a-4abe-b168-db58eb87c43d",
+      "path": [
+        "Vehicles",
+        "Motorcycles",
+        "Sports & Superbikes"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    }
+  ],
+  "prod": [
+    {
+      "slug": "car-compact-suv",
+      "id": "9449dfc0-0193-443f-be6a-c1bafa98442c",
+      "family": "car",
+      "version_id": "0e97b06a-197a-4007-9453-14fad19902cf",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Compact SUV"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-coupe-convertible",
+      "id": "22d0ef0b-6da0-4351-aa14-fb8dbf548b22",
+      "family": "car",
+      "version_id": "0e97b06a-197a-4007-9453-14fad19902cf",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Coupe & Convertible"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-electric-hybrid-cars",
+      "id": "9c470a58-87fe-488e-a1a5-a00c2441b387",
+      "family": "car",
+      "version_id": "0e97b06a-197a-4007-9453-14fad19902cf",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Electric & Hybrid Cars"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "battery_capacity_kwh",
+        "range_km",
+        "battery_warranty_left",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-hatchback",
+      "id": "acf85172-02f4-41c6-ba0f-4e664dcce4c7",
+      "family": "car",
+      "version_id": "0e97b06a-197a-4007-9453-14fad19902cf",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Hatchback"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-luxury-cars",
+      "id": "cca6aa80-0ac4-42a4-a96a-0d08684e47b2",
+      "family": "car",
+      "version_id": "0e97b06a-197a-4007-9453-14fad19902cf",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Luxury Cars"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-muv-mpv",
+      "id": "f123ff93-c747-4dc3-b2d2-2f0dfade8cf6",
+      "family": "car",
+      "version_id": "0e97b06a-197a-4007-9453-14fad19902cf",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "MUV & MPV"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "seating_capacity",
+        "registration_state",
+        "insurance_valid_till",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-sedan",
+      "id": "8a696981-21e5-44e1-9e16-ae471970ddc3",
+      "family": "car",
+      "version_id": "0e97b06a-197a-4007-9453-14fad19902cf",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Sedan"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-suv",
+      "id": "31ccf119-4a44-4d8e-b3b8-1215820f5775",
+      "family": "car",
+      "version_id": "0e97b06a-197a-4007-9453-14fad19902cf",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "SUV"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "fuel_type",
+        "transmission",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "car-vintage-classic-cars",
+      "id": "91940b82-132c-435a-af29-8489be762790",
+      "family": "car",
+      "version_id": "0e97b06a-197a-4007-9453-14fad19902cf",
+      "path": [
+        "Vehicles",
+        "Cars",
+        "Vintage & Classic Cars"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "year",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "condition",
+        "price"
+      ]
+    },
+    {
+      "slug": "rental-apartment-or-flat",
+      "id": "c9ccd276-3883-45af-983c-66e6ee9591bc",
+      "family": "property",
+      "version_id": "f003f98b-a142-4a48-802c-81da41e6952d",
+      "path": [
+        "Property",
+        "Residential for Rent",
+        "Apartment or Flat"
+      ],
+      "fields": [
+        "bhk",
+        "bathrooms",
+        "area_sqft",
+        "floor",
+        "total_floors",
+        "furnishing",
+        "monthly_rent",
+        "security_deposit",
+        "maintenance",
+        "available_from",
+        "preferred_tenants",
+        "parking",
+        "society_name",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-boys-pg",
+      "id": "bf17af9b-b1f8-469f-858f-29aca867a2ed",
+      "family": "property",
+      "version_id": "f003f98b-a142-4a48-802c-81da41e6952d",
+      "path": [
+        "Property",
+        "PG & Co-living",
+        "Boys PG"
+      ],
+      "fields": [
+        "monthly_rent_per_bed",
+        "sharing_type",
+        "food_included",
+        "attached_bathroom",
+        "ac",
+        "wifi",
+        "security_deposit",
+        "available_from",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-builder-floor",
+      "id": "20be2d52-8b27-479c-b4df-fd2a6811fb8f",
+      "family": "property",
+      "version_id": "f003f98b-a142-4a48-802c-81da41e6952d",
+      "path": [
+        "Property",
+        "Residential for Rent",
+        "Builder Floor"
+      ],
+      "fields": [
+        "bhk",
+        "bathrooms",
+        "area_sqft",
+        "floor",
+        "furnishing",
+        "monthly_rent",
+        "security_deposit",
+        "available_from",
+        "preferred_tenants",
+        "parking",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-co-living-spaces",
+      "id": "48a93bff-4d42-4b2d-a860-52dc377e2d52",
+      "family": "property",
+      "version_id": "f003f98b-a142-4a48-802c-81da41e6952d",
+      "path": [
+        "Property",
+        "PG & Co-living",
+        "Co-living Spaces"
+      ],
+      "fields": [
+        "monthly_rent_per_bed",
+        "sharing_type",
+        "food_included",
+        "ac",
+        "wifi",
+        "housekeeping",
+        "security_deposit",
+        "available_from",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-flatmates-shared-rooms",
+      "id": "7339815e-8655-4519-ab13-d89843566ac1",
+      "family": "property",
+      "version_id": "f003f98b-a142-4a48-802c-81da41e6952d",
+      "path": [
+        "Property",
+        "PG & Co-living",
+        "Flatmates & Shared Rooms"
+      ],
+      "fields": [
+        "monthly_rent",
+        "gender_preference",
+        "furnishing",
+        "available_from",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-girls-pg",
+      "id": "e66ed60b-68d8-41c2-b50f-ca36a7376251",
+      "family": "property",
+      "version_id": "f003f98b-a142-4a48-802c-81da41e6952d",
+      "path": [
+        "Property",
+        "PG & Co-living",
+        "Girls PG"
+      ],
+      "fields": [
+        "monthly_rent_per_bed",
+        "sharing_type",
+        "food_included",
+        "attached_bathroom",
+        "ac",
+        "wifi",
+        "security_deposit",
+        "available_from",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-hostels",
+      "id": "7b22d012-acaf-45a4-9857-157e203ee659",
+      "family": "property",
+      "version_id": "f003f98b-a142-4a48-802c-81da41e6952d",
+      "path": [
+        "Property",
+        "PG & Co-living",
+        "Hostels"
+      ],
+      "fields": [
+        "monthly_rent_per_bed",
+        "sharing_type",
+        "gender",
+        "food_included",
+        "security_deposit",
+        "available_from",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-independent-house-or-villa",
+      "id": "e6e842af-a10e-4cc6-a001-1d3a3092d8c0",
+      "family": "property",
+      "version_id": "f003f98b-a142-4a48-802c-81da41e6952d",
+      "path": [
+        "Property",
+        "Residential for Rent",
+        "Independent House or Villa"
+      ],
+      "fields": [
+        "bhk",
+        "bathrooms",
+        "area_sqft",
+        "floors",
+        "furnishing",
+        "monthly_rent",
+        "security_deposit",
+        "available_from",
+        "preferred_tenants",
+        "parking",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-single-room",
+      "id": "0f042950-15fb-4755-bf97-423464bd4ff3",
+      "family": "property",
+      "version_id": "f003f98b-a142-4a48-802c-81da41e6952d",
+      "path": [
+        "Property",
+        "Residential for Rent",
+        "Single Room"
+      ],
+      "fields": [
+        "area_sqft",
+        "attached_bathroom",
+        "furnishing",
+        "monthly_rent",
+        "security_deposit",
+        "available_from",
+        "preferred_tenants",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "rental-studio-apartment",
+      "id": "289a8cdc-3d8d-404f-b1f6-eaa25d19ff3c",
+      "family": "property",
+      "version_id": "f003f98b-a142-4a48-802c-81da41e6952d",
+      "path": [
+        "Property",
+        "Residential for Rent",
+        "Studio Apartment"
+      ],
+      "fields": [
+        "area_sqft",
+        "floor",
+        "furnishing",
+        "monthly_rent",
+        "security_deposit",
+        "available_from",
+        "preferred_tenants",
+        "locality",
+        "city"
+      ]
+    },
+    {
+      "slug": "tw-adventure-touring-bikes",
+      "id": "e9dffbbf-bc3c-48d1-b3e0-20c94d96adbe",
+      "family": "two_wheeler",
+      "version_id": "1a9af5e9-ad28-4dd6-9ffa-37727b273a03",
+      "path": [
+        "Vehicles",
+        "Motorcycles",
+        "Adventure & Touring Bikes"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-classic-retro-bikes",
+      "id": "8e7ad036-c274-4fa6-81fe-7e73a32180dc",
+      "family": "two_wheeler",
+      "version_id": "1a9af5e9-ad28-4dd6-9ffa-37727b273a03",
+      "path": [
+        "Vehicles",
+        "Motorcycles",
+        "Classic & Retro Bikes"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-commuter-bikes",
+      "id": "597a08f7-7b8c-474a-8585-7597295b418a",
+      "family": "two_wheeler",
+      "version_id": "1a9af5e9-ad28-4dd6-9ffa-37727b273a03",
+      "path": [
+        "Vehicles",
+        "Motorcycles",
+        "Commuter Bikes"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-cruiser-bikes",
+      "id": "f7658a6f-dcfe-497e-b021-7f36f416a0c2",
+      "family": "two_wheeler",
+      "version_id": "1a9af5e9-ad28-4dd6-9ffa-37727b273a03",
+      "path": [
+        "Vehicles",
+        "Motorcycles",
+        "Cruiser Bikes"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-electric-motorcycles",
+      "id": "fee446e9-ffb9-46a6-bb39-29a9fe39e32d",
+      "family": "two_wheeler",
+      "version_id": "1a9af5e9-ad28-4dd6-9ffa-37727b273a03",
+      "path": [
+        "Vehicles",
+        "Motorcycles",
+        "Electric Motorcycles"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "year",
+        "range_km",
+        "battery_warranty_left",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-electric-scooters",
+      "id": "a89faed8-1064-442c-9b1b-5d45d8375bd8",
+      "family": "two_wheeler",
+      "version_id": "1a9af5e9-ad28-4dd6-9ffa-37727b273a03",
+      "path": [
+        "Vehicles",
+        "Scooters",
+        "Electric Scooters"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "year",
+        "range_km",
+        "battery_warranty_left",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-maxi-scooters-mopeds",
+      "id": "c8f1c61a-a6e9-4030-97b1-2787085d97fb",
+      "family": "two_wheeler",
+      "version_id": "1a9af5e9-ad28-4dd6-9ffa-37727b273a03",
+      "path": [
+        "Vehicles",
+        "Scooters",
+        "Maxi Scooters & Mopeds"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-petrol-scooters",
+      "id": "3511575e-2397-4c2b-94b6-eb36997a0e2d",
+      "family": "two_wheeler",
+      "version_id": "1a9af5e9-ad28-4dd6-9ffa-37727b273a03",
+      "path": [
+        "Vehicles",
+        "Scooters",
+        "Petrol Scooters"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    },
+    {
+      "slug": "tw-sports-superbikes",
+      "id": "0c6ed633-cfcb-496a-9c83-44d59e6fa229",
+      "family": "two_wheeler",
+      "version_id": "1a9af5e9-ad28-4dd6-9ffa-37727b273a03",
+      "path": [
+        "Vehicles",
+        "Motorcycles",
+        "Sports & Superbikes"
+      ],
+      "fields": [
+        "brand",
+        "model",
+        "variant",
+        "year",
+        "engine_cc",
+        "km_driven",
+        "owner_number",
+        "registration_state",
+        "insurance_valid_till",
+        "color",
+        "price",
+        "negotiable"
+      ]
+    }
+  ]
+}
