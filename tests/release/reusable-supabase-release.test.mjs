@@ -3560,3 +3560,93 @@ test('V3 candidates are digest-pinned, Test-only and ordered against the full pr
       () => JSON.stringify({...counts, disabled: count - 1})), /V3_DISABLED_CONTRACT_MISMATCH/);
   }
 });
+
+const v3Diagnostic = {
+  version: '20261119113557', name: '20261119120000_idv_digilocker_oidc_diag_test_only',
+  hasStatements: true, statementCount: 1, statementsSha256: 'a'.repeat(64),
+};
+
+async function v3OrderingRun(candidate, {
+  diagnostic = v3Diagnostic, extra = [], omit, dryOutput, mutateAt, help = '--dry-run --include-all',
+  environment = 'FairSwapTest',
+} = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'fs-v3-ordering-'));
+  const calls = [];
+  const ledgerRow = (version, name) => ({version, name, hasStatements: true, statementCount: 1, statementsSha256: 'b'.repeat(64)});
+  const initial = [
+    ...baseHistory.map(version => ledgerRow(version, 'baseline')),
+    ...candidate.requiredLedgerVersions.filter(version => version !== omit).map(version => ledgerRow(
+      version, Object.values(CANDIDATES).find(c => c.version === version).filename.slice(15, -4))),
+    ...(diagnostic ? [diagnostic] : []),
+    ...extra,
+  ].sort(idvByVersion);
+  const installed = ledgerRow(candidate.version, candidate.filename.slice(15, -4));
+  let reads = 0;
+  let applied = false;
+  const base = makeRunner({before: initial.map(row => row.version), after: [...initial, installed].map(row => row.version),
+    filename: candidate.filename, sql: query => {
+      if (query.includes('ordinary_goods_contracts_v3')) {
+        const count = applied ? candidate.unifiedPublishingV3.count : candidate.unifiedPublishingV3.previousCount;
+        return {contracts: count, disabled: count};
+      }
+      const snapshot = [...initial, ...(applied ? [installed] : [])].sort(idvByVersion);
+      if (++reads === mutateAt) snapshot[0] = {...snapshot[0], statementsSha256: 'c'.repeat(64)};
+      return snapshot;
+    }});
+  const runner = (cmd, args, ...rest) => {
+    calls.push([cmd, ...args]);
+    if (cmd === 'supabase' && args.includes('--help')) return help;
+    if (cmd === 'supabase' && args.includes('--dry-run') && dryOutput) return dryOutput;
+    if (cmd === 'supabase' && args.includes('--yes')) applied = true;
+    return base(cmd, args, ...rest);
+  };
+  try {
+    const receipt = await releaseReusable({environment, candidateId: candidate.id, context: baseEnv, runner, receiptDir: dir});
+    return {receipt, calls};
+  } catch (error) {
+    return {error, calls};
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+}
+
+test('V3 Test uses the pinned CLI out-of-order flag only for the first six candidates with the exact diagnostic tail', async () => {
+  const v3 = Object.values(CANDIDATES).filter(c => c.unifiedPublishingV3);
+  for (const [index, candidate] of v3.entries()) {
+    const {receipt, calls, error} = await v3OrderingRun(candidate);
+    assert.ifError(error);
+    assert.deepEqual(receipt.dryRunPending, [candidate.filename]);
+    const includeAll = index < 6;
+    const [dry, apply] = pushes(calls);
+    assert.ok(dry.includes('--dry-run') && apply.includes('--yes'));
+    assert.equal(dry.includes('--include-all'), includeAll);
+    assert.equal(apply.includes('--include-all'), includeAll);
+    assert.equal(calls.some(call => call.includes('--help')), includeAll);
+    assert.deepEqual(receipt.outOfOrderInstall, includeAll ? {includeAll: true, aheadVersions: [v3Diagnostic.version]} : undefined);
+  }
+  const ordinary = await v3OrderingRun(v3[0], {diagnostic: null});
+  assert.ifError(ordinary.error);
+  assert.ok(ordinary.calls.every(call => !call.includes('--include-all')));
+});
+
+test('V3 Test denies unsafe out-of-order state and checks ledger fingerprints before and after apply', async () => {
+  const [first, second] = Object.values(CANDIDATES).filter(c => c.unifiedPublishingV3);
+  for (const [candidate, options, expected] of [
+    [first, {diagnostic: {...v3Diagnostic, name: 'unexpected'}}, /V3_DIAGNOSTIC_LEDGER_MISMATCH/],
+    [first, {diagnostic: {...v3Diagnostic, hasStatements: false, statementCount: 0}}, /V3_DIAGNOSTIC_LEDGER_MISMATCH/],
+    [first, {extra: [{...v3Diagnostic, version: '20261119113600'}]}, /V3_LEDGER_MISMATCH/],
+    [second, {omit: first.version}, /PREREQUISITE_MIGRATION_MISSING/],
+    [first, {help: '--dry-run'}, /CLI_INCLUDE_ALL_UNSUPPORTED/],
+    [first, {dryOutput: `${first.filename}\n20261119113557_unexpected.sql`}, /DRY_RUN_MISMATCH/],
+    [first, {mutateAt: 2}, /V3_LEDGER_CHANGED/],
+    [first, {environment: 'FairSwapProd'}, /TEST_ONLY_CANDIDATE/],
+  ]) {
+    const result = await v3OrderingRun(candidate, options);
+    assert.match(result.error?.message ?? '', expected);
+    assert.equal(idvApplies(result.calls).length, 0);
+  }
+  const drift = await v3OrderingRun(first, {mutateAt: 3});
+  assert.match(drift.error?.message ?? '', /TABLETS_LEDGER_CHANGED/);
+  assert.equal(idvApplies(drift.calls).length, 1);
+  assert.equal(drift.receipt, undefined);
+});

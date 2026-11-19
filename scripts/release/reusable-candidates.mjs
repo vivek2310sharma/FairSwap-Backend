@@ -8,6 +8,11 @@ export const MOBILE_CATALOGUE_CANDIDATE = 'mobile-catalogue-india-v1';
 export const LISTING_VALIDITY_CANDIDATE = 'listing-validity-365';
 
 // These candidates prepare schema in Test. Production needs independently reviewed identity parity.
+export const V3_TEST_DIAGNOSTIC_LEDGER = Object.freeze({
+  version: '20261119113557',
+  name: '20261119120000_idv_digilocker_oidc_diag_test_only',
+});
+
 const v3Candidates = [
   ['20261119092042', 'ordinary_goods_v3', '9ed7c84d2f61ea8e10e0f20be50e9018a29fab734f06a2557da97a692d89bfd8', 35],
   ['20261119100640', 'bounded_goods_v3', 'd28c193776967d2932ea6ac2a50304597ae1656b99495b1427eb585fff42d0eb', 45],
