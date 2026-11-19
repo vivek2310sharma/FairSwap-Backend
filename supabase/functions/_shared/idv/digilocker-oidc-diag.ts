@@ -1,7 +1,8 @@
 // FairSwap DigiLocker OIDC v2 STAGE-ONLY DIAGNOSTIC. Not production identity verification.
 // It answers one question for an allowlisted tester: does the provider prove Aadhaar-verified assurance (acr=aadhaar)
-// in a signature-verified ID token? It never links accounts, never issues a badge, never stores tokens, codes,
-// provider identifiers or raw provider responses. Only the sanitized flags in DiagResult leave this module.
+// in a signature-verified ID token? It never links accounts, never issues a badge and never stores or logs anything.
+// For the one allowlisted FairSwapTest tester it returns the provider's token response UNREDACTED (DiagResult.raw) for a
+// one-time display. FairSwap's own client secret, state key, service-role key and signing keys are never part of it.
 //
 // Endpoint discrepancy (resolved conservatively):
 //   MeriPehchaan v2.4 (the provider's own specification): authorize /public/oauth2/1/authorize, OIDC token /public/oauth2/2/token.
@@ -138,19 +139,27 @@ async function call(fetchImpl: typeof fetch, url: string, init: RequestInit): Pr
   }
 }
 
-async function readObject(res: Response): Promise<Record<string, unknown>> {
-  if (res.status >= 500) throw new DigiLockerError("PROVIDER_UNAVAILABLE");
-  if (!res.ok) throw new DigiLockerError("PROVIDER_REJECTED");
-  try {
-    const j = await res.json();
-    if (j && typeof j === "object" && !Array.isArray(j)) return j as Record<string, unknown>;
-  } catch { /* fall through */ }
-  throw new DigiLockerError("INVALID_PROVIDER_RESPONSE");
+const MAX_TOKEN_BODY_CHARS = 64 * 1024;
+
+/** The provider's token-endpoint response exactly as received (FairSwapTest tester diagnostic only; unredacted). */
+export interface DiagTokenResponse {
+  httpStatus: number;
+  contentType: string | null;
+  /** Parsed JSON body verbatim (all fields, including null and empty values), or null when the body was not JSON. */
+  json: unknown;
+  /** Raw body text, only when it was not valid JSON (capped). */
+  text: string | null;
+}
+export interface DiagExchange {
+  response: DiagTokenResponse;
+  idToken: string | null;
+  accessToken: string | null;
+  /** Set when the exchange did not yield a usable ID token. */
+  failure: "PROVIDER_UNAVAILABLE" | "PROVIDER_REJECTED" | "INVALID_PROVIDER_RESPONSE" | null;
 }
 
-export interface DiagExchange { idToken: string; accessToken: string | null }
-
-/** Server-side OIDC code exchange with the exact registered redirect URI and the PKCE verifier. */
+/** Server-side OIDC code exchange with the exact registered redirect URI and the PKCE verifier. Throws only when no HTTP
+ *  response was received (timeout/network); any provider response, including errors, is returned for display. */
 export async function exchangeDiagCode(rt: DiagRuntime, code: string, state: string, fetchImpl: typeof fetch = fetch): Promise<DiagExchange> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -165,13 +174,24 @@ export async function exchangeDiagCode(rt: DiagRuntime, code: string, state: str
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body: body.toString(),
   });
-  const j = await readObject(res);
-  const idToken = j["id_token"];
-  const at = j["access_token"];
-  if (typeof idToken !== "string" || idToken.length === 0 || idToken.length > 16384) {
-    throw new DigiLockerError("INVALID_PROVIDER_RESPONSE");
-  }
-  return { idToken, accessToken: typeof at === "string" && at.length > 0 ? at : null };
+  let text = "";
+  try { text = (await res.text()).slice(0, MAX_TOKEN_BODY_CHARS); } catch { /* empty body */ }
+  let json: unknown = null;
+  let parsed = false;
+  try { json = JSON.parse(text); parsed = true; } catch { /* not JSON */ }
+  const response: DiagTokenResponse = {
+    httpStatus: res.status,
+    contentType: res.headers.get("content-type"),
+    json: parsed ? json : null,
+    text: parsed ? null : text.slice(0, 4000),
+  };
+  const obj = parsed && json && typeof json === "object" && !Array.isArray(json) ? (json as Record<string, unknown>) : null;
+  const at = obj?.["access_token"];
+  const idToken = obj?.["id_token"];
+  const accessToken = typeof at === "string" && at.length > 0 ? at : null;
+  const usable = typeof idToken === "string" && idToken.length > 0 && idToken.length <= 16384;
+  const failure = res.status >= 500 ? "PROVIDER_UNAVAILABLE" : !res.ok ? "PROVIDER_REJECTED" : !obj || !usable ? "INVALID_PROVIDER_RESPONSE" : null;
+  return { response, idToken: usable ? (idToken as string) : null, accessToken, failure };
 }
 
 // ---- ID token validation. Every output is a fixed enum/boolean; no claim value other than these is ever returned. ----
@@ -191,6 +211,14 @@ export interface DiagChecks {
   acr: "aadhaar" | "missing" | "other";
 }
 export type DiagOutcome = "VERIFIED" | "UNCONFIRMED" | "NOT_VERIFIED" | "CANCELLED" | "FAILED";
+/** Unredacted provider material for the one-time FairSwapTest tester display. Never persisted or logged. */
+export interface DiagRaw {
+  /** Provider callback query error / error_description exactly as relayed, when the provider returned an error. */
+  providerCallback: { error: string; error_description: string | null } | null;
+  tokenResponse: DiagTokenResponse | null;
+  /** What each verification was compared against (public values only; never the client secret or signing key). */
+  expected: { issuer: string; audience: string; nonce: string; checkedAtEpoch: number } | null;
+}
 export interface DiagResult {
   outcome: DiagOutcome;
   code: string | null;
@@ -199,6 +227,7 @@ export interface DiagResult {
   /** Names (never values) of the claims present in the ID token, so the owner can see which assurance evidence the
    *  provider actually sends. Only plain claim names are kept; at most 40. */
   claimNames: string[] | null;
+  raw?: DiagRaw | null;
 }
 
 function decodeSegment(seg: string): Record<string, unknown> | null {
