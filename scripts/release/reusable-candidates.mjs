@@ -17,7 +17,7 @@ const v3Candidates = [
   ['20261119092042', 'ordinary_goods_v3', '9ed7c84d2f61ea8e10e0f20be50e9018a29fab734f06a2557da97a692d89bfd8', 35],
   ['20261119100640', 'bounded_goods_v3', 'd28c193776967d2932ea6ac2a50304597ae1656b99495b1427eb585fff42d0eb', 45],
   ['20261119102359', 'pedal_and_parts_v3', 'f032809af2c4a55f90f9d36188a4bdb3d28540d0ef377877342d5b9155e22f59', 48],
-  ['20261119103516', 'property_intake_v3', 'b3f3cd8490a186a9917819472fa9b02efd008bc0b7bc5ce1bfadda92aebe4a18', 54],
+  ['20261119103516', 'property_intake_v3', '1a4066fa74be527eb29daa0e85d898b81437326c2058363bf3ea7e4f5c324e17', 54],
   ['20261119105021', 'regulated_vehicle_drafts_v3', 'c093718c2801c5f2a9627b3dd6e7ad541b424f48a29af9357d2b74f14ade0e7a', 56],
   ['20261119111559', 'specialist_vehicle_draft_binding_v3', 'af7e20061bc7931bcb3ab75a3fc6a3f0d6da52477531182caa6dacc7d5cd70e0', 58],
   ['20261119114512', 'v3_require_active_seller_identity', '7dfed56d46bb3941dad5b39a9725c64a5dda04cedd64e1908f918b96da90c77f', 58],
