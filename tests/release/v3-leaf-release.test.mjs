@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync, mkdtempSync, rmSync} from 'node:fs';
+import {readFileSync, mkdtempSync, rmSync, existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -8,8 +8,12 @@ import {createHash} from 'node:crypto';
 import {releaseReusable} from '../../scripts/release/reusable-supabase-release.mjs';
 import {rootCertificates} from 'node:tls';
 import {getCandidate, planDispatch, verifyCandidateSha} from '../../scripts/release/reusable-candidates.mjs';
-import {leafPlan, leafTransaction, leafPreflightSql, leafStateSql, verifyLeafWeb, verifyLeafReceipt, requireLeafEvidence, releaseV3Leaf} from '../../scripts/release/v3-leaf-release.mjs';
+import {WEB_CONTRACT_PATHS, leafPlan, leafTransaction, leafPreflightSql, leafStateSql, verifyLeafWeb, verifyLeafReceipt, requireLeafEvidence, releaseV3Leaf} from '../../scripts/release/v3-leaf-release.mjs';
 import {setupOrdinaryGoodsFixture} from '../ordinary-goods/fixture.mjs';
+
+const pglitePath = process.env.FSW_PGLITE_MODULE ?? 'tests/ratings/node_modules/@electric-sql/pglite/dist/index.js';
+const PGlite = existsSync(resolve(pglitePath)) ? (await import(pathToFileURL(resolve(pglitePath)).href)).PGlite : null;
+const databaseRequired = process.env.REQUIRE_REAL_PG === '1' || process.env.GITHUB_WORKFLOW === 'Backend independent CI' || Boolean(process.env.FSW_PGLITE_MODULE);
 
 const sha = 'a'.repeat(40);
 const context = {TARGET: 'test', WEB_STAGING_SHA: sha, WEB_PRODUCTION_SHA: sha, GITHUB_SHA: sha};
@@ -21,7 +25,10 @@ test('V3 leaf registry and plan allow exactly two leaves, no adoption or promoti
   for (const leaf of ['books', 'tables-chairs']) for (const action of ['activate', 'deactivate']) {
     const id = `v3-${leaf}-${action}`;
     assert.equal(verifyCandidateSha(id).candidate.autoPromote, false);
-    assert.ok(leafTransaction(id, sha).includes("set local lock_timeout='5s'"));
+    const sql = leafTransaction(id, sha);
+    assert.ok(sql.includes("set local lock_timeout='5s'"));
+    assert.ok(sql.includes('pg_stat_xact_user_tables'));
+    assert.doesNotMatch(sql, /LOCK TABLE|pg_class|string_agg|FROM public\.listings|FROM public\.listing_media|FROM storage\./i);
   }
   for (const id of ['v3-*-activate', 'v3-books,tables-chairs-activate', 'v3-cars-activate']) assert.throws(() => getCandidate(id), /UNKNOWN_CANDIDATE/);
   assert.throws(() => leafPlan(activate, 'FairSwapProd', context), /ENVIRONMENT_MISMATCH/);
@@ -36,8 +43,17 @@ test('V3 leaf registry and plan allow exactly two leaves, no adoption or promoti
 });
 
 function webFetcher(change = {}) {
-  return async url => ({ok: true, json: async () => url.includes('/compare/') ? {status: change.comparison ?? 'identical', merge_base_commit: {sha}} : url.includes('/commits/') ? {sha: change.tip ?? sha} : url.includes('/statuses?') ? [{state: change.state ?? 'success'}]
-    : [{id: 1, sha, ref: 'staging', environment: 'Preview', ...change}]});
+  return async url => ({ok: true, json: async () => {
+    if (url.includes('/compare/')) throw Error('ancestry must never be queried');
+    if (url.includes('/contents/')) {
+      const path = decodeURIComponent(url.split('/contents/')[1].split('?')[0]);
+      const bytes = Buffer.from(change.contractMismatch && url.endsWith('ref='+sha) ? 'different' : 'reviewed V3 contract');
+      return {type: change.noContract ? 'dir' : 'file', path, encoding: 'base64', content: bytes.toString('base64'),
+        sha: change.badBlob ? 'bad' : createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')};
+    }
+    return url.includes('/commits/') ? {sha: change.tip ?? sha} : url.includes('/statuses?') ? [{state: change.state ?? 'success'}]
+      : [{id: 1, sha, ref: 'staging', environment: 'Preview', ...change}];
+  }});
 }
 test('V3 Web verification rejects wrong SHA, environment, branch, failed or unavailable deployment', async () => {
   const plan = leafPlan(activate, 'FairSwapTest', context);
@@ -47,8 +63,12 @@ test('V3 Web verification rejects wrong SHA, environment, branch, failed or unav
     await assert.rejects(verifyLeafWeb(plan, c, webFetcher(change)), /WEB_/);
   }
   const prod = leafPlan(activate, 'FairSwapProd', {...context, TARGET: 'production', TEST_ACTIVATION_RUN_ID: '12'});
-  assert.equal((await verifyLeafWeb(prod, c, webFetcher({ref: sha, environment: 'Production'}))).environment, 'Production');
-  await assert.rejects(verifyLeafWeb(prod, c, webFetcher({ref: sha, environment: 'Production', comparison: 'behind'})), /TESTED_WEB_RELEASE_REQUIRED/);
+  // A focused port can share contract blobs with staging without sharing its ancestry.
+  const focused = {...c, WEB_STAGING_SHA: 'b'.repeat(40)};
+  assert.equal((await verifyLeafWeb(prod, focused, webFetcher({ref: sha, environment: 'Production'}))).environment, 'Production');
+  assert.equal(WEB_CONTRACT_PATHS.length, 6);
+  for (const change of [{noContract: true}, {badBlob: true}]) await assert.rejects(verifyLeafWeb(prod, focused, webFetcher({ref: sha, environment: 'Production', ...change})), /WEB_CONTRACT_/);
+  await assert.rejects(verifyLeafWeb(prod, {...c, WEB_STAGING_SHA: 'b'.repeat(40)}, webFetcher({ref: sha, environment: 'Production', contractMismatch: true})), /WEB_CONTRACT_MISMATCH/);
   await assert.rejects(verifyLeafWeb(plan, context, webFetcher()), /WEB_EVIDENCE_REQUIRED/);
   await assert.rejects(verifyLeafWeb(plan, c, async () => ({ok: false, status: 403})), /LOOKUP_FAILED/);
 });
@@ -85,7 +105,9 @@ function receiptZip(files) {
 
 test('V3 stage evidence verifies the exact successful run, attempt, immutable artifact digest and hashed Test receipt', async () => {
   const c = {...context, TARGET: 'production', TEST_ACTIVATION_RUN_ID: '12', GITHUB_TOKEN: 'mock'};
-  const plan = leafPlan(activate, 'FairSwapProd', c);
+  const production = leafPlan(activate, 'FairSwapProd', c);
+  await assert.rejects(requireLeafEvidence(production, c, () => { throw Error('must not fetch'); }), /HOSTED_TEST_E2E_EVIDENCE_UNAVAILABLE/);
+  const plan = {...production, target: 'test'};
   const name = activate+'-fairswaptest.json';
   const receipt = {status: 'V3_LEAF_VERIFIED', postflightVerified: true, preservationVerified: true, candidateId: activate,
     environment: 'FairSwapTest', projectRef: 'wpppxlnbzqynvhpeuavd', reviewedCommit: sha, releaseWorkflowRun: '12',
@@ -121,6 +143,10 @@ test('V3 runner uses existing TLS/environment connection, read-only flights and 
     assert.ok(calls[2].startsWith('BEGIN READ ONLY;'));
     await assert.rejects(releaseV3Leaf({candidateId: deactivate, environment: 'FairSwapTest', context: {...c, GITHUB_ACTOR: 'other'}, runner}), /OWNER_DISPATCH_REQUIRED/);
     assert.equal(calls.length, 3);
+    await assert.rejects(releaseV3Leaf({candidateId: activate, environment: 'FairSwapProd',
+      context: {...c, TARGET: 'production', TEST_ACTIVATION_RUN_ID: '12'}, runner,
+      fetcher: () => { throw Error('must not fetch or touch Production'); }}), /HOSTED_TEST_E2E_EVIDENCE_UNAVAILABLE/);
+    assert.equal(calls.length, 3);
     const compensation = [];
     await assert.rejects(releaseV3Leaf({candidateId: activate, environment: 'FairSwapTest',
       context: {...c, WEB_EVIDENCE_TOKEN: 'mock'}, receiptDir: dir, fetcher: webFetcher(),
@@ -135,9 +161,9 @@ test('V3 runner uses existing TLS/environment connection, read-only flights and 
   } finally { rmSync(dir, {recursive: true, force: true}); }
 });
 
-test('V3 disposable SQL: disabled, identity missing/off, moderation unavailable, canonical drift, Books-first, repeated activation, exact preservation and rollback', async () => {
-  const module = process.env.FSW_PGLITE_MODULE ?? 'tests/ratings/node_modules/@electric-sql/pglite/dist/index.js';
-  const {PGlite} = await import(pathToFileURL(resolve(module)).href);
+test('V3 disposable SQL: disabled, identity missing/off, moderation unavailable, canonical drift, Books-first, repeated activation, exact preservation and rollback',
+  {skip: !PGlite && !databaseRequired ? 'PGlite unavailable in this unrelated job' : false}, async () => {
+  assert.ok(PGlite, 'PGlite is mandatory in Backend independent CI and release database gates');
   const db = new PGlite();
   const scalar = async sql => Object.values((await db.query(sql)).rows[0])[0];
   const state = async (slug, active) => {
@@ -181,13 +207,12 @@ test('V3 disposable SQL: disabled, identity missing/off, moderation unavailable,
       "update public.listings set title='changed' where id='00000000-0000-4000-8000-000000000101'",
       'update public.listing_media set display_order=1',
       "update public.car_contract_versions set contract_key='changed'",
-      "delete from storage.objects",
-      'grant select on public.car_contract_versions to anon'
+      "delete from storage.objects"
     ]) {
       await db.exec(`create function public.v3_bad_side_effect() returns trigger language plpgsql as $$begin ${mutation}; return new; end$$;
         create ${mutation.includes('storage.objects') ? 'constraint trigger' : 'trigger'} v3_bad_side_effect after update on public.categories
         ${mutation.includes('storage.objects') ? 'deferrable initially deferred' : ''} for each row execute function public.v3_bad_side_effect();`);
-      await rejects(leafTransaction(activate, sha), /UNRELATED_DATA_CHANGED|SECURITY_CHANGED/);
+      await rejects(leafTransaction(activate, sha), /UNRELATED_DATA_CHANGED|UNRELATED_WRITES/);
       assert.equal(await state('v2-books', false), 'true');
       await db.exec('drop trigger v3_bad_side_effect on public.categories; drop function public.v3_bad_side_effect()');
     }

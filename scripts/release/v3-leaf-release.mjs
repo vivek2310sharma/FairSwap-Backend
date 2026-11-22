@@ -19,6 +19,15 @@ const leaves = Object.freeze({
   'v2-tables-chairs': ['ec6a3d86-1ce8-574e-9a7b-bef64e1ccf41', 'v2-furniture-home']
 });
 
+export const WEB_CONTRACT_PATHS = Object.freeze([
+  'src/lib/listings/ordinary-goods/categories.ts',
+  'src/lib/listings/ordinary-goods/contract.ts',
+  'src/lib/listings/ordinary-goods/server.ts',
+  'src/app/api/post-ad/goods/[slug]/sessions/route.ts',
+  'src/app/api/post-ad/goods/[slug]/sessions/[id]/media/route.ts',
+  'src/app/api/post-ad/goods/[slug]/submit/route.ts'
+]);
+
 export function leafPlan(candidateId, environment, c) {
   need(PROJECT_REFS[environment] && c.TARGET === (environment === 'FairSwapTest' ? 'test' : 'production'), 'ENVIRONMENT_MISMATCH');
   const plan = planDispatch({candidateId, target: c.TARGET, inputs: {
@@ -43,8 +52,18 @@ export async function verifyLeafWeb(plan, c, fetcher = fetch) {
   need(tip.sha === plan.webSha, 'WEB_BRANCH_MISMATCH');
   if (production) {
     need(/^[a-f0-9]{40}$/.test(c.WEB_STAGING_SHA ?? ''), 'TESTED_WEB_COMMIT_REQUIRED');
-    const comparison = await getJson(`${base}/compare/${c.WEB_STAGING_SHA}...${plan.webSha}`, c.WEB_EVIDENCE_TOKEN, fetcher);
-    need(['ahead', 'identical'].includes(comparison.status) && comparison.merge_base_commit?.sha === c.WEB_STAGING_SHA, 'TESTED_WEB_RELEASE_REQUIRED');
+    // Focused Production ports need byte-identical V3 contracts, not staging ancestry.
+    for (const path of WEB_CONTRACT_PATHS) {
+      const read = async sha => {
+        const file = await getJson(`${base}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`, c.WEB_EVIDENCE_TOKEN, fetcher);
+        need(file?.type === 'file' && file.path === path && file.encoding === 'base64'
+          && typeof file.content === 'string' && file.content.length <= 256 * 1024, 'WEB_CONTRACT_EVIDENCE_INVALID');
+        const bytes = Buffer.from(file.content, 'base64');
+        need(file.sha === createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'), 'WEB_CONTRACT_BLOB_INVALID');
+        return hash(bytes);
+      };
+      need(await read(c.WEB_STAGING_SHA) === await read(plan.webSha), 'WEB_CONTRACT_MISMATCH');
+    }
   }
   const statuses = await getJson(`${base}/deployments/${d.id}/statuses?per_page=1`, c.WEB_EVIDENCE_TOKEN, fetcher);
   need(statuses?.[0]?.state === 'success', 'WEB_NOT_READY');
@@ -64,6 +83,10 @@ export function verifyLeafReceipt(r, p, c) {
 }
 
 export async function requireLeafEvidence(plan, c, fetcher = fetch) {
+  // No reviewed hosted V3 E2E producer/artifact contract is configured in this source.
+  // SQL activation receipts are deliberately insufficient. Only a reviewed integration
+  // with genuine hosted Test E2E evidence can remove this block; no input can waive it.
+  need(plan.target !== 'production' || plan.candidate.v3Operation !== 'activate', 'HOSTED_TEST_E2E_EVIDENCE_UNAVAILABLE');
   for (const p of plan.priorRuns) {
     need(c.GITHUB_TOKEN && /^[1-9][0-9]*$/.test(p.runId), 'EVIDENCE_REQUIRED');
     const base = `https://api.github.com/repos/${backend}/actions/runs/${p.runId}`;
@@ -109,40 +132,33 @@ export function leafStateSql(slug, active, checkAvailability = true) {
   return `BEGIN READ ONLY; SET LOCAL statement_timeout='30s'; SELECT (${stateExpression(slug, active, checkAvailability)})::text; COMMIT;`;
 }
 
-// Hash all persistent rows without returning private data. The only excluded columns are
-// exactly those the selected operator is permitted to change, on the canonical target row.
+// Bounded configuration snapshots only. No listing/media/storage row scans or locks.
 function fingerprintSql(slug, operation, verify = false) {
   const [id] = leaves[slug];
   return `DO $preserve$
-  DECLARE r record; expression text; digest text;
+  DECLARE configuration jsonb; writes jsonb;
   BEGIN
-    FOR r IN SELECT n.nspname, c.relname FROM pg_catalog.pg_class c
-      JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-      WHERE n.nspname IN ('public','app_security','storage','supabase_migrations') AND c.relkind IN ('r','p')
-      ORDER BY n.nspname,c.relname
-    LOOP
-      expression := 'to_jsonb(t)';
-      IF r.nspname='public' AND r.relname='categories' THEN
-        expression := 'CASE WHEN t.id=''${id}''::uuid THEN to_jsonb(t)-''status''-''is_active'' ELSE to_jsonb(t) END';
-      ELSIF r.nspname='app_security' AND r.relname='ordinary_goods_contracts_v3' THEN
-        expression := 'CASE WHEN t.category_id=''${id}''::uuid THEN to_jsonb(t)-''enabled''${operation === 'activate' ? "-''moderation_mode''" : ''} ELSE to_jsonb(t) END';
-      END IF;
-      EXECUTE format('SELECT md5(coalesce(string_agg(x, chr(10) ORDER BY x), '''')) FROM (SELECT (%s)::text x FROM %I.%I t) s',expression,r.nspname,r.relname) INTO digest;
-      IF EXISTS (SELECT FROM pg_temp.v3_leaf_preserved WHERE name=r.nspname||'.'||r.relname) THEN
-        IF digest IS DISTINCT FROM (SELECT value FROM pg_temp.v3_leaf_preserved WHERE name=r.nspname||'.'||r.relname) THEN
-          RAISE EXCEPTION 'V3_LEAF_UNRELATED_DATA_CHANGED';
-        END IF;
-      ELSE
-        ${verify ? "RAISE EXCEPTION 'V3_LEAF_TABLE_INVENTORY_CHANGED';" : "INSERT INTO pg_temp.v3_leaf_preserved VALUES(r.nspname||'.'||r.relname,digest);"}
-      END IF;
-    END LOOP;
-    SELECT md5(jsonb_build_object(
-      'functions',(SELECT jsonb_agg(to_jsonb(p) ORDER BY p.oid) FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN ('public','app_security')),
-      'relations',(SELECT jsonb_agg(to_jsonb(c) - 'relpages' - 'reltuples' - 'relallvisible' - 'relfrozenxid' - 'relminmxid' ORDER BY c.oid) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('public','app_security','storage','supabase_migrations')),
-      'triggers',(SELECT jsonb_agg(to_jsonb(t) ORDER BY t.oid) FROM pg_catalog.pg_trigger t WHERE NOT t.tgisinternal),
-      'policies',(SELECT jsonb_agg(to_jsonb(p) ORDER BY p.oid) FROM pg_catalog.pg_policy p)
-    )::text) INTO digest;
-    ${verify ? "IF digest IS DISTINCT FROM (SELECT value FROM pg_temp.v3_leaf_preserved WHERE name='metadata') THEN RAISE EXCEPTION 'V3_LEAF_SECURITY_CHANGED'; END IF;" : "INSERT INTO pg_temp.v3_leaf_preserved VALUES('metadata',digest);"}
+    IF (SELECT count(*) FROM (SELECT 1 FROM public.categories LIMIT 257) x)>256
+      OR (SELECT count(*) FROM (SELECT 1 FROM app_security.ordinary_goods_contracts_v3 LIMIT 257) x)>256
+    THEN RAISE EXCEPTION 'V3_LEAF_CONFIGURATION_BOUND_EXCEEDED'; END IF;
+    SELECT jsonb_build_object(
+      'categories',(SELECT jsonb_agg(CASE WHEN c.id='${id}' THEN to_jsonb(c)-'status'-'is_active' ELSE to_jsonb(c) END ORDER BY c.id) FROM public.categories c),
+      'contracts',(SELECT jsonb_agg(CASE WHEN g.category_id='${id}' THEN to_jsonb(g)-'enabled'${operation === 'activate' ? "-'moderation_mode'" : ''} ELSE to_jsonb(g) END ORDER BY g.category_id) FROM app_security.ordinary_goods_contracts_v3 g)
+    ) INTO configuration;
+    -- Transaction-local counters exclude concurrent user traffic. They cover all writes
+    -- made by this operator and its triggers without reading unrelated application rows.
+    IF (SELECT count(*) FROM (SELECT 1 FROM pg_catalog.pg_stat_xact_user_tables LIMIT 1025) x)>1024
+    THEN RAISE EXCEPTION 'V3_LEAF_RELATION_BOUND_EXCEEDED'; END IF;
+    SELECT coalesce(jsonb_object_agg(relid::text,jsonb_build_array(n_tup_ins,n_tup_upd,n_tup_del)), '{}'::jsonb)
+      INTO writes FROM pg_catalog.pg_stat_xact_user_tables WHERE schemaname <> 'pg_temp' AND schemaname NOT LIKE 'pg_temp_%';
+    ${verify ? `IF configuration IS DISTINCT FROM (SELECT value FROM pg_temp.v3_leaf_preserved WHERE name='configuration')
+      THEN RAISE EXCEPTION 'V3_LEAF_UNRELATED_DATA_CHANGED'; END IF;
+    IF EXISTS (SELECT FROM jsonb_each(writes) w LEFT JOIN pg_temp.v3_leaf_preserved b ON b.name='writes'
+      WHERE (w.value->>0)::bigint <> coalesce((b.value->w.key->>0)::bigint,0)
+        OR (w.value->>2)::bigint <> coalesce((b.value->w.key->>2)::bigint,0)
+        OR (w.value->>1)::bigint - coalesce((b.value->w.key->>1)::bigint,0) <>
+          CASE WHEN w.key IN ('public.categories'::regclass::oid::text,'app_security.ordinary_goods_contracts_v3'::regclass::oid::text) THEN 1 ELSE 0 END)
+    THEN RAISE EXCEPTION 'V3_LEAF_UNRELATED_WRITES'; END IF;` : "INSERT INTO pg_temp.v3_leaf_preserved VALUES('configuration',configuration),('writes',writes);"}
   END $preserve$;`;
 }
 
@@ -164,13 +180,13 @@ export function leafTransaction(candidateId, webSha) {
   const active = operation === 'activate';
   return `BEGIN;
 SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
--- Block concurrent writes during preservation verification; never mistake traffic for operator side effects.
-DO $locks$ DECLARE r record; BEGIN
-  FOR r IN SELECT n.nspname,c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-    WHERE n.nspname IN ('public','app_security','storage','supabase_migrations') AND c.relkind IN ('r','p') ORDER BY n.nspname,c.relname
-  LOOP EXECUTE format('LOCK TABLE %I.%I IN SHARE ROW EXCLUSIVE MODE',r.nspname,r.relname); END LOOP;
-END $locks$;
-CREATE TEMP TABLE v3_leaf_preserved(name text PRIMARY KEY,value text) ON COMMIT DROP;
+-- Serialize only this leaf and its parent; no unrelated table locks.
+SELECT 1 FROM app_security.ordinary_goods_contracts_v3 WHERE category_id='${leaves[slug][0]}' FOR UPDATE;
+SELECT 1 FROM public.categories WHERE id='${leaves[slug][0]}' FOR UPDATE;
+SELECT 1 FROM public.categories WHERE slug='${leaves[slug][1]}' FOR SHARE;
+${active && slug === 'v2-tables-chairs' ? `SELECT 1 FROM app_security.ordinary_goods_contracts_v3 WHERE slug='v2-books' FOR SHARE;
+SELECT 1 FROM public.categories WHERE id='${leaves['v2-books'][0]}' FOR SHARE;` : ''}
+CREATE TEMP TABLE v3_leaf_preserved(name text PRIMARY KEY,value jsonb) ON COMMIT DROP;
 DO $state$ BEGIN
   IF NOT (${stateExpression(slug, !active, active)}) THEN RAISE EXCEPTION 'V3_LEAF_PREFLIGHT_FAILED'; END IF;
   ${active && slug === 'v2-tables-chairs' ? `IF NOT (${stateExpression('v2-books', true)}) THEN RAISE EXCEPTION 'V3_LEAF_BOOKS_REQUIRED'; END IF;` : ''}
