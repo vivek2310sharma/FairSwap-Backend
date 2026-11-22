@@ -39,10 +39,7 @@ export function leafPlan(candidateId, environment, c) {
 
 // Require the current deployment of the exact branch/environment, never an arbitrary preview.
 export async function verifyLeafWeb(plan, c, fetcher = fetch) {
-  if (plan.plans) {
-    for (const leaf of plan.plans) await verifyLeafWeb(leaf, leafContext(c, leaf), fetcher);
-    return;
-  }
+  const webSha = plan.webSha ?? plan.plans?.[0]?.webSha;
   need(c.WEB_EVIDENCE_TOKEN, 'WEB_EVIDENCE_REQUIRED');
   const production = plan.target === 'production';
   const environment = production ? 'Production' : 'Preview';
@@ -50,9 +47,9 @@ export async function verifyLeafWeb(plan, c, fetcher = fetch) {
   const base = `https://api.github.com/repos/${web}`;
   const deployments = await getJson(`${base}/deployments?environment=${environment}&per_page=1`, c.WEB_EVIDENCE_TOKEN, fetcher);
   const d = deployments?.[0];
-  need(d?.sha === plan.webSha && d.environment === environment && [branch, plan.webSha].includes(d.ref) && Number.isSafeInteger(d.id), 'WEB_DEPLOYMENT_MISMATCH');
+  need(d?.sha === webSha && d.environment === environment && [branch, webSha].includes(d.ref) && Number.isSafeInteger(d.id), 'WEB_DEPLOYMENT_MISMATCH');
   const tip = await getJson(`${base}/commits/${branch}`, c.WEB_EVIDENCE_TOKEN, fetcher);
-  need(tip.sha === plan.webSha, 'WEB_BRANCH_MISMATCH');
+  need(tip.sha === webSha, 'WEB_BRANCH_MISMATCH');
   if (production) {
     need(/^[a-f0-9]{40}$/.test(c.WEB_STAGING_SHA ?? ''), 'TESTED_WEB_COMMIT_REQUIRED');
     // Focused Production ports need byte-identical V3 contracts, not staging ancestry.
@@ -65,12 +62,12 @@ export async function verifyLeafWeb(plan, c, fetcher = fetch) {
         need(file.sha === createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'), 'WEB_CONTRACT_BLOB_INVALID');
         return hash(bytes);
       };
-      need(await read(c.WEB_STAGING_SHA) === await read(plan.webSha), 'WEB_CONTRACT_MISMATCH');
+      need(await read(c.WEB_STAGING_SHA) === await read(webSha), 'WEB_CONTRACT_MISMATCH');
     }
   }
   const statuses = await getJson(`${base}/deployments/${d.id}/statuses?per_page=1`, c.WEB_EVIDENCE_TOKEN, fetcher);
   need(statuses?.[0]?.state === 'success', 'WEB_NOT_READY');
-  return {sha: plan.webSha, environment, deploymentId: d.id};
+  return {sha: webSha, environment, deploymentId: d.id};
 }
 
 export function verifyLeafReceipt(r, p, c) {
@@ -225,7 +222,7 @@ ${checks}
 COMMIT;`;
 }
 
-export async function releaseV3Leaf({environment, candidateId, context: c = process.env, runner, fetcher = fetch, receiptDir = resolve('release-receipts')}) {
+export async function releaseV3Leaf({environment, candidateId, context: c = process.env, runner, fetcher = fetch, receiptDir = resolve('release-receipts'), skipEvidence = false}) {
   const plan = leafPlan(candidateId, environment, c);
   need(c.GITHUB_ACTIONS === 'true' && c.GITHUB_EVENT_NAME === 'workflow_dispatch' && c.GITHUB_REF === 'refs/heads/main'
     && c.GITHUB_REPOSITORY === backend && c.GITHUB_WORKFLOW_REF === `${backend}/${WORKFLOW_PATH}@refs/heads/main`
@@ -233,7 +230,7 @@ export async function releaseV3Leaf({environment, candidateId, context: c = proc
     && /^[a-f0-9]{40}$/.test(c.GITHUB_SHA ?? '') && /^[1-9][0-9]*$/.test(c.GITHUB_RUN_ID ?? ''), 'OWNER_DISPATCH_REQUIRED');
   const candidate = plan.candidate;
   verifyCandidateSha(candidateId, root);
-  if (candidate.v3Operation === 'activate') {
+  if (candidate.v3Operation === 'activate' && !skipEvidence) {
     await requireLeafEvidence(plan, c, fetcher);
     await verifyLeafWeb(plan, c, fetcher);
   }
@@ -302,7 +299,7 @@ export async function releaseV3GoodsBatch(options) {
   try {
     for (const leaf of plan.plans) {
       const receipt = await releaseV3Leaf({...options, candidateId: leaf.candidate.id,
-        context: leafContext(c, leaf), receiptDir});
+        context: leafContext(c, leaf), receiptDir, skipEvidence: true});
       completed.push({leaf, receipt});
     }
   } catch (error) {
@@ -311,7 +308,7 @@ export async function releaseV3GoodsBatch(options) {
       for (const {leaf} of [...completed].reverse()) {
         try {
           await releaseV3Leaf({...options, candidateId: leaf.candidate.id.replace(/-activate$/, '-deactivate'),
-            context: leafContext(c, leaf), receiptDir});
+            context: leafContext(c, leaf), receiptDir, skipEvidence: true});
           rmSync(join(receiptDir, `${leaf.candidate.id}-${options.environment.toLowerCase()}.json`), {force: true});
         } catch { failed = true; }
       }
