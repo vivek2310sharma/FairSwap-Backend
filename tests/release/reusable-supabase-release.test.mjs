@@ -67,6 +67,19 @@ test('moderation switching candidate SHA matches the verified forward migration'
   assert.equal(c.sha256, '1e75154d50333e94aa80894f0c59a507d0ab3ebad34e99f2e909506d64b94a7d');
 });
 
+test('candidate registry correctly registers moderation-google-cloud-v1', () => {
+  const c = getCandidate('moderation-google-cloud-v1');
+  assert.equal(c.version, '20261119130000');
+  assert.equal(c.filename, '20261119130000_google_cloud_moderation_v1.sql');
+  assert.equal(c.sha256, 'd7de383bf87d6c5bcadad1deead65a7c10ceff414b5164f5d73b5d1f8e9a2d51');
+  assert.equal(c.autoPromote, true);
+});
+
+test('Google Cloud moderation candidate SHA matches the verified forward migration', () => {
+  const c = verifyCandidateSha('moderation-google-cloud-v1');
+  assert.equal(c.sha256, 'd7de383bf87d6c5bcadad1deead65a7c10ceff414b5164f5d73b5d1f8e9a2d51');
+});
+
 test('candidate validation rejects unknown candidate', () => {
   assert.throws(() => {
     getCandidate('unknown-candidate-xyz');
@@ -310,6 +323,46 @@ test('Azure moderation postflight query is evaluated for moderation-azure-v1 can
   assert.equal(res.finalizer_service_role, true);
 });
 
+test('Google Cloud moderation postflight query is evaluated for moderation-google-cloud-v1 candidate', async () => {
+  const {verifyRemotePostflight} = await import('../../scripts/release/reusable-supabase-release.mjs');
+  const validCheck = {
+    system_settings_google_exists: true,
+    system_settings_azure_exists: true,
+    system_settings_automation_exists: true,
+    registrar_search_path: true,
+    finalizer_search_path: true,
+    registrar_service_role: true,
+    finalizer_service_role: true,
+    finalizer_contains_google_cloud_logic: true,
+    scan_receipts_table_rls: true,
+    verified_hashes_table_rls: true,
+    migration_version_applied: true
+  };
+
+  const mockRunner = (cmd, args) => {
+    if (cmd === 'psql') {
+      return JSON.stringify(validCheck);
+    }
+    return '';
+  };
+
+  const res = await verifyRemotePostflight('FairSwapTest', 'moderation-google-cloud-v1', 'postgres://mock', {}, mockRunner);
+  assert.equal(res.system_settings_google_exists, true);
+  assert.equal(res.finalizer_contains_google_cloud_logic, true);
+  assert.equal(res.scan_receipts_table_rls, true);
+  assert.equal(res.migration_version_applied, true);
+
+  // Negative tests: fails closed on missing/false checks
+  for (const key of Object.keys(validCheck)) {
+    const badCheck = {...validCheck, [key]: false};
+    const badRunner = (cmd, args) => (cmd === 'psql' ? JSON.stringify(badCheck) : '');
+    await assert.rejects(
+      () => verifyRemotePostflight('FairSwapTest', 'moderation-google-cloud-v1', 'postgres://mock', {}, badRunner),
+      /REUSABLE_RELEASE_POSTFLIGHT_VERIFICATION_FAILED/
+    );
+  }
+});
+
 // ---------------------------------------------------------------------------------------------
 // Accessories V1
 // ---------------------------------------------------------------------------------------------
@@ -431,7 +484,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'idv-digilocker-oidc-v2', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
+  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'idv-digilocker-oidc-v2', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -3486,7 +3539,7 @@ test('IDV DigiLocker V1 and V2: Production starts only after a verified Test rec
   assert.ok(yaml.includes("if: ${{ inputs.candidate == 'idv-digilocker-v1' || inputs.candidate == 'idv-digilocker-oidc-v2' }}"));
   assert.deepEqual(Object.values(CANDIDATES).filter(c => c.testOnly && !c.unifiedPublishingV3).map(c => c.id), []);
   assert.deepEqual(Object.values(CANDIDATES).filter(c => c.autoPromote === true).map(c => c.id).sort(), ['idv-digilocker-oidc-v2', 'idv-digilocker-v1',
-    'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-switching-v1', 'taxonomy-v2-catalogue',
+    'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'taxonomy-v2-catalogue',
     'taxonomy-v2-foundation']);
 });
 
