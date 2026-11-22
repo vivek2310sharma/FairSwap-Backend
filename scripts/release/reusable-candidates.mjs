@@ -55,15 +55,26 @@ export const CANDIDATES = Object.freeze({
   ...unifiedPublishingV3,
   // Dark launch. The environment-specific foundation prerequisite and the reviewed out-of-order Taxonomy V2 tail are
   // enforced by idv-digilocker-v1-release.mjs before any dry run; identity_verification_required must stay 'false'.
+  // FairSwapTest already records this version, so its Test stage is a read-only attestation whose ledger digest the
+  // automatic Production install must reproduce. Bytes and version are unchanged.
   'idv-digilocker-v1': Object.freeze({
     id: 'idv-digilocker-v1', version: '20261117090000',
     filename: '20261117090000_idv_digilocker_direct_v1.sql',
     path: 'supabase/forward-migrations/idv/20261117090000_idv_digilocker_direct_v1.sql',
     sha256: 'c51fbc4f24d6085d3c1b022d2fea114e59b911c2aea772f125b4e798f304b62d',
     description: 'IDV DigiLocker V1 direct account linking; dark (identity gate OFF, no Edge deployment)',
-    // Staging/Test only until the owner completes manual Stage testing: never promoted or dispatched to Production.
-    autoPromote: false,
-    testOnly: true
+    autoPromote: true
+  }),
+  // Signed DigiLocker OIDC badge provenance. Requires V1 in the same environment; Production fails closed until the V1
+  // Production install is recorded. identity_verification_required is never changed.
+  'idv-digilocker-oidc-v2': Object.freeze({
+    id: 'idv-digilocker-oidc-v2', version: '20261119200000',
+    filename: '20261119200000_idv_digilocker_oidc_v2_badge.sql',
+    path: 'supabase/forward-migrations/idv/20261119200000_idv_digilocker_oidc_v2_badge.sql',
+    sha256: '757643cc6c58d8d0064b2783505b5219d2ec6b8533d76d5ae7f25232b9147692',
+    description: 'IDV DigiLocker OIDC v2 badge provenance; legacy unsigned linking disabled (identity gate OFF, no Edge deployment)',
+    requiredLedgerVersions: Object.freeze(['20261117090000']),
+    autoPromote: true
   }),
   'taxonomy-v2-catalogue': Object.freeze({
     id: 'taxonomy-v2-catalogue', version: '20261118092010',
