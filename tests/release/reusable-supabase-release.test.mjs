@@ -9,7 +9,7 @@ import {join, resolve as resolvePath} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {rootCertificates} from 'node:tls';
 import {X509Certificate, createHash} from 'node:crypto';
-import {getCandidate, verifyCandidateSha, CANDIDATES, MOBILE_CATALOGUE_CANDIDATE, V3_PRODUCTION_BATCH, V3_PRODUCTION_SEQUENCE, V3_IDENTITY_PREREQUISITE, planDispatch, ACCESSORIES_WEB, WEARABLES_WEB, WEARABLES_E2E_WAIVER, WEB_PINS, EXISTING_INSTALLATIONS, adoptionAttestation, getAdoption} from '../../scripts/release/reusable-candidates.mjs';
+import {getCandidate, verifyCandidateSha, CANDIDATES, MOBILE_CATALOGUE_CANDIDATE, LISTING_VALIDITY_CANDIDATE, V3_PRODUCTION_BATCH, V3_PRODUCTION_SEQUENCE, V3_IDENTITY_PREREQUISITE, planDispatch, ACCESSORIES_WEB, WEARABLES_WEB, WEARABLES_E2E_WAIVER, WEB_PINS, EXISTING_INSTALLATIONS, adoptionAttestation, getAdoption} from '../../scripts/release/reusable-candidates.mjs';
 import {
   ADOPTED_STATUS, MOBILE_PHONES_HISTORY, WEARABLES_E2E, assertLedgerTail, assertMobilePhonesProvenance, requirePriorCommitEvidence, runWearablesPostflight,
   WEARABLES_ANCESTOR_EVIDENCE, WEARABLES_OUT_OF_ORDER, TABLETS_V2_LEDGER, MODERATION_SWITCHING_LEDGER, assertSwitchingPrerequisite, assertCliSupportsIncludeAll, runWearablesPreflight, validateCrossCommitReceipt, verifyE2eEvidence, wearablesPostflightChecks, AZURE_FINALIZER_BODY_SHA256, SWITCHING_FINALIZER_BODY_SHA256
@@ -69,15 +69,15 @@ test('moderation switching candidate SHA matches the verified forward migration'
 
 test('candidate registry correctly registers moderation-google-cloud-v1', () => {
   const c = getCandidate('moderation-google-cloud-v1');
-  assert.equal(c.version, '20261119130000');
-  assert.equal(c.filename, '20261119130000_google_cloud_moderation_v1.sql');
-  assert.equal(c.sha256, 'd7de383bf87d6c5bcadad1deead65a7c10ceff414b5164f5d73b5d1f8e9a2d51');
+  assert.equal(c.version, '20261120000000');
+  assert.equal(c.filename, '20261120000000_google_cloud_moderation_v1.sql');
+  assert.equal(c.sha256, 'f4b8ea81c84c3f9addb2283a4d4757e517238698e8a1d407b7d3bacf2e6c09d1');
   assert.equal(c.autoPromote, true);
 });
 
 test('Google Cloud moderation candidate SHA matches the verified forward migration', () => {
   const c = verifyCandidateSha('moderation-google-cloud-v1');
-  assert.equal(c.sha256, 'd7de383bf87d6c5bcadad1deead65a7c10ceff414b5164f5d73b5d1f8e9a2d51');
+  assert.equal(c.sha256, 'f4b8ea81c84c3f9addb2283a4d4757e517238698e8a1d407b7d3bacf2e6c09d1');
 });
 
 test('candidate validation rejects unknown candidate', () => {
@@ -478,6 +478,42 @@ test('Azure moderation candidate is correctly sequenced after all installed Test
   assert.equal(azure.filename, `${azure.version}_azure_moderation_finalizer.sql`);
   assert.equal(azure.path, `supabase/forward-migrations/moderation-azure-v1/${azure.filename}`);
   assert.equal(azure.autoPromote, true);
+});
+
+test('Google Cloud moderation candidate is correctly sequenced after all installed Test and Production migrations', () => {
+  const google = getCandidate('moderation-google-cloud-v1');
+  const idvV2 = getCandidate('idv-digilocker-oidc-v2');
+  const listingValidity = getCandidate(LISTING_VALIDITY_CANDIDATE);
+
+  assert(BigInt(google.version) > BigInt('20261119200000'), 'Google Cloud V1 version must be later than hosted 20261119200000');
+  assert(BigInt(google.version) > BigInt(idvV2.version), 'Google Cloud V1 must be sequenced after IDV DigiLocker OIDC V2');
+  assert(BigInt(google.version) > BigInt(listingValidity.version), 'Google Cloud V1 must be sequenced after listing validity 365');
+
+  assert.equal(google.filename, `${google.version}_google_cloud_moderation_v1.sql`);
+  assert.equal(google.path, `supabase/forward-migrations/moderation-google-cloud-v1/${google.filename}`);
+  assert.equal(google.autoPromote, true);
+});
+
+test('migration ordering: candidate predating installed hosted migrations fails closed in dry run', () => {
+  const google = getCandidate('moderation-google-cloud-v1');
+  const olderTimestamp = '20261119130000';
+  const installedTimestamp = '20261119200000';
+
+  assert(BigInt(olderTimestamp) < BigInt(installedTimestamp), 'Old version predates already installed migration');
+  assert(BigInt(google.version) > BigInt(installedTimestamp), 'Reissued version correctly postdates installed migration');
+
+  const failedResult = {
+    status: 1,
+    stderr: `Error: migration ${olderTimestamp}_google_cloud_moderation_v1.sql is out of order with remote ${installedTimestamp}`,
+    error: null,
+  };
+  const err = subprocessFailure(failedResult, 'dry_run');
+  assert.equal(err.message, 'REUSABLE_SUBPROCESS_DRY_RUN_EXIT_FAILED');
+
+  assert.throws(
+    () => parsePendingDryRun(`Applying migration ${olderTimestamp}_google_cloud_moderation_v1.sql...`, google.filename),
+    /REUSABLE_RELEASE_DRY_RUN_MISMATCH/
+  );
 });
 
 test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC_POSTFLIGHT fallback', () => {

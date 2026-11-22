@@ -1,5 +1,5 @@
 -- Forward Migration: Google Cloud Moderation V1 & Quad-Mode Switching
--- Sequenced: 20261119130000_google_cloud_moderation_v1.sql
+-- Sequenced: 20261120000000_google_cloud_moderation_v1.sql
 --
 -- Security & Invariant Design:
 -- 1. System Settings:
