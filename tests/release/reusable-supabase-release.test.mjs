@@ -4232,3 +4232,94 @@ test('IDV DigiLocker V1 Production guard fails closed on any deviation from the 
 import './v3-leaf-release.test.mjs';
 
 import "./v3-hosted-e2e.test.mjs";
+
+// ---- V3 goods batch: execute the workflow's real inline steps with real input-to-env propagation ----
+import {spawnSync as wfSpawn} from 'node:child_process';
+import {mkdtempSync as wfTmp, readFileSync as wfRead, rmSync as wfRm} from 'node:fs';
+import {tmpdir as wfTmpdir} from 'node:os';
+import {join as wfJoin} from 'node:path';
+
+function wfStep(job, name) {
+  const yaml = wfRead('.github/workflows/reusable-supabase-release.yml', 'utf8');
+  const start = yaml.search(new RegExp(`^  ${job}:`, 'm'));
+  assert(start >= 0, `job ${job}`);
+  const rest = yaml.slice(start + 1);
+  const end = rest.search(/\n  [a-z_]+:\n/);
+  const body = end < 0 ? rest : rest.slice(0, end);
+  const at = body.indexOf(`- name: ${name}`);
+  assert(at >= 0, `step ${name} in ${job}`);
+  const after = body.slice(at + 1);
+  const next = after.search(/\n      - name:/);
+  const step = next < 0 ? after : after.slice(0, next);
+  const script = /<<'NODE'\n([\s\S]*?)\n\s+NODE\s*$/.exec(step)[1].replace(/^ {10}/gm, '');
+  const env = {};
+  for (const m of step.slice(0, step.indexOf('run: |')).matchAll(/^ {10}([A-Z0-9_]+): (.*)$/gm)) env[m[1]] = m[2];
+  return {script, env};
+}
+
+function wfRun({job, name, inputs}) {
+  const {script, env} = wfStep(job, name);
+  const dir = wfTmp(wfJoin(wfTmpdir(), 'wf-'));
+  const out = wfJoin(dir, 'out');
+  try {
+    const resolved = {};
+    for (const [k, v] of Object.entries(env)) {
+      const m = /^\$\{\{ inputs\.([a-z0-9_]+) \}\}$/.exec(v);
+      if (m) resolved[k] = inputs[m[1]] ?? '';       // propagation exactly as the workflow declares it
+      else if (/secrets\.|github\.token|needs\./.test(v)) resolved[k] = '';
+    }
+    const r = wfSpawn(process.execPath, ['--input-type=module', '-'], {input: script, encoding: 'utf8', cwd: process.cwd(),
+      env: {PATH: process.env.PATH, GITHUB_OUTPUT: out, ...resolved}});
+    return {...r, output: (() => { try { return wfRead(out, 'utf8'); } catch { return ''; } })()};
+  } finally { wfRm(dir, {recursive: true, force: true}); }
+}
+
+const WF_SHA = 'a'.repeat(40);
+const wfBatch = op => JSON.stringify([{candidateId: `v3-air-conditioners-${op}`}, {candidateId: `v3-laptops-${op}`}]);
+
+test('workflow input propagation: every step that plans a V3 batch declares v3_batch → V3_BATCH_JSON', () => {
+  for (const [job, name] of [['verify', 'Plan stage'], ['test', 'Verify deployed Web release'], ['production', 'Verify deployed Web release']]) {
+    const {script, env} = wfStep(job, name);
+    assert.equal(env.V3_BATCH_JSON, '${{ inputs.v3_batch }}', `${job}/${name}`);
+    assert(script.includes('v3_batch: e.V3_BATCH_JSON'), `${job}/${name}`);
+  }
+  assert(wfStep('verify', 'Plan stage').script.includes('plan.candidate.v3Operation || plan.candidate.v3Batch'));
+});
+
+for (const target of ['test', 'production']) for (const op of ['activate', 'deactivate']) {
+  const id = `v3-goods-batch-${op}`;
+  const inputs = {candidate: id, target, v3_batch: wfBatch(op), web_staging_sha: WF_SHA, web_production_sha: WF_SHA,
+    test_e2e_run_id: '123', test_activation_run_id: '100'};
+
+  test(`verify job plans ${id} on ${target} through the workflow script`, () => {
+    const real = wfRun({job: 'verify', name: 'Plan stage', inputs});
+    assert.doesNotMatch(real.stderr, /V3_BATCH_JSON_REQUIRED|STAGE_EVIDENCE|EVIDENCE_RUN_REQUIRED/);
+    if (target === 'production' && op === 'activate') {
+      // Reaches the batch evidence branch (hosted E2E + token required) instead of the single-leaf/stage path.
+      assert.match(real.stderr, /V3_LEAF_HOSTED_TEST_E2E_EVIDENCE_UNAVAILABLE/);
+    } else {
+      assert.equal(real.status, 0, real.stderr);
+      assert.match(real.output, /auto_promote=false/);
+    }
+  });
+
+  test(`${target} job web verification receives the batch for ${id}`, () => {
+    const real = wfRun({job: target, name: 'Verify deployed Web release', inputs});
+    assert.doesNotMatch(real.stderr, /V3_BATCH_JSON_REQUIRED/);
+    if (op === 'activate') assert.match(real.stderr, /V3_LEAF_WEB_EVIDENCE_REQUIRED/);
+    else assert.equal(real.status, 0, real.stderr);
+  });
+}
+
+test('workflow rejects an over-sized V3 batch and bounds the batch job timeout', () => {
+  const ids = V3_GOODS_FOR_WORKFLOW_TEST();
+  const r = wfRun({job: 'verify', name: 'Plan stage', inputs: {candidate: 'v3-goods-batch-activate', target: 'test', web_staging_sha: WF_SHA,
+    v3_batch: JSON.stringify(ids.map(candidateId => ({candidateId})))}});
+  assert.match(r.stderr, /V3_BATCH_SIZE_INVALID/);
+  const yaml = wfRead('.github/workflows/reusable-supabase-release.yml', 'utf8');
+  assert.equal(yaml.match(/startsWith\(inputs\.candidate, 'v3-goods-batch-'\) && 30 \|\| 20/g)?.length, 2);
+});
+
+function V3_GOODS_FOR_WORKFLOW_TEST() {
+  return JSON.parse(wfRead('scripts/release/v3-goods-allowlist.json', 'utf8')).slice(0, 6).map(g => `v3-${g.slug.slice(3)}-activate`);
+}

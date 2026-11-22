@@ -52,6 +52,10 @@ export const V3_LEAF_OPERATIONS = Object.freeze(Object.fromEntries(V3_GOODS.flat
         : 'b7671b9452cabc7a86c0d14f995b9c1078b5574eb2aaf22032fe0282975c572f', autoPromote: false})];
   }))));
 
+// Small bounded batches: each leaf costs ~3 hosted psql sessions plus evidence lookups; a 43-leaf run is unproven
+// against the job timeout, so larger activations are split across dispatches.
+export const V3_BATCH_MAX_LEAVES = 5;
+
 const V3_BATCHES = Object.freeze(Object.fromEntries(['activate','deactivate'].map(operation => {
   const id = `v3-goods-batch-${operation}`;
   return [id, Object.freeze({id, v3Batch: operation, autoPromote: false,
@@ -453,7 +457,7 @@ export function planDispatch({candidateId, target = 'test', inputs = {}, context
     need(target !== 'adopt', 'V3_INVALID_TARGET');
     let entries;
     try { entries = JSON.parse(inputs.v3_batch ?? ''); } catch { need(false, 'V3_BATCH_JSON_REQUIRED'); }
-    need(Array.isArray(entries) && entries.length > 0 && entries.length <= V3_GOODS.length, 'V3_BATCH_SIZE_INVALID');
+    need(Array.isArray(entries) && entries.length > 0 && entries.length <= V3_BATCH_MAX_LEAVES, 'V3_BATCH_SIZE_INVALID');
     const seen = new Set();
     const plans = entries.map(entry => {
       need(entry && typeof entry === 'object' && !Array.isArray(entry) &&

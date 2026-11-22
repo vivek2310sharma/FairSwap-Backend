@@ -9,7 +9,7 @@ import {releaseReusable} from '../../scripts/release/reusable-supabase-release.m
 import {rootCertificates} from 'node:tls';
 import {getCandidate, planDispatch, verifyCandidateSha} from '../../scripts/release/reusable-candidates.mjs';
 import {WEB_CONTRACT_PATHS, leafPlan, leafTransaction, leafPreflightSql, leafStateSql, verifyLeafWeb, verifyLeafReceipt, requireLeafEvidence, releaseV3Leaf, releaseV3GoodsBatch} from '../../scripts/release/v3-leaf-release.mjs';
-import {V3_GOODS} from '../../scripts/release/reusable-candidates.mjs';
+import {V3_GOODS, V3_BATCH_MAX_LEAVES} from '../../scripts/release/reusable-candidates.mjs';
 import {setupOrdinaryGoodsFixture} from '../ordinary-goods/fixture.mjs';
 
 const pglitePath = process.env.FSW_PGLITE_MODULE ?? 'tests/ratings/node_modules/@electric-sql/pglite/dist/index.js';
@@ -305,4 +305,30 @@ test('V3 goods batch: validation, candidate restrictions, partial failure and re
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
+});
+
+test('V3 goods batch: bounded to five leaves and stops starting leaves once the time budget is spent, compensating', async () => {
+  const ids = V3_GOODS.slice(0, 6).map(g => ({candidateId: `v3-${g.slug.slice(3)}-activate`}));
+  assert.equal(V3_BATCH_MAX_LEAVES, 5);
+  assert.throws(() => planDispatch({candidateId: 'v3-goods-batch-activate', target: 'test', inputs: {web_staging_sha: sha, v3_batch: JSON.stringify(ids)}}), /V3_BATCH_SIZE_INVALID/);
+  assert.equal(planDispatch({candidateId: 'v3-goods-batch-activate', target: 'test', inputs: {web_staging_sha: sha, v3_batch: JSON.stringify(ids.slice(0, 5))}}).plans.length, 5);
+
+  const batch = [{candidateId: 'v3-air-conditioners-activate'}, {candidateId: 'v3-laptops-activate'}];
+  const c = {...context, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
+    GITHUB_REPOSITORY: 'vivek2310sharma/FairSwap-Backend', GITHUB_WORKFLOW_REF: 'vivek2310sharma/FairSwap-Backend/.github/workflows/reusable-supabase-release.yml@refs/heads/main',
+    GITHUB_ACTOR: 'vivek2310sharma', GITHUB_TRIGGERING_ACTOR: 'vivek2310sharma', GITHUB_RUN_ID: '15',
+    CHAT_DB_SSL_ROOT_CERT_PEM: rootCertificates[0], CHAT_DATABASE_PASSWORD: 'mock', CHAT_DB_POOLER_HOST: 'aws-0-eu-west-1.pooler.supabase.com',
+    WEB_EVIDENCE_TOKEN: 'mock', V3_BATCH_JSON: JSON.stringify(batch)};
+  const dir = mkdtempSync(join(tmpdir(), 'v3-batch-budget-'));
+  try {
+    let t = 0; const sqls = [];
+    // Clock jumps past the budget after the first leaf: leaf 2 never starts, leaf 1 is compensated, no batch receipt remains.
+    await assert.rejects(releaseV3GoodsBatch({candidateId: 'v3-goods-batch-activate', environment: 'FairSwapTest', context: c,
+      runner: (cmd, args, env, sql) => { sqls.push(sql); return 'true'; }, receiptDir: dir, fetcher: webFetcher(),
+      budgetMs: 1000, now: () => (t += 2000)}), error => /V3_LEAF_BATCH_FAILED/.test(error.message) && /BATCH_TIME_BUDGET_EXCEEDED/.test(error.cause.message));
+    assert.ok(!sqls.some(s => s.includes('laptops')));
+    assert.ok(sqls.some(s => s.includes('air-conditioners') && s.includes('GOODS_DEACTIVATION_FAILED')));
+    assert.ok(!existsSync(join(dir, 'SHA256SUMS_fairswaptest')));
+    assert.ok(!existsSync(join(dir, 'v3-air-conditioners-activate-fairswaptest.json')));
+  } finally { rmSync(dir, {recursive: true, force: true}); }
 });
