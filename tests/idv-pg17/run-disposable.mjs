@@ -15,6 +15,8 @@ const sources = [
   'tests/idv-pg17/assertions-digilocker.sql',
   'supabase/forward-migrations/idv/20261119200000_idv_digilocker_oidc_v2_badge.sql',
   'tests/idv-pg17/assertions-digilocker-v2.sql',
+  'supabase/forward-migrations/idv/20261122100000_idv_digilocker_required_gate.sql',
+  'tests/idv-pg17/assertions-digilocker-required.sql',
 ];
 
 // DigiLocker fraud-suspension integration runs against the REAL account-status implementation (not a stub):

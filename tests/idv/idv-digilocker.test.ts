@@ -403,3 +403,44 @@ describe("migration 20261119200000 (OIDC v2 badge provenance) static guarantees"
     expect(sql).toMatch(/RAISE EXCEPTION 'TOO_MANY_USER_IDS'/);
   });
 });
+
+describe("migration 20261122100000 (mandatory gate requires signed DigiLocker) static guarantees", () => {
+  const sql = readFileSync("supabase/forward-migrations/idv/20261122100000_idv_digilocker_required_gate.sql", "utf8");
+  const v1 = readFileSync("supabase/forward-migrations/idv/20261117090000_idv_digilocker_direct_v1.sql", "utf8");
+  const body = (text: string) => {
+    const m = text.match(/CREATE OR REPLACE FUNCTION app_security\.enforce_verified_actor\([\s\S]*?\n\$\$;/);
+    expect(m).not.toBeNull();
+    return m![0];
+  };
+  it("is additive, hardened and never changes the identity gate switch", () => {
+    expect(sql.startsWith("-- Migration: 20261122100000_idv_digilocker_required_gate.sql")).toBe(true);
+    expect(sql).toMatch(/begin;\s*set local lock_timeout = '5s';\s*set local statement_timeout = '30s';/);
+    expect(sql).not.toMatch(/DROP TABLE|DROP COLUMN|TRUNCATE|DROP FUNCTION|DROP TRIGGER|CREATE TRIGGER|ALTER TABLE/i);
+    expect(sql).not.toMatch(/INSERT INTO|UPDATE public\.|DELETE FROM|SET setting_value/i);
+    expect(sql).toMatch(/RAISE EXCEPTION 'IDV_DIGILOCKER_REQUIRED_PREREQUISITE_MISSING'/);
+  });
+  it("replaces only the gate helper and swaps the generic predicate for the signed DigiLocker badge", () => {
+    expect((sql.match(/CREATE OR REPLACE FUNCTION/g) ?? []).length).toBe(1);
+    const next = body(sql);
+    expect(next).toMatch(/LANGUAGE plpgsql STABLE SECURITY DEFINER\s+SET search_path = ''/);
+    expect(next).toMatch(/IF NOT app_security\.has_digilocker_badge\(p_actor\) THEN/);
+    expect(next).not.toMatch(/is_identity_verified/);
+    // Everything else (NULL-owner, staff, service, system-write rules, error contract) is byte-identical to V1.
+    const strip = (t: string) => t.split("\n").filter(l => !/^\s*--/.test(l)).join("\n");
+    expect(strip(next).replace("app_security.has_digilocker_badge(p_actor)", "app_security.is_identity_verified(p_actor)"))
+      .toBe(strip(body(v1)));
+    expect((next.match(/RAISE EXCEPTION 'IDENTITY_VERIFICATION_REQUIRED' USING ERRCODE = '42501';/g) ?? []).length).toBe(3);
+  });
+  it("keeps the helper server-only", () => {
+    expect(sql).toMatch(/REVOKE ALL ON FUNCTION app_security\.enforce_verified_actor\(uuid, boolean\) FROM PUBLIC, anon, authenticated;/);
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION app_security\.enforce_verified_actor\(uuid, boolean\) TO service_role;/);
+    expect(sql).not.toMatch(/GRANT [^;]* TO [^;]*(anon|authenticated|PUBLIC)/i);
+  });
+  it("is wired into the disposable PG17 suite after the V2 assertions", () => {
+    const runner = readFileSync("tests/idv-pg17/run-disposable.mjs", "utf8");
+    const order = ["assertions-digilocker-v2.sql", "20261122100000_idv_digilocker_required_gate.sql", "assertions-digilocker-required.sql"]
+      .map(f => runner.indexOf(f));
+    expect(order.every(i => i > 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+});

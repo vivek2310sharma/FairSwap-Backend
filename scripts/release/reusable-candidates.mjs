@@ -97,6 +97,20 @@ export const CANDIDATES = Object.freeze({
     requiredLedgerVersions: Object.freeze(['20261117090000']),
     autoPromote: true
   }),
+  // Mandatory-gate predicate: enforce_verified_actor requires the signed DigiLocker badge. FairSwapTest ONLY: testOnly, never
+  // auto-promoted, bound to the FairSwapTest project ref, and identity_verification_required is never changed (stays OFF).
+  // Exact V1 + V2 ledger prerequisites and the pre/post body states are enforced by idv-digilocker-v1-release.mjs.
+  'idv-digilocker-required-gate': Object.freeze({
+    id: 'idv-digilocker-required-gate', version: '20261122100000',
+    filename: '20261122100000_idv_digilocker_required_gate.sql',
+    path: 'supabase/forward-migrations/idv/20261122100000_idv_digilocker_required_gate.sql',
+    sha256: '2fa2064dcf19317ab7347cd78db6362e4f7810d078c79ec3d0465b6e5d609961',
+    description: 'IDV mandatory gate requires the signed DigiLocker badge; FairSwapTest only, identity gate stays OFF',
+    requiredLedgerVersions: Object.freeze(['20261117090000', '20261119200000']),
+    allowedProjectRef: 'wpppxlnbzqynvhpeuavd',
+    testOnly: true,
+    autoPromote: false
+  }),
   'taxonomy-v2-catalogue': Object.freeze({
     id: 'taxonomy-v2-catalogue', version: '20261118092010',
     filename: '20261118092010_taxonomy_v2_catalogue.sql',

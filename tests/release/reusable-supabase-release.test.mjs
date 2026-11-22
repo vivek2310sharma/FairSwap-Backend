@@ -23,7 +23,7 @@ import {
   IDV_FOUNDATION_LEDGER, assertIdvDigilockerLedger, snapshotSql as idvSnapshotSql, verifyIdvDigilockerTestReceipt,
   IDV_DIGILOCKER_INSTALLED, IDV_DIGILOCKER_INSTALLED_SCOPE, IDV_DIGILOCKER_V2_CANDIDATE, IDV_DIGILOCKER_V2_FUNCTIONS, IDV_DIGILOCKER_V2_POSTFLIGHT,
   IDV_DIGILOCKER_V2_PREFLIGHT, IDV_DIGILOCKER_V2_SCOPE, assertIdvDigilockerTestInstalled, idvDigilockerV2SnapshotSql,
-  IDV_DIGILOCKER_PRODUCTION_PREFLIGHT, IDV_DIGILOCKER_PRODUCTION_POSTFLIGHT
+  IDV_DIGILOCKER_PRODUCTION_PREFLIGHT, IDV_DIGILOCKER_PRODUCTION_POSTFLIGHT, idvDigilockerInstalledChecks
 } from '../../scripts/release/idv-digilocker-v1-release.mjs';
 
 import {verifyV3ProductionEvidence, v3ProductionState} from '../../scripts/release/v3-production-evidence.mjs';
@@ -520,7 +520,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'idv-digilocker-oidc-v2', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
+  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'idv-digilocker-oidc-v2', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -3371,7 +3371,7 @@ function idvRun(environment, {ledger = idvLedger(environment), env = {}, ledgerD
   const base = makeRunner({before, after: before.includes(c.version) ? before : [...before, c.version], filename: c.filename, sql: q => {
     if (q.startsWith('-- idv-digilocker-v2-preflight')) return idvChecks(IDV_DIGILOCKER_V2_PREFLIGHT, pre);
     if (q.startsWith('-- idv-digilocker-v2-postflight')) return {...idvChecks(IDV_DIGILOCKER_V2_POSTFLIGHT, post), ...(preserved ? {preserved} : {})};
-    if (q.startsWith('-- idv-digilocker-installed')) return idvChecks(IDV_DIGILOCKER_INSTALLED, installed);
+    if (q.startsWith('-- idv-digilocker-installed')) return idvChecks(idvDigilockerInstalledChecks(), installed);
     if (q.startsWith('-- idv-digilocker-preflight')) return idvChecks(environment === 'FairSwapProd' ? IDV_DIGILOCKER_PRODUCTION_PREFLIGHT : IDV_DIGILOCKER_PREFLIGHT, pre);
     if (q.startsWith('-- idv-digilocker-postflight')) return {...idvChecks(environment === 'FairSwapProd' ? IDV_DIGILOCKER_PRODUCTION_POSTFLIGHT : IDV_DIGILOCKER_POSTFLIGHT, post), ...(preserved ? {preserved} : {})};
     return [...ledger, ...(++ledgerReads === 3 ? [{version: c.version, name: c.filename.slice(15, -4), hasStatements: true,
@@ -3573,7 +3573,8 @@ test('IDV DigiLocker V1 and V2: Production starts only after a verified Test rec
   assert.equal(productionJobRuns(yaml, {candidate: 'v3-test-remaining-batch', target: 'test', autoPromote: true}), false);
   assert.match(yaml, /\n  test:\n    needs: verify\n    if: \$\{\{ needs\.verify\.result == 'success' && inputs\.target == 'test'/);
   assert.ok(yaml.includes("if: ${{ inputs.candidate == 'idv-digilocker-v1' || inputs.candidate == 'idv-digilocker-oidc-v2' }}"));
-  assert.deepEqual(Object.values(CANDIDATES).filter(c => c.testOnly && !c.unifiedPublishingV3).map(c => c.id), []);
+  // The only non-V3 Test-only candidate is the DigiLocker required gate (see its dedicated Production-refusal tests).
+  assert.deepEqual(Object.values(CANDIDATES).filter(c => c.testOnly && !c.unifiedPublishingV3).map(c => c.id), ['idv-digilocker-required-gate']);
   assert.deepEqual(Object.values(CANDIDATES).filter(c => c.autoPromote === true).map(c => c.id).sort(), ['idv-digilocker-oidc-v2', 'idv-digilocker-v1',
     'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'taxonomy-v2-catalogue',
     'taxonomy-v2-foundation']);
@@ -4263,6 +4264,345 @@ test('IDV DigiLocker V1 Production guard fails closed on any deviation from the 
   // The Test fresh-install guard is unchanged: the Production history is not accepted in FairSwapTest.
   assert.throws(() => assertIdvDigilockerLedger('FairSwapTest', idvLedger('FairSwapTest', {tail: rows})), /LEDGER_TAIL_MISMATCH/);
 });
+
+// ---------------------------------------------------------------------------------------------
+// IDV DigiLocker mandatory-gate predicate (20261122100000): FairSwapTest ONLY, never promoted, gate stays OFF
+// ---------------------------------------------------------------------------------------------
+const {
+  IDV_DIGILOCKER_REQUIRED_CANDIDATE, IDV_DIGILOCKER_REQUIRED_SCOPE, IDV_DIGILOCKER_REQUIRED_PREREQUISITES, IDV_DIGILOCKER_REQUIRED_PREFLIGHT,
+  IDV_DIGILOCKER_REQUIRED_POSTFLIGHT, ENFORCE_VERIFIED_ACTOR_STATES, assertIdvDigilockerRequiredLedger, enforceVerifiedActorState,
+  idvDigilockerEvolvedVariant, idvDigilockerRequiredSnapshotSql, verifyIdvDigilockerRequiredTestReceipt, runIdvDigilockerInstalledCheck
+} = await import('../../scripts/release/idv-digilocker-v1-release.mjs');
+const REQ_PIN = ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.ledger;
+const reqRow = (over = {}) => ({version: REQ_PIN.version, name: REQ_PIN.name, hasStatements: true, statementCount: REQ_PIN.statementCount,
+  statementsSha256: REQ_PIN.statementsSha256, ...over});
+const reqV2Row = (over = {}) => ({version: '20261119200000', name: 'idv_digilocker_oidc_v2_badge', hasStatements: true,
+  statementCount: IDV_DIGILOCKER_REQUIRED_PREREQUISITES[1].statementCount, statementsSha256: IDV_DIGILOCKER_REQUIRED_PREREQUISITES[1].statementsSha256, ...over});
+const reqLedger = ({v1 = idvV1Row(), v2 = reqV2Row(), extra = [], ...rest} = {}) =>
+  idvLedger('FairSwapTest', {extra: [...(v1 ? [v1] : []), ...(v2 ? [v2] : []), ...extra], ...rest});
+const enforceBodyMd5 = path => {
+  const m = readFileSync(join(process.cwd(), path), 'utf8')
+    .match(/CREATE (?:OR REPLACE )?FUNCTION app_security\.enforce_verified_actor\(([\s\S]*?)\$\$([\s\S]*?)\$\$;/i);
+  assert.ok(m, path);
+  return createHash('md5').update(m[2]).digest('hex');
+};
+
+function reqRun(environment = 'FairSwapTest', {ledger = reqLedger(), env = {}, recorded = {}, pre = {}, post = {}, preserved, dryOutput} = {}) {
+  const c = getCandidate(IDV_DIGILOCKER_REQUIRED_CANDIDATE);
+  const dir = mkdtempSync(join(tmpdir(), 'idv-required-'));
+  const full = [];
+  const before = ledger.map(row => row.version);
+  let reads = 0;
+  const base = makeRunner({before, after: [...before, c.version], filename: c.filename, sql: q => {
+    if (q.startsWith('-- idv-digilocker-required-preflight')) return idvChecks(IDV_DIGILOCKER_REQUIRED_PREFLIGHT, pre);
+    if (q.startsWith('-- idv-digilocker-required-postflight')) return {...idvChecks(IDV_DIGILOCKER_REQUIRED_POSTFLIGHT, post), ...(preserved ? {preserved} : {})};
+    if (q.startsWith('-- idv-digilocker')) assert.fail(`unexpected IDV query ${q.split('\n')[0]}`);
+    return [...ledger, ...(++reads === 3 ? [reqRow(recorded)] : [])].sort(idvByVersion);
+  }});
+  const runner = (cmd, args, ...rest) => {
+    full.push([cmd, ...args]);
+    if (cmd === 'supabase' && args.includes('--dry-run') && dryOutput) return dryOutput;
+    return base(cmd, args, ...rest);
+  };
+  const result = releaseReusable({environment, candidateId: c.id, receiptDir: dir, context: {...idvContext, ...env}, runner});
+  return {result, full, dir};
+}
+
+test('IDV required gate: exact Test-only registry entry, source-derived pins, and Production impossible from every dispatch target', () => {
+  const {candidate, sha256} = verifyCandidateSha(IDV_DIGILOCKER_REQUIRED_CANDIDATE);
+  assert.deepEqual([candidate.version, candidate.filename, candidate.path, sha256], ['20261122100000', '20261122100000_idv_digilocker_required_gate.sql',
+    'supabase/forward-migrations/idv/20261122100000_idv_digilocker_required_gate.sql', '2fa2064dcf19317ab7347cd78db6362e4f7810d078c79ec3d0465b6e5d609961']);
+  assert.equal(candidate.testOnly, true);
+  assert.equal(candidate.autoPromote, false);
+  assert.equal(candidate.strict, undefined);
+  assert.equal(candidate.allowedProjectRef, 'wpppxlnbzqynvhpeuavd');
+  assert.equal(candidate.allowedProjectRef, REFS.FairSwapTest);
+  assert.notEqual(candidate.allowedProjectRef, REFS.FairSwapProd);
+  assert.deepEqual(candidate.requiredLedgerVersions, [getCandidate(IDV_DIGILOCKER_CANDIDATE).version, getCandidate(IDV_DIGILOCKER_V2_CANDIDATE).version]);
+  assert.equal(planDispatch({candidateId: candidate.id, target: 'test'}).candidate, candidate);
+  assert.throws(() => planDispatch({candidateId: candidate.id, target: 'production'}), /TEST_ONLY_CANDIDATE/);
+  assert.throws(() => planDispatch({candidateId: candidate.id, target: 'adopt'}), /TEST_ONLY_CANDIDATE/);
+  assert.equal(EXISTING_INSTALLATIONS[`${candidate.id}|FairSwapProd`], undefined);
+
+  // Ledger and body pins are derived from the SHA-pinned sources, never typed in independently.
+  const statements = splitStatements(readFileSync(join(process.cwd(), candidate.path), 'utf8'));
+  assert.deepEqual([REQ_PIN.version, REQ_PIN.name, REQ_PIN.statementCount, REQ_PIN.statementsSha256],
+    [candidate.version, candidate.filename.slice(15, -4), statements.length, pgDigest(statements)]);
+  assert.equal(ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.bodyMd5, enforceBodyMd5(candidate.path));
+  assert.equal(ENFORCE_VERIFIED_ACTOR_STATES.historical.bodyMd5, enforceBodyMd5(getCandidate(IDV_DIGILOCKER_CANDIDATE).path));
+  assert.equal(ENFORCE_VERIFIED_ACTOR_STATES.historical.bodyMd5, enforceBodyMd5(getCandidate(V3_IDENTITY_PREREQUISITE).path));
+  assert.notEqual(ENFORCE_VERIFIED_ACTOR_STATES.historical.bodyMd5, ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.bodyMd5);
+  const [v1Pin, v2Pin] = IDV_DIGILOCKER_REQUIRED_PREREQUISITES;
+  for (const pin of [v1Pin, v2Pin]) {
+    const c = getCandidate(pin.candidateId);
+    assert.deepEqual([pin.version, pin.name], [c.version, c.filename.slice(15, -4)]);
+  }
+  const v2Statements = splitStatements(readFileSync(join(process.cwd(), getCandidate(IDV_DIGILOCKER_V2_CANDIDATE).path), 'utf8'));
+  assert.deepEqual([v2Pin.statementCount, v2Pin.statementsSha256], [v2Statements.length, pgDigest(v2Statements)]);
+  // Production keeps the unchanged historical V3 pin; the evolved body is never accepted by a Production check.
+  for (const checks of [IDV_DIGILOCKER_PRODUCTION_PREFLIGHT, IDV_DIGILOCKER_PRODUCTION_POSTFLIGHT]) {
+    const text = JSON.stringify(checks);
+    assert.ok(text.includes(ENFORCE_VERIFIED_ACTOR_STATES.historical.bodyMd5));
+    assert.ok(!text.includes(ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.bodyMd5));
+  }
+
+  const yaml = readFileSync('.github/workflows/reusable-supabase-release.yml', 'utf8');
+  assert.match(yaml, /- idv-digilocker-oidc-v2\n(?: {10}#[^\n]*\n)? {10}- idv-digilocker-required-gate\n/);
+  assert.ok(yaml.includes("inputs.candidate != 'v3-test-remaining-batch' && inputs.candidate != 'idv-digilocker-required-gate' &&"));
+  assert.ok(yaml.includes("if: ${{ inputs.candidate == 'idv-digilocker-required-gate' }}"));
+  assert.ok(yaml.includes('verifyIdvDigilockerRequiredTestReceipt'));
+  assert.equal((yaml.match(/idv-digilocker-required-gate/g) ?? []).length, 4);   // option, receipt step (2), production exclusion
+  assert.doesNotMatch(yaml, /identity_verification_required/i);
+});
+
+test('IDV required gate: the production job is skipped for every input combination, so the candidate can never auto-promote', () => {
+  const yaml = readFileSync('.github/workflows/reusable-supabase-release.yml', 'utf8');
+  const id = IDV_DIGILOCKER_REQUIRED_CANDIDATE;
+  const digests = {idv_digilocker_ledger_sha: 'b'.repeat(64), mobile_catalogue_ledger_sha: 'b'.repeat(64), listing_validity_ledger_sha: 'b'.repeat(64),
+    taxonomy_ledger_sha: 'b'.repeat(64)};
+  for (const target of ['test', 'production', 'adopt']) {
+    for (const autoPromote of [false, true]) {   // true is impossible for this candidate, but the job must still not run
+      for (const [testResult, verifyTest] of [['success', 'success'], ['skipped', 'skipped'], ['failure', 'skipped']]) {
+        for (const outputs of [{}, digests]) {
+          assert.equal(productionJobRuns(yaml, {candidate: id, target, autoPromote, test: testResult, verifyTest, outputs}), false,
+            JSON.stringify({target, autoPromote, testResult, verifyTest, outputs}));
+        }
+      }
+    }
+  }
+  assert.equal(planDispatch({candidateId: id, target: 'test'}).candidate.autoPromote, false);   // verify job emits auto_promote=false
+});
+
+test('IDV required gate: in-order FairSwapTest apply with exact ledger, preflight/postflight, gate OFF and a sanitized receipt', async () => {
+  const c = getCandidate(IDV_DIGILOCKER_REQUIRED_CANDIDATE);
+  const run = reqRun();
+  let receipt;
+  try {
+    receipt = await run.result;
+    assert.equal(receipt.status, 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED');
+    assert.deepEqual([receipt.environment, receipt.projectRef, receipt.migrationVersion, receipt.migrationFile, receipt.migrationSha256],
+      ['FairSwapTest', 'wpppxlnbzqynvhpeuavd', c.version, c.filename, c.sha256]);
+    assert.deepEqual(receipt.dryRunPending, [c.filename]);
+    assert.equal(receipt.outOfOrderInstall, undefined);
+    assert.equal(receipt.ledgerStatementsSha256, REQ_PIN.statementsSha256);
+    assert.equal(receipt.postflightScope, IDV_DIGILOCKER_REQUIRED_SCOPE);
+    assert.equal(receipt.identityVerificationRequired, false);
+    assert.equal(receipt.edgeFunctionsDeployedByThisWorkflow, false);
+    assert.equal(receipt.testOnly, true);
+    assert.equal(receipt.autoPromote, false);
+    assert.equal(receipt.testLedgerStatementsSha256, undefined);
+    assert.deepEqual(receipt.requiredLedger, [{version: '20261117090000', name: 'idv_digilocker_direct_v1'},
+      {version: '20261119200000', name: 'idv_digilocker_oidc_v2_badge'}]);
+    assert.deepEqual(receipt.enforceVerifiedActorTransition, {from: {state: 'historical', bodyMd5: ENFORCE_VERIFIED_ACTOR_STATES.historical.bodyMd5},
+      to: {state: 'requiredGate', bodyMd5: ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.bodyMd5}});
+    assert.deepEqual(readdirSync(run.dir).sort(), ['SHA256SUMS_fairswaptest', 'idv-digilocker-required-gate-fairswaptest.json']);
+    const bytes = readFileSync(join(run.dir, 'idv-digilocker-required-gate-fairswaptest.json'), 'utf8');
+    assert.equal(readFileSync(join(run.dir, 'SHA256SUMS_fairswaptest'), 'utf8'),
+      `${createHash('sha256').update(bytes).digest('hex')}  idv-digilocker-required-gate-fairswaptest.json\n`);
+    for (const secret of ['sbp_mock_token', 'mock_password', 'pooler.supabase.com', 'BEGIN CERTIFICATE', 'f'.repeat(64)]) assert.ok(!bytes.includes(secret), secret);
+    // CLI links only the FairSwapTest ref; no --include-all; preflight before dry run, postflight after apply.
+    const link = run.full.find(cmd => cmd[0] === 'supabase' && cmd.includes('link'));
+    assert.equal(link[link.indexOf('--project-ref') + 1], 'wpppxlnbzqynvhpeuavd');
+    assert.ok(!run.full.flat().some(arg => String(arg).includes(REFS.FairSwapProd)));
+    const [dry, apply] = pushes(run.full);
+    assert.ok(dry.includes('--dry-run') && !dry.includes('--include-all') && apply.includes('--yes') && !apply.includes('--include-all'));
+    assert.ok(!run.full.some(cmd => cmd.includes('--help')));
+    const at = label => run.full.findIndex(cmd => cmd[0] === 'psql' && cmd.at(-1).startsWith(`-- idv-digilocker-${label}\nBEGIN READ ONLY;`));
+    assert.ok(at('required-preflight') >= 0 && at('required-preflight') < run.full.indexOf(dry) && at('required-postflight') > run.full.indexOf(apply));
+    const sql = run.full.filter(cmd => cmd[0] === 'psql').map(cmd => cmd.at(-1));
+    assert.ok(sql.find(q => q.startsWith('-- idv-digilocker-required-preflight')).includes(`md5(p.prosrc) = '${ENFORCE_VERIFIED_ACTOR_STATES.historical.bodyMd5}'`));
+    assert.ok(sql.find(q => q.startsWith('-- idv-digilocker-required-postflight')).includes(`md5(p.prosrc) = '${ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.bodyMd5}'`));
+    assert.ok(!sql.some(q => /identity_verification_required'\s*,\s*'true'|UPDATE |INSERT |DELETE /i.test(q)));
+  } finally { rmSync(run.dir, {recursive: true, force: true}); }
+
+  const ctx = {...idvContext, CANDIDATE: c.id};
+  assert.equal(verifyIdvDigilockerRequiredTestReceipt(receipt, ctx), REQ_PIN.statementsSha256);
+  for (const invalid of [{environment: 'FairSwapProd'}, {projectRef: REFS.FairSwapProd}, {releaseWorkflowRun: '132'}, {releaseWorkflowAttempt: '2'},
+    {reviewedCommit: 'f'.repeat(40)}, {migrationSha256: 'd'.repeat(64)}, {postflightVerified: false}, {postflightScope: IDV_DIGILOCKER_V2_SCOPE},
+    {identityVerificationRequired: true}, {edgeFunctionsDeployedByThisWorkflow: true}, {testOnly: false}, {autoPromote: true},
+    {ledgerStatementsSha256: 'b'.repeat(64)}, {testLedgerStatementsSha256: REQ_PIN.statementsSha256}, {status: 'ALREADY_APPLIED_VERIFIED'},
+    {dryRunPending: []}, {outOfOrderInstall: {includeAll: true, aheadVersions: []}}, {requiredLedger: []},
+    {enforceVerifiedActorTransition: {from: {state: 'historical', bodyMd5: 'x'}, to: {state: 'requiredGate', bodyMd5: 'y'}}},
+    {prerequisiteLedger: IDV_FOUNDATION_LEDGER.FairSwapProd}]) {
+    assert.throws(() => verifyIdvDigilockerRequiredTestReceipt({...receipt, ...invalid}, ctx), /IDV_DIGILOCKER_REQUIRED_TEST_RECEIPT_INVALID/, JSON.stringify(invalid));
+  }
+  assert.throws(() => verifyIdvDigilockerRequiredTestReceipt(receipt, {...ctx, CANDIDATE: IDV_DIGILOCKER_V2_CANDIDATE}), /REQUIRED_TEST_RECEIPT_INVALID/);
+  // It is never accepted as V1/V2 promotion evidence.
+  assert.throws(() => verifyIdvDigilockerTestReceipt(receipt, idvContext), /IDV_DIGILOCKER_TEST_RECEIPT_INVALID/);
+});
+
+test('IDV required gate: Production is refused before any tool, credential or SQL runs, whatever the target or Test evidence', async () => {
+  const c = getCandidate(IDV_DIGILOCKER_REQUIRED_CANDIDATE);
+  for (const env of [{}, {TARGET: 'production'}, {TARGET: 'adopt'}, {TARGET: 'test', IDV_DIGILOCKER_TEST_LEDGER_SHA: REQ_PIN.statementsSha256}]) {
+    const run = reqRun('FairSwapProd', {env});
+    try {
+      await assert.rejects(run.result, /REUSABLE_RELEASE_TEST_ONLY_CANDIDATE/);
+      assert.deepEqual(run.full, []);
+      assert.deepEqual(readdirSync(run.dir), []);
+    } finally { rmSync(run.dir, {recursive: true, force: true}); }
+  }
+  // A FairSwapTest call that is not a target=test dispatch is refused too.
+  for (const TARGET of ['production', 'adopt', '']) {
+    const run = reqRun('FairSwapTest', {env: {TARGET}});
+    try { await assert.rejects(run.result, /IDV_DIGILOCKER_REQUIRED_TEST_ONLY/); assert.deepEqual(run.full, []); }
+    finally { rmSync(run.dir, {recursive: true, force: true}); }
+  }
+  await assert.rejects(verifyRemotePostflight('FairSwapProd', c.id, 'url', {}, () => assert.fail('no SQL may run')), /REQUIRED_TEST_ONLY/);
+  await assert.rejects(adoptExistingInstallation({environment: 'FairSwapProd', candidateId: c.id, context: idvContext,
+    runner: () => assert.fail('no tool may run')}), /ADOPTION_NOT_REGISTERED/);
+  await assert.rejects(releaseV3ProductionBatch({environment: 'FairSwapProd', candidateId: c.id, context: idvContext,
+    runner: () => assert.fail('no tool may run')}), /V3_PRODUCTION_BATCH_CONTEXT_REQUIRED/);
+  assert.ok(!V3_PRODUCTION_SEQUENCE.includes(c.id));
+  assert.throws(() => assertIdvDigilockerRequiredLedger('FairSwapProd', idvLedger('FairSwapProd')), /REQUIRED_GATE_TEST_ONLY/);
+});
+
+test('IDV required gate fails closed before any apply on ledger, prerequisite or preflight drift, and withholds receipts after apply', async () => {
+  const attempt = async (options, re, {dryRuns = 0, applies = 0} = {}) => {
+    const run = reqRun('FairSwapTest', options);
+    try {
+      await assert.rejects(run.result, re);
+      assert.equal(idvApplies(run.full).length, applies);
+      assert.equal(pushes(run.full).length, dryRuns);
+      assert.ok(!existsSync(join(run.dir, 'idv-digilocker-required-gate-fairswaptest.json')));
+    } finally { rmSync(run.dir, {recursive: true, force: true}); }
+  };
+  const c = getCandidate(IDV_DIGILOCKER_REQUIRED_CANDIDATE);
+  await attempt({ledger: reqLedger({v2: null})}, /PREREQUISITE_MIGRATION_MISSING/);
+  await attempt({ledger: reqLedger({v1: null})}, /PREREQUISITE_MIGRATION_MISSING/);
+  await attempt({ledger: reqLedger({v2: reqV2Row({statementsSha256: 'a'.repeat(64)})})}, /REQUIRED_GATE_PREREQUISITE_LEDGER_MISMATCH/);
+  await attempt({ledger: reqLedger({v2: reqV2Row({statementCount: 22})})}, /REQUIRED_GATE_PREREQUISITE_LEDGER_MISMATCH/);
+  await attempt({ledger: reqLedger({v2: reqV2Row({name: 'renamed'})})}, /PREREQUISITE_LEDGER_MISMATCH/);
+  await attempt({ledger: reqLedger({v1: idvV1Row({name: 'renamed'})})}, /PREREQUISITE_LEDGER_MISMATCH/);
+  await attempt({ledger: reqLedger({v1: idvV1Row({hasStatements: false, statementCount: 0})})}, /PREREQUISITE_LEDGER_MISMATCH/);
+  await attempt({ledger: reqLedger({foundation: null})}, /FOUNDATION_PREREQUISITE_MISMATCH/);
+  await attempt({ledger: reqLedger({foundation: IDV_FOUNDATION_LEDGER.FairSwapProd})}, /FOUNDATION_PREREQUISITE_MISMATCH/);
+  await attempt({ledger: reqLedger({extra: [reqRow()]})}, /IDV_DIGILOCKER_REQUIRED_ALREADY_RECORDED/);
+  await attempt({ledger: reqLedger({extra: [reqRow({version: '20261121000000'})]})}, /REQUIRED_GATE_LEDGER_MISMATCH/);   // name reused elsewhere
+  await attempt({ledger: reqLedger({extra: [{version: '20261123000000', name: 'newer', hasStatements: true, statementCount: 1,
+    statementsSha256: 'a'.repeat(64)}]})}, /IDV_DIGILOCKER_REQUIRED_LEDGER_MISMATCH/);
+  for (const key of ['gate_setting_off', 'gate_function_off', 'enforce_state_exact', 'enforce_server_only', 'v1_structure', 'provenance_columns', 'unexpected_key']) {
+    await attempt({pre: {[key]: false}}, /IDV_DIGILOCKER_REQUIRED_PREFLIGHT_FAILED/);
+  }
+  await attempt({dryOutput: `Would push these migrations:\n • ${c.filename}\n • 20261123000000_unreviewed.sql`}, /DRY_RUN_MISMATCH/, {dryRuns: 1});
+  await attempt({dryOutput: 'Remote database is up to date.'}, /DRY_RUN_MISMATCH/, {dryRuns: 1});
+  // After apply: ledger row and every postflight key are binding; no receipt is written.
+  for (const recorded of [{statementsSha256: 'a'.repeat(64)}, {hasStatements: false, statementCount: 0}, {name: 'other'}]) {
+    await attempt({recorded}, /IDV_DIGILOCKER_REQUIRED_LEDGER_MISMATCH|TABLETS_LEDGER_CHANGED/, {dryRuns: 2, applies: 1});
+  }
+  for (const key of ['gate_setting_off', 'gate_function_off', 'enforce_state_exact', 'enforce_single_overload', 'enforce_server_only',
+    'v1_grants_unchanged', 'service_only_execute', 'projection_execute']) {
+    await attempt({post: {[key]: false}}, /IDV_DIGILOCKER_REQUIRED_POSTFLIGHT_FAILED/, {dryRuns: 2, applies: 1});
+  }
+  await attempt({preserved: 'a'.repeat(64)}, /IDV_DIGILOCKER_EXISTING_OBJECTS_CHANGED/, {dryRuns: 2, applies: 1});
+  for (const [checks, label] of [[IDV_DIGILOCKER_REQUIRED_PREFLIGHT, 'required-preflight'], [IDV_DIGILOCKER_REQUIRED_POSTFLIGHT, 'required-postflight']]) {
+    const text = idvDigilockerRequiredSnapshotSql(checks, label);
+    assert.ok(text.startsWith(`-- idv-digilocker-${label}\nBEGIN READ ONLY;\n`) && text.endsWith('COMMIT;'), label);
+    assert.equal(text.split(';').length - 1, 4, label);
+  }
+  assert.deepEqual(Object.keys(IDV_DIGILOCKER_REQUIRED_PREFLIGHT), Object.keys(IDV_DIGILOCKER_REQUIRED_POSTFLIGHT));
+});
+
+test('enforce_verified_actor evolution is explicit and ledger-bound; the historical state stays valid; Production may only be historical', async () => {
+  assert.equal(enforceVerifiedActorState('FairSwapTest', reqLedger()), 'historical');
+  assert.equal(enforceVerifiedActorState('FairSwapTest', reqLedger({extra: [reqRow()]})), 'requiredGate');
+  assert.equal(enforceVerifiedActorState('FairSwapProd', idvLedger('FairSwapProd')), 'historical');
+  for (const over of [{statementsSha256: 'a'.repeat(64)}, {statementCount: 9}, {hasStatements: false}, {name: 'renamed'}, {version: '20261122100001'}]) {
+    assert.throws(() => enforceVerifiedActorState('FairSwapTest', reqLedger({extra: [reqRow(over)]})), /REQUIRED_GATE_LEDGER_MISMATCH/, JSON.stringify(over));
+  }
+  assert.throws(() => enforceVerifiedActorState('FairSwapTest', reqLedger({extra: [reqRow(), reqRow({version: '20261123000000'})]})), /REQUIRED_GATE_LEDGER_MISMATCH/);
+  assert.throws(() => enforceVerifiedActorState('FairSwapProd', idvLedger('FairSwapProd', {extra: [reqRow()]})), /REQUIRED_GATE_PRODUCTION_FORBIDDEN/);
+  assert.throws(() => enforceVerifiedActorState('FairSwapStaging', reqLedger()), /ENFORCE_STATE_ENVIRONMENT_INVALID/);
+  // The V1 Production ledger guard independently rejects the row (unreviewed tail).
+  assert.throws(() => assertIdvDigilockerLedger('FairSwapProd', idvLedger('FairSwapProd', {extra: [reqRow()]})), /LEDGER_TAIL_MISMATCH/);
+
+  // V1 FairSwapTest attestation, historical: unchanged receipt shape, body bound to the historical pin.
+  const historical = idvRun('FairSwapTest', {ledger: idvTestInstalledLedger()});
+  let receipt;
+  try {
+    receipt = await historical.result;
+    assert.equal(receipt.installedStateVariant, undefined);
+    const q = historical.full.find(cmd => cmd[0] === 'psql' && cmd.at(-1).startsWith('-- idv-digilocker-installed')).at(-1);
+    assert.ok(q.includes(`md5(p.prosrc) = '${ENFORCE_VERIFIED_ACTOR_STATES.historical.bodyMd5}'`) && q.includes("'enforce_verified_actor_state'"));
+    assert.ok(!q.includes(ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.bodyMd5));
+  } finally { rmSync(historical.dir, {recursive: true, force: true}); }
+  assert.equal(verifyIdvDigilockerTestReceipt(receipt, idvContext), 'b'.repeat(64));
+  // V1 FairSwapTest attestation after 20261122100000: an explicit evolved variant, never silently "historical".
+  const evolved = idvRun('FairSwapTest', {ledger: reqLedger({extra: [reqRow()]})});
+  let evolvedReceipt;
+  try {
+    evolvedReceipt = await evolved.result;
+    assert.equal(evolvedReceipt.status, 'ALREADY_INSTALLED_VERIFIED');
+    assert.deepEqual(evolvedReceipt.installedStateVariant, idvDigilockerEvolvedVariant());
+    assert.deepEqual(evolvedReceipt.installedStateVariant, {state: 'requiredGate', ledger: {...REQ_PIN},
+      enforceVerifiedActorBodyMd5: ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.bodyMd5});
+    assert.deepEqual(pushes(evolved.full), []);
+    const q = evolved.full.find(cmd => cmd[0] === 'psql' && cmd.at(-1).startsWith('-- idv-digilocker-installed')).at(-1);
+    assert.ok(q.includes(`md5(p.prosrc) = '${ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.bodyMd5}'`));
+    assert.ok(!q.includes(`md5(p.prosrc) = '${ENFORCE_VERIFIED_ACTOR_STATES.historical.bodyMd5}'`));
+  } finally { rmSync(evolved.dir, {recursive: true, force: true}); }
+  assert.equal(verifyIdvDigilockerTestReceipt(evolvedReceipt, idvContext), 'b'.repeat(64));
+  for (const installedStateVariant of [{...idvDigilockerEvolvedVariant(), state: 'historical'}, {...idvDigilockerEvolvedVariant(), enforceVerifiedActorBodyMd5: 'x'},
+    {...idvDigilockerEvolvedVariant(), ledger: {...REQ_PIN, statementsSha256: 'a'.repeat(64)}}, null, 'requiredGate']) {
+    assert.throws(() => verifyIdvDigilockerTestReceipt({...evolvedReceipt, installedStateVariant}, idvContext), /IDV_DIGILOCKER_TEST_RECEIPT_INVALID/);
+  }
+  // A partially matching evolution row is refused before the installed-state SQL runs; body drift is refused by the SQL.
+  const partial = idvRun('FairSwapTest', {ledger: reqLedger({extra: [reqRow({statementsSha256: 'a'.repeat(64)})]})});
+  try {
+    await assert.rejects(partial.result, /REQUIRED_GATE_LEDGER_MISMATCH/);
+    assert.ok(!partial.full.some(cmd => cmd[0] === 'psql' && cmd.at(-1).startsWith('-- idv-digilocker-installed')));
+  } finally { rmSync(partial.dir, {recursive: true, force: true}); }
+  const drift = idvRun('FairSwapTest', {ledger: reqLedger({extra: [reqRow()]}), installed: {enforce_verified_actor_state: false}});
+  try { await assert.rejects(drift.result, /IDV_DIGILOCKER_INSTALLED_FAILED/); } finally { rmSync(drift.dir, {recursive: true, force: true}); }
+  assert.equal(runIdvDigilockerInstalledCheck(() => JSON.stringify(idvChecks(idvDigilockerInstalledChecks('requiredGate')))).enforceVerifiedActorState, 'historical');
+});
+
+test('disposable PostgreSQL (PGlite, not native PG17): required-gate preflight/postflight and the enforce_verified_actor states on the reviewed SQL chain',
+  {skip: PGlite ? false : 'no PGlite module', timeout: 240000}, async () => {
+    const src = path => readFileSync(join(process.cwd(), path), 'utf8');
+    const db = new PGlite();
+    for (const path of ['tests/idv-pg17/fixture.sql', 'tests/idv-pg17/fixture-digilocker.sql',
+      'supabase/forward-migrations/idv/20261026183000_idv_digilocker_foundation.sql', getCandidate(IDV_DIGILOCKER_CANDIDATE).path,
+      getCandidate(IDV_DIGILOCKER_V2_CANDIDATE).path]) await db.exec(src(path));
+    const snapshot = async (checks, label, required = true) => {
+      const results = await db.exec(required ? idvDigilockerRequiredSnapshotSql(checks, label) : idvSnapshotSql(checks, label));
+      return JSON.parse(Object.values(results.find(r => r.rows?.length).rows[0])[0]);
+    };
+    const allTrue = value => Object.values(value.checks).every(v => v === true);
+    const pre = await snapshot(IDV_DIGILOCKER_REQUIRED_PREFLIGHT, 'required-preflight');
+    assert.ok(allTrue(pre), JSON.stringify(pre.checks));
+    assert.ok(allTrue(await snapshot(idvDigilockerInstalledChecks('historical'), 'installed', false)));
+    assert.equal((await snapshot(idvDigilockerInstalledChecks('requiredGate'), 'installed', false)).checks.enforce_verified_actor_state, false);
+    assert.equal((await snapshot(IDV_DIGILOCKER_REQUIRED_POSTFLIGHT, 'required-postflight')).checks.enforce_state_exact, false);
+
+    await db.exec(src(getCandidate(IDV_DIGILOCKER_REQUIRED_CANDIDATE).path));
+    const post = await snapshot(IDV_DIGILOCKER_REQUIRED_POSTFLIGHT, 'required-postflight');
+    assert.ok(allTrue(post), JSON.stringify(post.checks));
+    assert.equal(post.preserved, pre.preserved);
+    assert.equal((await snapshot(IDV_DIGILOCKER_REQUIRED_PREFLIGHT, 'required-preflight')).checks.enforce_state_exact, false);   // no re-run
+    assert.ok(allTrue(await snapshot(idvDigilockerInstalledChecks('requiredGate'), 'installed', false)));
+    assert.equal((await snapshot(idvDigilockerInstalledChecks('historical'), 'installed', false)).checks.enforce_verified_actor_state, false);
+
+    const broken = async (sql, key, undo) => {
+      await db.exec(sql);
+      const value = await snapshot(IDV_DIGILOCKER_REQUIRED_POSTFLIGHT, 'required-postflight');
+      await db.exec(undo);
+      return key ? value.checks[key] : value.preserved;
+    };
+    // Activating the gate is owner-run and out of scope: the postflight reports it as drift by design.
+    assert.equal(await broken("update public.app_system_settings set setting_value = 'true' where setting_key = 'identity_verification_required'",
+      'gate_setting_off', "update public.app_system_settings set setting_value = 'false' where setting_key = 'identity_verification_required'"), false);
+    assert.equal(await broken('grant execute on function app_security.enforce_verified_actor(uuid,boolean) to authenticated', 'enforce_server_only',
+      'revoke execute on function app_security.enforce_verified_actor(uuid,boolean) from authenticated'), false);
+    assert.equal(await broken('revoke execute on function app_security.enforce_verified_actor(uuid,boolean) from service_role', 'enforce_server_only',
+      'grant execute on function app_security.enforce_verified_actor(uuid,boolean) to service_role'), false);
+    assert.equal(await broken("alter function app_security.enforce_verified_actor(uuid,boolean) set search_path = public", 'enforce_state_exact',
+      "alter function app_security.enforce_verified_actor(uuid,boolean) set search_path = ''"), false);
+    assert.equal(await broken('grant execute on function app_security.has_digilocker_badge(uuid) to authenticated', 'service_only_execute',
+      'revoke execute on function app_security.has_digilocker_badge(uuid) from authenticated'), false);
+    assert.notEqual(await broken("create function public.idv_required_probe() returns integer language sql as 'select 1'", null,
+      'drop function public.idv_required_probe()'), pre.preserved);
+    assert.equal((await snapshot(IDV_DIGILOCKER_REQUIRED_POSTFLIGHT, 'required-postflight')).preserved, pre.preserved);
+  });
 
 // Additive hook: keep independent V3 operator tests in the existing release/security CI suite.
 import './v3-leaf-release.test.mjs';

@@ -276,6 +276,44 @@ export const IDV_DIGILOCKER_POSTFLIGHT = Object.freeze({
 });
 
 export const IDV_DIGILOCKER_PRODUCTION_POSTFLIGHT = Object.freeze({...IDV_DIGILOCKER_POSTFLIGHT, ...PRODUCTION_ONLY_POSTFLIGHT});
+
+// ---------- enforce_verified_actor: the only permitted body evolution, bound to the ledger ----------
+// historical:   the V3-prerequisite / V1 body (predicate is_identity_verified), pinned above in V3_IDENTITY_FUNCTIONS. It is
+//               the ONLY state FairSwapProd may hold; every Production check keeps using that unchanged pin.
+// requiredGate: the body of 20261122100000_idv_digilocker_required_gate.sql (predicate has_digilocker_badge). Valid ONLY in
+//               FairSwapTest and ONLY when the ledger records that exact row (version, name, CLI statement count and digest).
+// Any other body, or a row that only partially matches, fails closed. No state is inferred from the body alone.
+const ENFORCE_SIG = 'app_security.enforce_verified_actor(uuid,boolean)';
+const HISTORICAL_ENFORCE = V3_IDENTITY_FUNCTIONS.find(row => row[0] === ENFORCE_SIG);
+export const ENFORCE_VERIFIED_ACTOR_STATES = Object.freeze({
+  historical: Object.freeze({bodyMd5: HISTORICAL_ENFORCE[5], ledger: null}),
+  requiredGate: Object.freeze({bodyMd5: 'a2f0ad7ff0bf388c2f6a054f8167b1d2', ledger: Object.freeze({
+    version: '20261122100000', name: 'idv_digilocker_required_gate', statementCount: 8,
+    statementsSha256: '1c8339f6c808dc687023e2ffaabbadf4c380f4dfb38fa39f1cfe62fbda1cda9c'})})
+});
+// Exact function attributes (owner, language, SECURITY DEFINER, volatility, empty search_path) and the state's body digest.
+const enforceBody = state => v3Function([...HISTORICAL_ENFORCE.slice(0, 5), ENFORCE_VERIFIED_ACTOR_STATES[state].bodyMd5]);
+
+export function enforceVerifiedActorState(environment, rows) {
+  if (!IDV_FOUNDATION_LEDGER[environment] || !Array.isArray(rows)) fail('ENFORCE_STATE_ENVIRONMENT_INVALID');
+  const pin = ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.ledger;
+  const recorded = rows.filter(row => row.version === pin.version || row.name === pin.name);
+  if (recorded.length === 0) return 'historical';
+  if (environment !== 'FairSwapTest') fail('REQUIRED_GATE_PRODUCTION_FORBIDDEN');
+  const [row] = recorded;
+  if (recorded.length !== 1 || row.version !== pin.version || row.name !== pin.name || row.hasStatements !== true ||
+      row.statementCount !== pin.statementCount || row.statementsSha256 !== pin.statementsSha256) {
+    fail('REQUIRED_GATE_LEDGER_MISMATCH');
+  }
+  return 'requiredGate';
+}
+
+// The receipt block an attestation of an evolved FairSwapTest V1 installation must carry (absent in the historical state).
+export const idvDigilockerEvolvedVariant = () => ({
+  state: 'requiredGate',
+  ledger: {...ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.ledger},
+  enforceVerifiedActorBodyMd5: ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.bodyMd5
+});
 const isProduction = environment => environment === 'FairSwapProd';
 
 // Digest of every pre-existing table, policy, function and trigger in public/app_security that the migration must not
@@ -321,9 +359,13 @@ function readSnapshot(query, checks, label, preserved = PRESERVED) {
 // gate checks as the postflight, without the fresh-install-only conditions (empty tables, unchanged-object baseline).
 export const IDV_DIGILOCKER_INSTALLED = Object.freeze(Object.fromEntries(Object.entries(IDV_DIGILOCKER_POSTFLIGHT)
   .filter(([key]) => key !== 'tables_empty')));
-export const runIdvDigilockerInstalledCheck = query => {
-  readSnapshot(query, IDV_DIGILOCKER_INSTALLED, 'installed');
-  return {status: 'PASS', scope: IDV_DIGILOCKER_INSTALLED_SCOPE};
+// The attestation also binds enforce_verified_actor's body to the ledger state (enforceVerifiedActorState), so an installation
+// evolved by 20261122100000 is never attested as the historical V1 state, and vice versa.
+export const idvDigilockerInstalledChecks = (state = 'historical') =>
+  ({...IDV_DIGILOCKER_INSTALLED, enforce_verified_actor_state: enforceBody(state)});
+export const runIdvDigilockerInstalledCheck = (query, state = 'historical') => {
+  readSnapshot(query, idvDigilockerInstalledChecks(state), 'installed');
+  return {status: 'PASS', scope: IDV_DIGILOCKER_INSTALLED_SCOPE, enforceVerifiedActorState: state};
 };
 
 // ---------- OIDC V2 badge provenance (20261119200000) ----------
@@ -433,7 +475,10 @@ export function verifyIdvDigilockerTestReceipt(receipt, context) {
   }
   if (receipt.status === 'ALREADY_INSTALLED_VERIFIED') {
     if (receipt.postflightScope !== IDV_DIGILOCKER_INSTALLED_SCOPE || receipt.dryRunPending.length !== 0 ||
-        receipt.outOfOrderInstall !== undefined || receipt.installedBeforeThisWorkflow !== true) {
+        receipt.outOfOrderInstall !== undefined || receipt.installedBeforeThisWorkflow !== true ||
+        // Historical state: no variant. Evolved state: exactly the ledger-bound required-gate variant.
+        (receipt.installedStateVariant !== undefined &&
+          JSON.stringify(receipt.installedStateVariant) !== JSON.stringify(idvDigilockerEvolvedVariant()))) {
       fail('TEST_RECEIPT_INVALID');
     }
     return receipt.ledgerStatementsSha256;
@@ -444,6 +489,96 @@ export function verifyIdvDigilockerTestReceipt(receipt, context) {
       receipt.outOfOrderInstall?.includeAll !== true ||
       JSON.stringify(receipt.outOfOrderInstall.aheadVersions) !== JSON.stringify(expectedTail)) {
     fail('TEST_RECEIPT_INVALID');
+  }
+  return receipt.ledgerStatementsSha256;
+}
+
+// ---------- Mandatory-gate predicate (20261122100000): FairSwapTest ONLY, never promoted ----------
+// Replaces only enforce_verified_actor (is_identity_verified -> has_digilocker_badge). identity_verification_required must
+// be 'false' before and after: this release never activates the gate. Production can never reach this code path.
+export const IDV_DIGILOCKER_REQUIRED_CANDIDATE = 'idv-digilocker-required-gate';
+export const IDV_DIGILOCKER_REQUIRED_SCOPE = 'idv-digilocker-required-gate-integrity';
+// FairSwapTest prerequisite rows. V1 predates the pipeline in FairSwapTest, so only its version and name are bound; V2 was
+// applied by the reusable workflow, so its CLI statement count and digest (CLI split of the SHA-pinned source) are bound too.
+export const IDV_DIGILOCKER_REQUIRED_PREREQUISITES = Object.freeze([
+  Object.freeze({candidateId: IDV_DIGILOCKER_CANDIDATE, version: '20261117090000', name: 'idv_digilocker_direct_v1'}),
+  Object.freeze({candidateId: IDV_DIGILOCKER_V2_CANDIDATE, version: '20261119200000', name: 'idv_digilocker_oidc_v2_badge',
+    statementCount: 23, statementsSha256: '64533b75929c2de07213cca92501591e073a0b2b7341de3bae039feae882e465'})
+]);
+
+// Runs on readTabletsLedger rows before any dry run.
+export function assertIdvDigilockerRequiredLedger(environment, rows) {
+  if (environment !== 'FairSwapTest' || !Array.isArray(rows)) fail('REQUIRED_GATE_TEST_ONLY');
+  const own = IDV_FOUNDATION_LEDGER.FairSwapTest;
+  const foundation = rows.filter(row => row.name === own.name);
+  if (foundation.length !== 1 || foundation[0].version !== own.version || foundation[0].hasStatements !== true) {
+    fail('FOUNDATION_PREREQUISITE_MISMATCH');
+  }
+  if (rows.some(row => row.version === IDV_FOUNDATION_SOURCE_VERSION)) fail('FOUNDATION_HISTORY_MISMATCH');
+  for (const pin of IDV_DIGILOCKER_REQUIRED_PREREQUISITES) {
+    const found = rows.filter(row => row.version === pin.version || row.name === pin.name);
+    if (found.length !== 1 || found[0].version !== pin.version || found[0].name !== pin.name || found[0].hasStatements !== true ||
+        !(found[0].statementCount > 0) ||
+        (pin.statementsSha256 !== undefined && (found[0].statementCount !== pin.statementCount || found[0].statementsSha256 !== pin.statementsSha256))) {
+      fail('REQUIRED_GATE_PREREQUISITE_LEDGER_MISMATCH');
+    }
+  }
+  if (enforceVerifiedActorState(environment, rows) !== 'historical') fail('REQUIRED_GATE_ALREADY_RECORDED');
+  return {includeAll: false, ahead: []};
+}
+
+const enforceServerOnly = execBy('service_role', true, [ENFORCE_SIG]) + ' AND ' +
+  ['public', 'anon', 'authenticated'].map(role => execBy(role, false, [ENFORCE_SIG])).join(' AND ');
+// Same checks before and after; only the expected enforce_verified_actor state differs.
+const requiredChecks = state => Object.freeze({
+  v1_structure: [IDV_DIGILOCKER_INSTALLED.functions_exact, IDV_DIGILOCKER_INSTALLED.tables_rls_forced,
+    IDV_DIGILOCKER_INSTALLED.gate_triggers, IDV_DIGILOCKER_INSTALLED.binding_triggers].join(' AND '),
+  ...IDV_DIGILOCKER_V2_POSTFLIGHT,
+  enforce_state_exact: enforceBody(state),
+  enforce_single_overload: `(SELECT count(*) = 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname IN ('public','app_security') AND p.proname = 'enforce_verified_actor')`,
+  enforce_server_only: enforceServerOnly
+});
+export const IDV_DIGILOCKER_REQUIRED_PREFLIGHT = requiredChecks('historical');
+export const IDV_DIGILOCKER_REQUIRED_POSTFLIGHT = requiredChecks('requiredGate');
+// Every other public/app_security table, policy, function (owner, ACL, attributes, body) and trigger must be unchanged.
+const REQUIRED_PRESERVED = preservedSql([], ['enforce_verified_actor'], false);
+export const idvDigilockerRequiredSnapshotSql = (checks, label) => snapshotSql(checks, label, REQUIRED_PRESERVED);
+
+export const runIdvDigilockerRequiredPreflight = query =>
+  readSnapshot(query, IDV_DIGILOCKER_REQUIRED_PREFLIGHT, 'required-preflight', REQUIRED_PRESERVED);
+export function runIdvDigilockerRequiredPostflight(before, query) {
+  if (!before?.preserved) fail('BASELINE_REQUIRED');
+  const after = readSnapshot(query, IDV_DIGILOCKER_REQUIRED_POSTFLIGHT, 'required-postflight', REQUIRED_PRESERVED);
+  if (after.preserved !== before.preserved) fail('EXISTING_OBJECTS_CHANGED');
+  return {status: 'PASS', scope: IDV_DIGILOCKER_REQUIRED_SCOPE};
+}
+
+// Receipt block shared by the writer and the Test-receipt validator.
+export const idvDigilockerRequiredReceiptFields = () => ({
+  testOnly: true,
+  autoPromote: false,
+  requiredLedger: IDV_DIGILOCKER_REQUIRED_PREREQUISITES.map(({version, name}) => ({version, name})),
+  enforceVerifiedActorTransition: {
+    from: {state: 'historical', bodyMd5: ENFORCE_VERIFIED_ACTOR_STATES.historical.bodyMd5},
+    to: {state: 'requiredGate', bodyMd5: ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.bodyMd5}
+  }
+});
+
+// Validates the FairSwapTest receipt of the required-gate release. It is never Production evidence: the workflow does not
+// promote this candidate, and the receipt carries testOnly/autoPromote so it cannot be mistaken for promotion input.
+export function verifyIdvDigilockerRequiredTestReceipt(receipt, context) {
+  const c = getCandidate(IDV_DIGILOCKER_REQUIRED_CANDIDATE);
+  const expected = idvDigilockerRequiredReceiptFields();
+  const prerequisite = IDV_FOUNDATION_LEDGER.FairSwapTest;
+  if ((context.CANDIDATE && context.CANDIDATE !== c.id) || !receiptCommon(receipt, c, context) ||
+      receipt.prerequisiteLedger?.version !== prerequisite.version || receipt.prerequisiteLedger?.name !== prerequisite.name ||
+      receipt.status !== 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED' || receipt.postflightScope !== IDV_DIGILOCKER_REQUIRED_SCOPE ||
+      receipt.dryRunPending.length !== 1 || receipt.dryRunPending[0] !== c.filename || receipt.outOfOrderInstall !== undefined ||
+      receipt.ledgerStatementsSha256 !== ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.ledger.statementsSha256 ||
+      receipt.testLedgerStatementsSha256 !== undefined ||
+      Object.keys(expected).some(key => JSON.stringify(receipt[key]) !== JSON.stringify(expected[key]))) {
+    fail('REQUIRED_TEST_RECEIPT_INVALID');
   }
   return receipt.ledgerStatementsSha256;
 }
