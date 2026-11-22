@@ -2,7 +2,7 @@ import { z } from "zod";
 import { DigiLockerError, generateState, revokeToken, sha256Hex } from "../_shared/idv/digilocker-client.ts";
 import { defaultDeps, type IdvDeps } from "../_shared/idv/digilocker-deps.ts";
 import {
-  DIAG_STATE_TTL_SECONDS, buildDiagAuthorizeUrl, deriveDiagNonce, evaluateIdToken, exchangeDiagCode, readDiagRuntime,
+  DIAG_STATE_TTL_SECONDS, type DiagRaw, buildDiagAuthorizeUrl, deriveDiagNonce, evaluateIdToken, exchangeDiagCode, readDiagRuntime,
   type DiagResult,
 } from "../_shared/idv/digilocker-oidc-diag.ts";
 
@@ -12,15 +12,17 @@ declare const Deno: {
 };
 
 // STAGE-ONLY DigiLocker OIDC v2 diagnostic. Allowlisted testers only. It never calls server_idv_dl_complete,
-// never writes identity bindings or badges, and returns only the sanitized DiagResult.
+// never writes identity bindings or badges, persists nothing and writes nothing to logs. It returns the verdict plus the
+// provider's unredacted token response (DiagResult.raw) to the allowlisted FairSwapTest tester only.
 export const diagPayloadSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("start") }).strict(),
   z.object({
     action: z.literal("complete"),
     state: z.string().regex(/^[0-9a-f]{64}$/),
     code: z.string().min(1).max(2048).optional(),
-    // Standard OAuth error code relayed by the Web callback after sanitization (never free text).
-    error: z.string().regex(/^[a-z_]{1,24}$/).optional(),
+    // Provider OAuth error code and description, relayed verbatim by the Web callback for the tester display.
+    error: z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/).optional(),
+    error_description: z.string().max(500).optional(),
   }).strict(),
 ]);
 
@@ -72,7 +74,7 @@ export async function handleDigiLockerDiagnostic(
   }
 
   // complete: consume the single-use, user-bound, short-lived state before any provider call (replay never reaches the provider)
-  const { state, code, error: providerError } = body;
+  const { state, code, error: providerError, error_description: providerErrorDescription } = body;
   if (!code && !providerError) return json(400, { error: "INVALID_REQUEST" });
   const { data: c, error: cErr } = await admin.rpc("server_idv_dl_diag_consume", {
     p_user_id: userId,
@@ -86,19 +88,32 @@ export async function handleDigiLockerDiagnostic(
   const endpoints = { authorize: rt.authorizeVersion, token: "2" as const };
   const result = (r: DiagResult) => json(200, { success: true, result: r });
   if (providerError || !code) {
+    const raw: DiagRaw = {
+      providerCallback: providerError ? { error: providerError, error_description: providerErrorDescription ?? null } : null,
+      tokenResponse: null, expected: null,
+    };
     // access_denied (and the legacy "denied") is a user cancellation. Any other provider error is reported as its own
-    // sanitized code, so a KYC-required or provider-side failure is never mislabelled as a consent denial.
+    // code, so a KYC-required or provider-side failure is never mislabelled as a consent denial.
     return providerError && providerError !== "denied" && providerError !== "access_denied"
-      ? result({ outcome: "FAILED", code: `PROVIDER_ERR_${providerError.toUpperCase()}`, endpoints, checks: null, claimNames: null })
-      : result({ outcome: "CANCELLED", code: "CONSENT_DENIED", endpoints, checks: null, claimNames: null });
+      ? result({ outcome: "FAILED", code: `PROVIDER_ERR_${providerError.toUpperCase().replace(/[^A-Z_]/g, "_").slice(0, 24)}`, endpoints, checks: null, claimNames: null, raw })
+      : result({ outcome: "CANCELLED", code: "CONSENT_DENIED", endpoints, checks: null, claimNames: null, raw });
   }
 
   let accessToken: string | null = null;
   try {
     const ex = await exchangeDiagCode(rt, code, state, fetchImpl);
     accessToken = ex.accessToken;
-    const r = await evaluateIdToken(rt, ex.idToken, await deriveDiagNonce(rt.stateKey, state), Math.floor(now() / 1000), fetchImpl);
-    return result(r);
+    const nonce = await deriveDiagNonce(rt.stateKey, state);
+    const nowS = Math.floor(now() / 1000);
+    const raw: DiagRaw = {
+      providerCallback: null,
+      tokenResponse: ex.response,
+      expected: { issuer: rt.expectedIssuer, audience: rt.clientId, nonce, checkedAtEpoch: nowS },
+    };
+    if (ex.failure || !ex.idToken) {
+      return result({ outcome: "FAILED", code: ex.failure ?? "INVALID_PROVIDER_RESPONSE", endpoints, checks: null, claimNames: null, raw });
+    }
+    return result({ ...(await evaluateIdToken(rt, ex.idToken, nonce, nowS, fetchImpl)), raw });
   } catch (e) {
     const code2 = e instanceof DigiLockerError ? e.code : "PROVIDER_UNAVAILABLE";
     return result({ outcome: "FAILED", code: code2, endpoints, checks: null, claimNames: null });

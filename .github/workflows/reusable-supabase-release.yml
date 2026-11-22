@@ -18,6 +18,7 @@ on:
           - taxonomy-v2-foundation
           - taxonomy-v2-catalogue
           - idv-digilocker-v1
+          - idv-digilocker-oidc-v2
           - accessories-v1-foundation
           - accessories-v1-activation
           - tablets-v1-foundation
@@ -35,12 +36,21 @@ on:
           - specialist-vehicle-draft-binding-v3
           - v3-require-active-seller-identity
           - v3-test-remaining-batch
+          - v3-production-disabled-batch
+          - v3-books-activate
+          - v3-books-deactivate
+          - v3-tables-chairs-activate
+          - v3-tables-chairs-deactivate
+      books_acceptance_run_id:
+        description: 'V3 Tables & Chairs: successful Books activation acceptance run in the same environment and Backend commit'
+        required: false
+        type: string
       approved_sha:
         description: 'Exact reviewed commit SHA on main'
         required: true
         type: string
       expected_candidate_sha256:
-        description: 'Candidate SQL SHA-256; leave empty for the pinned V3 Test batch'
+        description: 'Candidate SQL SHA-256 or V3 Production manifest SHA-256; leave empty for the pinned V3 Test batch'
         required: false
         type: string
       target:
@@ -153,6 +163,10 @@ jobs:
             node tests/taxonomy-v2/run.mjs --category-count=55 --package=2
           fi
 
+      - name: Verify V3 authorization and moderation on disposable fixtures
+        if: ${{ inputs.candidate == 'v3-production-disabled-batch' }}
+        run: node tests/ordinary-goods/run.mjs
+
       - name: Verify candidate registry and candidate SQL SHA-256
         env:
           CANDIDATE: ${{ inputs.candidate }}
@@ -163,7 +177,9 @@ jobs:
           import {verifyCandidateSha, getCandidate} from './scripts/release/reusable-candidates.mjs';
           const candidateId = process.env.CANDIDATE;
           const expectedSha = process.env.EXPECTED_SHA;
-          if (candidateId === 'v3-test-remaining-batch') {
+          if (candidateId === 'v3-production-disabled-batch') {
+            if (process.env.TARGET !== 'production') throw new Error('V3_PRODUCTION_BATCH_TARGET');
+          } else if (candidateId === 'v3-test-remaining-batch') {
             if (process.env.TARGET !== 'test' || expectedSha !== '') throw new Error('V3_BATCH_TEST_ONLY_AND_NO_DIGEST_INPUT');
             for (const id of ['property-intake-v3', 'regulated-vehicle-drafts-v3', 'specialist-vehicle-draft-binding-v3', 'v3-require-active-seller-identity']) {
               const candidate = getCandidate(id);
@@ -186,11 +202,22 @@ jobs:
           await requireCi(process.env);
           NODE
 
+      - name: Verify historical V3 Test receipts against the Production manifest
+        if: ${{ inputs.candidate == 'v3-production-disabled-batch' }}
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_candidate_sha256 }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {verifyV3ProductionEvidence} from './scripts/release/v3-production-evidence.mjs';
+          verifyV3ProductionEvidence(process.cwd(), process.env.EXPECTED_SHA);
+          NODE
+
       - name: Plan stage and require Web and earlier-stage evidence
-        if: ${{ inputs.candidate != 'v3-test-remaining-batch' }}
+        if: ${{ inputs.candidate != 'v3-test-remaining-batch' && inputs.candidate != 'v3-production-disabled-batch' }}
         id: plan
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
           CANDIDATE: ${{ inputs.candidate }}
           TARGET: ${{ inputs.target }}
           WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
@@ -200,6 +227,7 @@ jobs:
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
           ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
+          BOOKS_ACCEPTANCE_RUN_ID: ${{ inputs.books_acceptance_run_id }}
           TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
         run: |
           node --input-type=module - <<'NODE'
@@ -213,8 +241,14 @@ jobs:
             test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
             prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID,
-            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID
+            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID, books_acceptance_run_id: e.BOOKS_ACCEPTANCE_RUN_ID
           }});
+          if (plan.candidate.v3Operation) {
+            const {requireLeafEvidence} = await import('./scripts/release/v3-leaf-release.mjs');
+            await requireLeafEvidence(plan, e);
+            appendFileSync(e.GITHUB_OUTPUT, 'auto_promote=false\n');
+            process.exit(0);
+          }
           const accessories = plan.candidate.id.startsWith('accessories-v1-');
           const wearables = plan.candidate.id.startsWith('wearables-v1-');
           const receipts = await requireStageEvidence(plan.priorRuns, e, fetch, {
@@ -276,6 +310,7 @@ jobs:
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
           ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
+          BOOKS_ACCEPTANCE_RUN_ID: ${{ inputs.books_acceptance_run_id }}
           TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
           WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
         run: |
@@ -290,8 +325,12 @@ jobs:
             test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
             prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID,
-            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID
+            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID, books_acceptance_run_id: e.BOOKS_ACCEPTANCE_RUN_ID
           }});
+          if (plan.candidate.v3Operation === 'activate') {
+            const {verifyLeafWeb} = await import('./scripts/release/v3-leaf-release.mjs');
+            await verifyLeafWeb(plan, e);
+          }
           await verifyWebDeployments(plan, e);
           await verifyE2eEvidence(plan, e);
           await verifyTabletsV2Web(plan, e);
@@ -306,6 +345,9 @@ jobs:
       - name: Execute Test release and automated read-only verification
         if: ${{ inputs.candidate != 'v3-test-remaining-batch' }}
         env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WEB_EVIDENCE_TOKEN: ${{ (startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-')) && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
+          TARGET: ${{ inputs.target }}
           ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
           TABLETS_FOUNDATION_LEDGER_SHA: ${{ needs.verify.outputs.foundation_ledger_sha }}
           TABLETS_CANDIDATE_LEDGER_SHA: ${{ needs.verify.outputs.candidate_ledger_sha }}
@@ -322,6 +364,7 @@ jobs:
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
           ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
+          BOOKS_ACCEPTANCE_RUN_ID: ${{ inputs.books_acceptance_run_id }}
           TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
         run: |
           node --input-type=module - <<'NODE'
@@ -499,12 +542,14 @@ jobs:
 
       - name: Verify IDV DigiLocker V1 Test postflight receipt
         id: idv_digilocker_proof
-        if: ${{ inputs.candidate == 'idv-digilocker-v1' }}
+        if: ${{ inputs.candidate == 'idv-digilocker-v1' || inputs.candidate == 'idv-digilocker-oidc-v2' }}
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
         run: |
           node --input-type=module - <<'NODE'
           import {appendFileSync, readFileSync} from 'node:fs';
           import {verifyIdvDigilockerTestReceipt} from './scripts/release/idv-digilocker-v1-release.mjs';
-          const receipt = JSON.parse(readFileSync('test-evidence/idv-digilocker-v1-fairswaptest.json', 'utf8'));
+          const receipt = JSON.parse(readFileSync(`test-evidence/${process.env.CANDIDATE}-fairswaptest.json`, 'utf8'));
           const digest = verifyIdvDigilockerTestReceipt(receipt, process.env);
           appendFileSync(process.env.GITHUB_OUTPUT, `ledger_sha=${digest}\n`);
           NODE
@@ -512,22 +557,23 @@ jobs:
   production:
     # Moderation, Mobile Catalogue, Listing Validity and Taxonomy: automatic after verified Test. Accessories and Tablets: only a dedicated target=production
     # dispatch, whose Web and earlier-stage Test/Production evidence was already enforced by the verify job.
-    # idv-digilocker-v1 is Staging/Test only: Production is always skipped for it.
+    # IDV DigiLocker V1 and OIDC V2: automatic only after a verified Test receipt of the same run (never a manual Production dispatch).
     needs: [verify, test, verify_test]
     if: >-
       ${{ always() && needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
-      inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'v3-test-remaining-batch' &&
+      inputs.candidate != 'v3-test-remaining-batch' &&
       ((inputs.target == 'test' && needs.verify.outputs.auto_promote == 'true' && needs.test.result == 'success' && needs.verify_test.result == 'success' &&
       (inputs.candidate != 'mobile-catalogue-india-v1' || needs.verify_test.outputs.mobile_catalogue_ledger_sha != '') &&
       (inputs.candidate != 'idv-digilocker-v1' || needs.verify_test.outputs.idv_digilocker_ledger_sha != '') &&
+      (inputs.candidate != 'idv-digilocker-oidc-v2' || needs.verify_test.outputs.idv_digilocker_ledger_sha != '') &&
       (inputs.candidate != 'listing-validity-365' || needs.verify_test.outputs.listing_validity_ledger_sha != '') &&
       (inputs.candidate != 'taxonomy-v2-foundation' || needs.verify_test.outputs.taxonomy_ledger_sha != '') &&
       (inputs.candidate != 'taxonomy-v2-catalogue' || needs.verify_test.outputs.taxonomy_ledger_sha != '')) ||
-      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue') ||
+      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'idv-digilocker-oidc-v2' && inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue') ||
       (inputs.target == 'adopt' && inputs.candidate == 'accessories-v1-foundation' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped')) }}
     environment: FairSwapProd
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: ${{ inputs.candidate == 'v3-production-disabled-batch' && 45 || 20 }}
     defaults:
       run:
         shell: bash --noprofile --norc -euo pipefail {0}
@@ -545,6 +591,7 @@ jobs:
           check-latest: false
 
       - name: Verify deployed Web release before any database change (fail closed)
+        if: ${{ inputs.candidate != 'v3-production-disabled-batch' }}
         env:
           CANDIDATE: ${{ inputs.candidate }}
           TARGET: ${{ inputs.target }}
@@ -555,6 +602,7 @@ jobs:
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
           ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
+          BOOKS_ACCEPTANCE_RUN_ID: ${{ inputs.books_acceptance_run_id }}
           TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
           WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
         run: |
@@ -569,8 +617,12 @@ jobs:
             test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
             prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID,
-            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID
+            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID, books_acceptance_run_id: e.BOOKS_ACCEPTANCE_RUN_ID
           }});
+          if (plan.candidate.v3Operation === 'activate') {
+            const {verifyLeafWeb} = await import('./scripts/release/v3-leaf-release.mjs');
+            await verifyLeafWeb(plan, e);
+          }
           await verifyWebDeployments(plan, e);
           const e2e = await verifyE2eEvidence(plan, e);
           if (plan.e2eWaiver) console.log(JSON.stringify({e2eWaiver: e2e}));
@@ -590,7 +642,7 @@ jobs:
           LISTING_VALIDITY_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.listing_validity_ledger_sha }}
           MOBILE_CATALOGUE_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.mobile_catalogue_ledger_sha }}
           IDV_DIGILOCKER_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.idv_digilocker_ledger_sha }}
-          WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue') && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
+          WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue' || startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-')) && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
           ACCESSORIES_RECHECK_PROD_FOUNDATION: ${{ needs.verify.outputs.accessories_recheck_prod_foundation }}
           ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
           TARGET: ${{ inputs.target }}
@@ -609,13 +661,15 @@ jobs:
           TEST_ACTIVATION_RUN_ID: ${{ inputs.test_activation_run_id }}
           PROD_FOUNDATION_RUN_ID: ${{ inputs.prod_foundation_run_id }}
           ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
+          BOOKS_ACCEPTANCE_RUN_ID: ${{ inputs.books_acceptance_run_id }}
           TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
         run: |
           node --input-type=module - <<'NODE'
-          import {adoptExistingInstallation, releaseReusable} from './scripts/release/reusable-supabase-release.mjs';
+          import {adoptExistingInstallation, releaseReusable, releaseV3ProductionBatch} from './scripts/release/reusable-supabase-release.mjs';
           const options = {environment: 'FairSwapProd', candidateId: process.env.CANDIDATE, receiptDir: 'release-receipts'};
           // adopt: read-only attestation of an installation that predates the pipeline; applies nothing.
           if (process.env.TARGET === 'adopt') await adoptExistingInstallation(options);
+          else if (options.candidateId === 'v3-production-disabled-batch') await releaseV3ProductionBatch(options);
           else await releaseReusable(options);
           NODE
 

@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { readDigiLockerRuntime } from "../_shared/idv/digilocker-config.ts";
 import {
-  DigiLockerError, confirmDigiLockerId, derivePkceVerifier, exchangeCode, fingerprintDigiLockerId, revokeToken, sha256Hex,
+  DigiLockerError, derivePkceVerifier, fingerprintDigiLockerId, revokeToken, sha256Hex,
 } from "../_shared/idv/digilocker-client.ts";
+import { OIDC_EVIDENCE_METHOD, deriveOidcNonce, exchangeOidcCode, verifyOidcIdentity } from "../_shared/idv/digilocker-oidc.ts";
 import { defaultDeps, type IdvDeps } from "../_shared/idv/digilocker-deps.ts";
 
 declare const Deno: {
@@ -14,7 +15,7 @@ declare const Deno: {
 export const completePayloadSchema = z.object({
   state: z.string().regex(/^[0-9a-f]{64}$/),
   code: z.string().min(1).max(2048).optional(),
-  error: z.string().max(128).optional(),
+  error: z.string().regex(/^[a-z_]{1,32}$/).optional(), // standard OAuth error code only, relayed by the Web callback
 });
 
 const json = (status: number, body: unknown) =>
@@ -62,18 +63,35 @@ export async function handleDigiLockerComplete(
     return json(status, { error: errCode });
   };
 
-  if (providerError || !code) return fail(400, "CONSENT_DENIED");
+  if (providerError || !code) {
+    // No badge, no binding. Provider strings are never echoed; only fixed codes leave this function.
+    if (!providerError || providerError === "access_denied" || providerError === "denied") return fail(400, "CONSENT_DENIED");
+    if (providerError === "temporarily_unavailable" || providerError === "server_error") return fail(502, "PROVIDER_UNAVAILABLE");
+    return fail(422, "PROVIDER_REJECTED");
+  }
 
-  // 2. Server-side exchange. The digilockerid is taken from the authenticated back-channel token response; when
-  //    userdetails is approved for this client it must also match /oauth2/1/user. Anything missing fails closed.
+  // 2. Server-side exchange. The digilockerid is taken only from the signature-verified ID token (and must equal the
+  //    token response's id when that is also present). Anything missing or unverifiable fails closed.
   let accessToken = "";
   let fingerprint: string;
   let legacyFingerprints: string[];
   try {
     const verifier = await derivePkceVerifier(runtime.stateKey, state);
-    const ex = await exchangeCode(runtime.client, code, verifier, fetchImpl);
+    let ex;
+    try {
+      ex = await exchangeOidcCode(runtime.client, code, verifier, fetchImpl);
+    } catch (e) {
+      const at = (e as { accessToken?: unknown }).accessToken;
+      if (typeof at === "string") accessToken = at;
+      throw e;
+    }
     accessToken = ex.accessToken;
-    const id = runtime.requireUserDetails ? await confirmDigiLockerId(accessToken, ex.digilockerid, fetchImpl) : ex.digilockerid;
+    const id = (await verifyOidcIdentity(ex, {
+      clientId: runtime.client.clientId,
+      expectedNonce: await deriveOidcNonce(runtime.stateKey, state),
+      nowSeconds: Math.floor(Date.now() / 1000),
+      fetchImpl,
+    })).digilockerid;
     fingerprint = await fingerprintDigiLockerId(runtime.currentFpKey.key, id);
     legacyFingerprints = await Promise.all(runtime.legacyFpKeys.map((k) => fingerprintDigiLockerId(k.key, id)));
   } catch (e) {
@@ -84,13 +102,14 @@ export async function handleDigiLockerComplete(
   }
   await revokeToken(runtime.client, accessToken, fetchImpl); // identity obtained; the token has no further use
 
-  // 3. Atomic bind + badge.
-  const { data: r, error: rErr } = await admin.rpc("server_idv_dl_complete", {
+  // 3. Atomic bind + badge. Only this signed-OIDC path can issue the DigiLocker badge; the legacy RPC issues nothing.
+  const { data: r, error: rErr } = await admin.rpc("server_idv_dl_complete_v2", {
     p_attempt_id: attemptId,
     p_user_id: userId,
     p_id_fingerprint: fingerprint,
     p_key_version: runtime.currentFpKey.version,
     p_legacy_fingerprints: legacyFingerprints,
+    p_evidence_method: OIDC_EVIDENCE_METHOD,
   });
   if (rErr || !r) return json(500, { error: "COMPLETION_FAILED" });
   if (!r.success) {

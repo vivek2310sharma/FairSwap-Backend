@@ -1,0 +1,157 @@
+[
+  {
+    "environment": "FairSwapTest",
+    "projectRef": "wpppxlnbzqynvhpeuavd",
+    "candidateId": "ordinary-goods-v3",
+    "migrationVersion": "20261119092042",
+    "migrationFile": "20261119092042_ordinary_goods_v3.sql",
+    "migrationSha256": "9ed7c84d2f61ea8e10e0f20be50e9018a29fab734f06a2557da97a692d89bfd8",
+    "reviewedCommit": "3981313bbffd31588b8f99a786e196600fbac9df",
+    "releaseWorkflowRun": "44549355860",
+    "status": "APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED",
+    "dryRunPending": [
+      "20261119092042_ordinary_goods_v3.sql"
+    ],
+    "postflightVerified": true,
+    "ledgerStatementsSha256": "7a32a3083666c27b12da8af45083c69733a4b3f2096f49401483ed9f94f36316",
+    "outOfOrderInstall": {
+      "includeAll": true,
+      "aheadVersions": [
+        "20261119113557"
+      ]
+    },
+    "timestamp": "2026-11-19T14:59:54.894Z"
+  },
+  {
+    "environment": "FairSwapTest",
+    "projectRef": "wpppxlnbzqynvhpeuavd",
+    "candidateId": "bounded-goods-v3",
+    "migrationVersion": "20261119100640",
+    "migrationFile": "20261119100640_bounded_goods_v3.sql",
+    "migrationSha256": "d28c193776967d2932ea6ac2a50304597ae1656b99495b1427eb585fff42d0eb",
+    "reviewedCommit": "3981313bbffd31588b8f99a786e196600fbac9df",
+    "releaseWorkflowRun": "44550690764",
+    "status": "APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED",
+    "dryRunPending": [
+      "20261119100640_bounded_goods_v3.sql"
+    ],
+    "postflightVerified": true,
+    "ledgerStatementsSha256": "1aa854e30011d04a73716114aa9dabdc19c9118fbb40e0d5e38940a3ee748a1a",
+    "outOfOrderInstall": {
+      "includeAll": true,
+      "aheadVersions": [
+        "20261119113557"
+      ]
+    },
+    "timestamp": "2026-11-19T15:07:26.344Z"
+  },
+  {
+    "environment": "FairSwapTest",
+    "projectRef": "wpppxlnbzqynvhpeuavd",
+    "candidateId": "pedal-and-parts-v3",
+    "migrationVersion": "20261119102359",
+    "migrationFile": "20261119102359_pedal_and_parts_v3.sql",
+    "migrationSha256": "f032809af2c4a55f90f9d36188a4bdb3d28540d0ef377877342d5b9155e22f59",
+    "reviewedCommit": "3981313bbffd31588b8f99a786e196600fbac9df",
+    "releaseWorkflowRun": "44554475736",
+    "status": "APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED",
+    "dryRunPending": [
+      "20261119102359_pedal_and_parts_v3.sql"
+    ],
+    "postflightVerified": true,
+    "ledgerStatementsSha256": "eb1863e197c67c08563435e1124cfea69848696998582abbf16afcfa58bda7f1",
+    "outOfOrderInstall": {
+      "includeAll": true,
+      "aheadVersions": [
+        "20261119113557"
+      ]
+    },
+    "timestamp": "2026-11-19T15:27:05.700Z"
+  },
+  {
+    "environment": "FairSwapTest",
+    "projectRef": "wpppxlnbzqynvhpeuavd",
+    "candidateId": "property-intake-v3",
+    "migrationVersion": "20261119103516",
+    "migrationFile": "20261119103516_property_intake_v3.sql",
+    "migrationSha256": "1a4066fa74be527eb29daa0e85d898b81437326c2058363bf3ea7e4f5c324e17",
+    "reviewedCommit": "c4b9c8f0820c3fe172d8024c4ec24929fa87ea38",
+    "releaseWorkflowRun": "44567714896",
+    "status": "APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED",
+    "dryRunPending": [
+      "20261119103516_property_intake_v3.sql"
+    ],
+    "postflightVerified": true,
+    "ledgerStatementsSha256": "4889a1f42f5a796a64000fcd2f7bf385ff8c02acf10bdc8333786fb9f95ee5ca",
+    "outOfOrderInstall": {
+      "includeAll": true,
+      "aheadVersions": [
+        "20261119113557"
+      ]
+    },
+    "timestamp": "2026-11-19T16:37:19.390Z"
+  },
+  {
+    "environment": "FairSwapTest",
+    "projectRef": "wpppxlnbzqynvhpeuavd",
+    "candidateId": "regulated-vehicle-drafts-v3",
+    "migrationVersion": "20261119105021",
+    "migrationFile": "20261119105021_regulated_vehicle_drafts_v3.sql",
+    "migrationSha256": "c093718c2801c5f2a9627b3dd6e7ad541b424f48a29af9357d2b74f14ade0e7a",
+    "reviewedCommit": "c4b9c8f0820c3fe172d8024c4ec24929fa87ea38",
+    "releaseWorkflowRun": "44567714896",
+    "status": "APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED",
+    "dryRunPending": [
+      "20261119105021_regulated_vehicle_drafts_v3.sql"
+    ],
+    "postflightVerified": true,
+    "ledgerStatementsSha256": "ddbc8b043c6ed848021059b93f2cc292b57fc644af68337382342b58ad89b512",
+    "outOfOrderInstall": {
+      "includeAll": true,
+      "aheadVersions": [
+        "20261119113557"
+      ]
+    },
+    "timestamp": "2026-11-19T16:37:54.046Z"
+  },
+  {
+    "environment": "FairSwapTest",
+    "projectRef": "wpppxlnbzqynvhpeuavd",
+    "candidateId": "specialist-vehicle-draft-binding-v3",
+    "migrationVersion": "20261119111559",
+    "migrationFile": "20261119111559_specialist_vehicle_draft_binding_v3.sql",
+    "migrationSha256": "af7e20061bc7931bcb3ab75a3fc6a3f0d6da52477531182caa6dacc7d5cd70e0",
+    "reviewedCommit": "c4b9c8f0820c3fe172d8024c4ec24929fa87ea38",
+    "releaseWorkflowRun": "44567714896",
+    "status": "APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED",
+    "dryRunPending": [
+      "20261119111559_specialist_vehicle_draft_binding_v3.sql"
+    ],
+    "postflightVerified": true,
+    "ledgerStatementsSha256": "6b39778d3a32f49c676f45d6450db32f00c6c23800e10f941f858782bf8c1041",
+    "outOfOrderInstall": {
+      "includeAll": true,
+      "aheadVersions": [
+        "20261119113557"
+      ]
+    },
+    "timestamp": "2026-11-19T16:38:30.231Z"
+  },
+  {
+    "environment": "FairSwapTest",
+    "projectRef": "wpppxlnbzqynvhpeuavd",
+    "candidateId": "v3-require-active-seller-identity",
+    "migrationVersion": "20261119114512",
+    "migrationFile": "20261119114512_v3_require_active_seller_identity.sql",
+    "migrationSha256": "7dfed56d46bb3941dad5b39a9725c64a5dda04cedd64e1908f918b96da90c77f",
+    "reviewedCommit": "c4b9c8f0820c3fe172d8024c4ec24929fa87ea38",
+    "releaseWorkflowRun": "44567714896",
+    "status": "APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED",
+    "dryRunPending": [
+      "20261119114512_v3_require_active_seller_identity.sql"
+    ],
+    "postflightVerified": true,
+    "ledgerStatementsSha256": "9652f49945f082ae3c7578f403670c258d915893764727dc4e205c5256401550",
+    "timestamp": "2026-11-19T16:39:03.822Z"
+  }
+]
