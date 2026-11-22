@@ -8,7 +8,8 @@ import {createHash} from 'node:crypto';
 import {releaseReusable} from '../../scripts/release/reusable-supabase-release.mjs';
 import {rootCertificates} from 'node:tls';
 import {getCandidate, planDispatch, verifyCandidateSha} from '../../scripts/release/reusable-candidates.mjs';
-import {WEB_CONTRACT_PATHS, leafPlan, leafTransaction, leafPreflightSql, leafStateSql, verifyLeafWeb, verifyLeafReceipt, requireLeafEvidence, releaseV3Leaf} from '../../scripts/release/v3-leaf-release.mjs';
+import {WEB_CONTRACT_PATHS, leafPlan, leafTransaction, leafPreflightSql, leafStateSql, verifyLeafWeb, verifyLeafReceipt, requireLeafEvidence, releaseV3Leaf, releaseV3GoodsBatch} from '../../scripts/release/v3-leaf-release.mjs';
+import {V3_GOODS} from '../../scripts/release/reusable-candidates.mjs';
 import {setupOrdinaryGoodsFixture} from '../ordinary-goods/fixture.mjs';
 
 const pglitePath = process.env.FSW_PGLITE_MODULE ?? 'tests/ratings/node_modules/@electric-sql/pglite/dist/index.js';
@@ -230,4 +231,78 @@ test('V3 disposable SQL: disabled, identity missing/off, moderation unavailable,
     assert.equal(await state('v2-tables-chairs', false), 'true');
     await rejects(leafTransaction(deactivate, sha), /PREFLIGHT_FAILED/);
   } finally { await db.close(); }
+});
+
+test('V3 goods batch: validation, candidate restrictions, partial failure and reverse-order rollback', async () => {
+  const batchActivate = 'v3-goods-batch-activate';
+  const batchDeactivate = 'v3-goods-batch-deactivate';
+  assert.equal(verifyCandidateSha(batchActivate).candidate.autoPromote, false);
+  assert.equal(verifyCandidateSha(batchDeactivate).candidate.autoPromote, false);
+
+  // Category restrictions: 43 allowed, restricted goods and vehicles rejected
+  assert.equal(V3_GOODS.length, 43);
+  const allowSlugs = new Set(V3_GOODS.map(g => g.slug));
+  for (const restricted of ['v2-baby-gear-car-seats', 'v2-other-items', 'v2-cars', 'v2-two-wheelers', 'v2-commercial-vehicles', 'v2-property-sale']) {
+    assert.ok(!allowSlugs.has(restricted));
+    assert.throws(() => getCandidate(`v3-${restricted.slice(3)}-activate`), /UNKNOWN_CANDIDATE/);
+  }
+
+  // Batch plan dispatch validation
+  const validBatch = [{candidateId: 'v3-air-conditioners-activate'}, {candidateId: 'v3-laptops-activate'}];
+  assert.throws(() => planDispatch({candidateId: batchActivate, target: 'test', inputs: {web_staging_sha: sha}}), /V3_BATCH_JSON_REQUIRED/);
+  assert.throws(() => planDispatch({candidateId: batchActivate, target: 'test', inputs: {web_staging_sha: sha, v3_batch: '[]'}}), /V3_BATCH_SIZE_INVALID/);
+  assert.throws(() => planDispatch({candidateId: batchActivate, target: 'test', inputs: {web_staging_sha: sha, v3_batch: JSON.stringify([{candidateId: 'v3-unknown-activate'}])}}), /UNKNOWN_CANDIDATE/);
+  assert.throws(() => planDispatch({candidateId: batchActivate, target: 'test', inputs: {web_staging_sha: sha, v3_batch: JSON.stringify([{candidateId: 'v3-air-conditioners-deactivate'}])}}), /V3_BATCH_LEAF_INVALID/);
+  assert.throws(() => planDispatch({candidateId: batchActivate, target: 'test', inputs: {web_staging_sha: sha, v3_batch: JSON.stringify([validBatch[0], validBatch[0]])}}), /V3_BATCH_LEAF_INVALID/);
+  assert.throws(() => planDispatch({candidateId: batchActivate, target: 'test', inputs: {web_staging_sha: sha, v3_batch: JSON.stringify([{candidateId: 'v3-books-activate'}, {candidateId: 'v3-tables-chairs-activate', booksAcceptanceRunId: '12'}])}}), /V3_BATCH_BOOKS_SEPARATE_DISPATCH_REQUIRED/);
+  assert.throws(() => planDispatch({candidateId: batchActivate, target: 'production', inputs: {web_production_sha: sha, v3_batch: JSON.stringify(validBatch)}}), /V3_BATCH_E2E_REQUIRED/);
+
+  const testPlan = planDispatch({candidateId: batchActivate, target: 'test', inputs: {v3_batch: JSON.stringify(validBatch), web_staging_sha: sha}});
+  assert.equal(testPlan.plans.length, 2);
+
+  // Batch execution and compensation
+  const dir = mkdtempSync(join(tmpdir(), 'v3-batch-test-'));
+  const c = {...context, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
+    GITHUB_REPOSITORY: 'vivek2310sharma/FairSwap-Backend', GITHUB_WORKFLOW_REF: 'vivek2310sharma/FairSwap-Backend/.github/workflows/reusable-supabase-release.yml@refs/heads/main',
+    GITHUB_ACTOR: 'vivek2310sharma', GITHUB_TRIGGERING_ACTOR: 'vivek2310sharma', GITHUB_RUN_ID: '14',
+    CHAT_DB_SSL_ROOT_CERT_PEM: rootCertificates[0], CHAT_DATABASE_PASSWORD: 'mock', CHAT_DB_POOLER_HOST: 'aws-0-eu-west-1.pooler.supabase.com',
+    WEB_EVIDENCE_TOKEN: 'mock', V3_BATCH_JSON: JSON.stringify(validBatch)};
+
+  try {
+    // 1. Successful batch execution
+    const executedSql = [];
+    const mockRunner = (cmd, args, env, sql) => { executedSql.push(sql); return 'true'; };
+    const summary = await releaseV3GoodsBatch({candidateId: batchActivate, environment: 'FairSwapTest',
+      context: c, runner: mockRunner, receiptDir: dir, fetcher: webFetcher()});
+    assert.equal(summary.status, 'V3_BATCH_VERIFIED');
+    assert.equal(summary.receipts.length, 2);
+    assert.ok(existsSync(join(dir, 'SHA256SUMS_fairswaptest')));
+    assert.ok(existsSync(join(dir, 'v3-air-conditioners-activate-fairswaptest.json')));
+    assert.ok(existsSync(join(dir, 'v3-laptops-activate-fairswaptest.json')));
+    assert.ok(existsSync(join(dir, `${batchActivate}-fairswaptest.json`)));
+
+    // 2. Partial failure during second leaf triggers reverse-order rollback of first leaf
+    const failDir = mkdtempSync(join(tmpdir(), 'v3-batch-fail-'));
+    let calls = 0;
+    const partialSql = [];
+    const failingRunner = (cmd, args, env, sql) => {
+      partialSql.push(sql);
+      calls++;
+      // Leaf 1 succeeds (calls 1, 2, 3: preflight, tx, postflight)
+      // Leaf 2 fails postflight (calls 4, 5: preflight, tx; call 6: postflight fails)
+      if (calls === 6) return 'false';
+      return 'true';
+    };
+    await assert.rejects(releaseV3GoodsBatch({candidateId: batchActivate, environment: 'FairSwapTest',
+      context: c, runner: failingRunner, receiptDir: failDir, fetcher: webFetcher()}), /V3_LEAF_BATCH_FAILED/);
+
+    // Verify leaf 1 rollback was executed in reverse order
+    assert.ok(partialSql.some(s => s.includes('air-conditioners') && s.includes('GOODS_DEACTIVATION_FAILED')));
+    // Check that SHA256SUMS was cleaned up and no successful batch receipt was written
+    assert.ok(!existsSync(join(failDir, 'SHA256SUMS_fairswaptest')));
+    assert.ok(!existsSync(join(failDir, `${batchActivate}-fairswaptest.json`)));
+    rmSync(failDir, {recursive: true, force: true});
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
 });

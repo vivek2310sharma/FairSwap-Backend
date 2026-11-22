@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {PROJECT_REFS, getCandidate, planDispatch, verifyCandidateSha} from './reusable-candidates.mjs';
+import {V3_GOODS, PROJECT_REFS, getCandidate, planDispatch, verifyCandidateSha} from './reusable-candidates.mjs';
 import {getJson, downloadArtifact, readZipEntries, WORKFLOW_PATH} from './accessories-v1-release.mjs';
 import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
 
@@ -15,10 +15,8 @@ const backend = 'vivek2310sharma/FairSwap-Backend';
 const web = 'vivek2310sharma/FairSwap-Web';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const need = (ok, code) => { if (!ok) throw Error(`V3_LEAF_${code}`); };
-const leaves = Object.freeze({
-  'v2-books': ['c0ba9c51-8d6a-5c81-99e1-6be9c60a8fc5', 'v2-books-sports-hobbies'],
-  'v2-tables-chairs': ['ec6a3d86-1ce8-574e-9a7b-bef64e1ccf41', 'v2-furniture-home']
-});
+const leaves = Object.freeze(Object.fromEntries(V3_GOODS.map(g => [g.slug, [g.id, g.parent]])));
+const contracts = Object.freeze(Object.fromEntries(V3_GOODS.map(g => [g.slug, g])));
 
 export const WEB_CONTRACT_PATHS = Object.freeze([
   'src/lib/listings/ordinary-goods/categories.ts',
@@ -33,14 +31,18 @@ export function leafPlan(candidateId, environment, c) {
   need(PROJECT_REFS[environment] && c.TARGET === (environment === 'FairSwapTest' ? 'test' : 'production'), 'ENVIRONMENT_MISMATCH');
   const plan = planDispatch({candidateId, target: c.TARGET, inputs: {
     web_staging_sha: c.WEB_STAGING_SHA, web_production_sha: c.WEB_PRODUCTION_SHA,
-    test_activation_run_id: c.TEST_ACTIVATION_RUN_ID, books_acceptance_run_id: c.BOOKS_ACCEPTANCE_RUN_ID
+    test_activation_run_id: c.TEST_ACTIVATION_RUN_ID, books_acceptance_run_id: c.BOOKS_ACCEPTANCE_RUN_ID, test_e2e_run_id: c.TEST_E2E_RUN_ID, v3_batch: c.V3_BATCH_JSON
   }});
-  need(plan.candidate.v3Operation && leaves[plan.candidate.slug], 'SLUG_NOT_ALLOWED');
+  need(plan.candidate.v3Batch || (plan.candidate.v3Operation && leaves[plan.candidate.slug]), 'SLUG_NOT_ALLOWED');
   return plan;
 }
 
 // Require the current deployment of the exact branch/environment, never an arbitrary preview.
 export async function verifyLeafWeb(plan, c, fetcher = fetch) {
+  if (plan.plans) {
+    for (const leaf of plan.plans) await verifyLeafWeb(leaf, leafContext(c, leaf), fetcher);
+    return;
+  }
   need(c.WEB_EVIDENCE_TOKEN, 'WEB_EVIDENCE_REQUIRED');
   const production = plan.target === 'production';
   const environment = production ? 'Production' : 'Preview';
@@ -84,6 +86,10 @@ export function verifyLeafReceipt(r, p, c) {
 }
 
 export async function requireLeafEvidence(plan, c, fetcher = fetch) {
+  if (plan.plans) {
+    for (const leaf of plan.plans) await requireLeafEvidence(leaf, leafContext(c, leaf), fetcher);
+    return;
+  }
   if (plan.target === 'production' && plan.candidate.v3Operation === 'activate') {
     if (!c.TEST_E2E_RUN_ID || !c.WEB_EVIDENCE_TOKEN) throw Error('V3_LEAF_HOSTED_TEST_E2E_EVIDENCE_UNAVAILABLE');
     await requireHostedE2e(plan, c, fetcher);
@@ -100,7 +106,8 @@ export async function requireLeafEvidence(plan, c, fetcher = fetch) {
     const data = await getJson(`${base}/artifacts?per_page=100`, c.GITHUB_TOKEN, fetcher);
     const stage = p.environment === 'FairSwapTest' ? 'test' : 'prod';
     const artifacts = data.artifacts?.filter(a => a.expired === false
-      && a.name === `reusable-${stage}-${p.candidateId}-${p.runId}-${run.run_attempt}`
+      && [`reusable-${stage}-${p.candidateId}-${p.runId}-${run.run_attempt}`,
+        `reusable-${stage}-v3-goods-batch-activate-${p.runId}-${run.run_attempt}`].includes(a.name)
       && String(a.workflow_run?.id) === p.runId && a.workflow_run?.head_sha === c.GITHUB_SHA);
     need(artifacts?.length === 1, 'ACCEPTANCE_ARTIFACT_REQUIRED');
     const a = artifacts[0];
@@ -110,7 +117,7 @@ export async function requireLeafEvidence(plan, c, fetcher = fetch) {
     const files = readZipEntries(zip);
     const name = `${p.candidateId}-${p.environment.toLowerCase()}.json`;
     const body = files.get(name);
-    need(body && files.get(`SHA256SUMS_${p.environment.toLowerCase()}`)?.toString() === `${hash(body)}  ${name}\n`, 'RECEIPT_DIGEST_INVALID');
+    need(body && files.get(`SHA256SUMS_${p.environment.toLowerCase()}`)?.toString().split('\n').filter(line => line.endsWith('  '+name)).join('\n') === `${hash(body)}  ${name}`, 'RECEIPT_DIGEST_INVALID');
     verifyLeafReceipt(JSON.parse(body.toString()), p, c);
   }
 }
@@ -121,7 +128,9 @@ function stateExpression(slug, active, checkAvailability = true) {
   return `EXISTS (SELECT FROM app_security.ordinary_goods_contracts_v3 g
     JOIN public.categories c ON c.id=g.category_id JOIN public.categories p ON p.id=c.parent_id
     WHERE g.slug='${slug}' AND g.category_id='${id}' AND c.slug=g.slug AND g.parent_slug='${parent}' AND p.slug=g.parent_slug
-      AND g.revision=1 AND g.posting_flow='generic' AND c.posting_flow=g.posting_flow
+      AND g.revision=1 AND g.risk='${contracts[slug].risk}'
+      AND g.fields='${JSON.stringify(contracts[slug].fields).replaceAll("'", "''")}'::jsonb
+      AND g.posting_flow='${contracts[slug].flow}' AND c.posting_flow=g.posting_flow
       AND g.macro_category='goods' AND c.macro_category=g.macro_category AND NOT g.draft_only
       AND NOT c.new_listing_enabled AND g.enabled=${active} AND c.is_active=${active}
       AND c.status='${active ? 'live' : 'coming_soon'}'
@@ -269,4 +278,61 @@ export async function releaseV3Leaf({environment, candidateId, context: c = proc
     writeFileSync(join(receiptDir, `SHA256SUMS_${environment.toLowerCase()}`), `${hash(body)}  ${name}\n`, {mode: 0o600});
     return receipt;
   } finally { rmSync(dir, {recursive: true, force: true}); }
+}
+
+function leafContext(c, plan) {
+  return {...c, TEST_ACTIVATION_RUN_ID: plan.testActivationRunId, TEST_E2E_RUN_ID: plan.testE2eRunId,
+    BOOKS_ACCEPTANCE_RUN_ID: plan.booksAcceptanceRunId};
+}
+
+// One workflow and reviewed operators; each category commits and verifies independently.
+// Any later failure compensates every earlier activation from THIS batch, in reverse order.
+export async function releaseV3GoodsBatch(options) {
+  const c = options.context ?? process.env;
+  const plan = leafPlan(options.candidateId, options.environment, c);
+  need(plan.candidate.v3Batch && plan.plans, 'BATCH_REQUIRED');
+  verifyCandidateSha(options.candidateId, root);
+  // Validate all immutable evidence before the first mutation.
+  if (plan.candidate.v3Batch === 'activate') {
+    await requireLeafEvidence(plan, c, options.fetcher);
+    await verifyLeafWeb(plan, c, options.fetcher);
+  }
+  const completed = [];
+  const receiptDir = options.receiptDir ?? resolve('release-receipts');
+  try {
+    for (const leaf of plan.plans) {
+      const receipt = await releaseV3Leaf({...options, candidateId: leaf.candidate.id,
+        context: leafContext(c, leaf), receiptDir});
+      completed.push({leaf, receipt});
+    }
+  } catch (error) {
+    let failed = false;
+    if (plan.candidate.v3Batch === 'activate') {
+      for (const {leaf} of [...completed].reverse()) {
+        try {
+          await releaseV3Leaf({...options, candidateId: leaf.candidate.id.replace(/-activate$/, '-deactivate'),
+            context: leafContext(c, leaf), receiptDir});
+          rmSync(join(receiptDir, `${leaf.candidate.id}-${options.environment.toLowerCase()}.json`), {force: true});
+        } catch { failed = true; }
+      }
+    }
+    // Never leave a successful batch checksum after partial failure.
+    rmSync(join(receiptDir, `SHA256SUMS_${options.environment.toLowerCase()}`), {force: true});
+    throw Error(failed ? 'V3_LEAF_BATCH_ROLLBACK_FAILED' : 'V3_LEAF_BATCH_FAILED', {cause: error});
+  }
+  const sums = completed.map(({leaf}) => {
+    const name = `${leaf.candidate.id}-${options.environment.toLowerCase()}.json`;
+    return `${hash(readFileSync(join(receiptDir, name)))}  ${name}\n`;
+  }).join('');
+  writeFileSync(join(receiptDir, `SHA256SUMS_${options.environment.toLowerCase()}`), sums, {mode: 0o600});
+  // Existing workflow proof step and integrity job bind this summary to all per-leaf receipts.
+  const summary = {status: 'V3_BATCH_VERIFIED', candidateId: options.candidateId,
+    environment: options.environment, reviewedCommit: c.GITHUB_SHA, releaseWorkflowRun: c.GITHUB_RUN_ID,
+    receipts: completed.map(({leaf, receipt}) => ({candidateId: leaf.candidate.id, operatorSha256: receipt.operatorSha256})),
+    receiptsSha256: hash(sums)};
+  const name = `${options.candidateId}-${options.environment.toLowerCase()}.json`;
+  const body = JSON.stringify(summary, null, 2)+'\n';
+  writeFileSync(join(receiptDir, name), body, {mode: 0o600});
+  writeFileSync(join(receiptDir, `SHA256SUMS_${options.environment.toLowerCase()}`), sums+`${hash(body)}  ${name}\n`, {mode: 0o600});
+  return summary;
 }

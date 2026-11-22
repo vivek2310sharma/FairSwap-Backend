@@ -1,4 +1,4 @@
-import {releaseV3Leaf} from './v3-leaf-release.mjs';
+import {releaseV3Leaf, releaseV3GoodsBatch} from './v3-leaf-release.mjs';
 // Reusable Supabase CLI release and postflight verification script.
 // Does not deploy automatically unless executed in deployment phase.
 import assert from 'node:assert/strict';
@@ -663,6 +663,7 @@ export async function releaseReusable({
     throw new Error(`REUSABLE_RELEASE_INVALID_ENVIRONMENT: ${environment}`);
   }
   const candidate = getCandidate(candidateId);
+  if (candidate.v3Batch) return releaseV3GoodsBatch({environment, candidateId, context, runner, fetcher, receiptDir});
   if (candidate.v3Operation) return releaseV3Leaf({environment, candidateId, context, runner, fetcher, receiptDir});
   // Test-only candidates can never reach Production, whatever the workflow inputs or job conditions.
   const v3Production = environment === 'FairSwapProd' && v3ProductionEvidence !== undefined;

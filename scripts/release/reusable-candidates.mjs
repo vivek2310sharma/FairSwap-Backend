@@ -41,12 +41,22 @@ const unifiedPublishingV3 = Object.fromEntries(v3Candidates.map(([version, name,
 
 export const V3_PRODUCTION_SEQUENCE = Object.freeze([V3_IDENTITY_PREREQUISITE, ...Object.keys(unifiedPublishingV3)]);
 
-export const V3_LEAF_OPERATIONS = Object.freeze({
-  'v3-books-activate': Object.freeze({id: 'v3-books-activate', v3Operation: 'activate', slug: 'v2-books', path: 'supabase/forward-migrations/unified-publishing-v3/activate-one.operator.sql', sha256: '1c0ff201e0249d3eead6ec85830e32a5946225cf2c037fae5328de955e223515', autoPromote: false}),
-  'v3-books-deactivate': Object.freeze({id: 'v3-books-deactivate', v3Operation: 'deactivate', slug: 'v2-books', path: 'supabase/forward-migrations/unified-publishing-v3/deactivate-one.operator.sql', sha256: 'b7671b9452cabc7a86c0d14f995b9c1078b5574eb2aaf22032fe0282975c572f', autoPromote: false}),
-  'v3-tables-chairs-activate': Object.freeze({id: 'v3-tables-chairs-activate', v3Operation: 'activate', slug: 'v2-tables-chairs', path: 'supabase/forward-migrations/unified-publishing-v3/activate-one.operator.sql', sha256: '1c0ff201e0249d3eead6ec85830e32a5946225cf2c037fae5328de955e223515', autoPromote: false}),
-  'v3-tables-chairs-deactivate': Object.freeze({id: 'v3-tables-chairs-deactivate', v3Operation: 'deactivate', slug: 'v2-tables-chairs', path: 'supabase/forward-migrations/unified-publishing-v3/deactivate-one.operator.sql', sha256: 'b7671b9452cabc7a86c0d14f995b9c1078b5574eb2aaf22032fe0282975c572f', autoPromote: false}),
-});
+// Explicit source-reviewed contracts; runtime metadata never expands this allowlist.
+export const V3_GOODS = Object.freeze(JSON.parse(readFileSync(new URL('./v3-goods-allowlist.json', import.meta.url), 'utf8')));
+export const V3_LEAF_OPERATIONS = Object.freeze(Object.fromEntries(V3_GOODS.flatMap(({slug}) =>
+  ['activate', 'deactivate'].map(operation => {
+    const id = `v3-${slug.slice(3)}-${operation}`;
+    return [id, Object.freeze({id, slug, v3Operation: operation,
+      path: `supabase/forward-migrations/unified-publishing-v3/${operation}-one.operator.sql`,
+      sha256: operation === 'activate' ? '1c0ff201e0249d3eead6ec85830e32a5946225cf2c037fae5328de955e223515'
+        : 'b7671b9452cabc7a86c0d14f995b9c1078b5574eb2aaf22032fe0282975c572f', autoPromote: false})];
+  }))));
+
+const V3_BATCHES = Object.freeze(Object.fromEntries(['activate','deactivate'].map(operation => {
+  const id = `v3-goods-batch-${operation}`;
+  return [id, Object.freeze({id, v3Batch: operation, autoPromote: false,
+    path: 'scripts/release/v3-goods-allowlist.json', sha256: 'f3029b9faa7c61bbd67e2351fa4788f26ff2731213aabaa7c01e4a08f8f45268'})];
+})));
 
 export const CANDIDATES = Object.freeze({
   [V3_IDENTITY_PREREQUISITE]: Object.freeze({
@@ -398,7 +408,7 @@ export function adoptionAttestation(adoption, observed = {}) {
 }
 
 export function getCandidate(candidateId) {
-  const candidate = CANDIDATES[candidateId] ?? V3_LEAF_OPERATIONS[candidateId];
+  const candidate = CANDIDATES[candidateId] ?? V3_LEAF_OPERATIONS[candidateId] ?? V3_BATCHES[candidateId];
   if (!candidate) {
     throw new Error(`REUSABLE_RELEASE_UNKNOWN_CANDIDATE: ${candidateId}`);
   }
@@ -429,6 +439,31 @@ function need(ok, code) {
 export function planDispatch({candidateId, target = 'test', inputs = {}, context = {}}) {
   const candidate = getCandidate(candidateId);
   need(target === 'test' || target === 'production' || target === 'adopt', 'INVALID_TARGET');
+  if (candidate.v3Batch) {
+    need(target !== 'adopt', 'V3_INVALID_TARGET');
+    let entries;
+    try { entries = JSON.parse(inputs.v3_batch ?? ''); } catch { need(false, 'V3_BATCH_JSON_REQUIRED'); }
+    need(Array.isArray(entries) && entries.length > 0 && entries.length <= V3_GOODS.length, 'V3_BATCH_SIZE_INVALID');
+    const seen = new Set();
+    const plans = entries.map(entry => {
+      need(entry && typeof entry === 'object' && !Array.isArray(entry) &&
+        Object.keys(entry).every(k => ['candidateId','testActivationRunId','testE2eRunId','booksAcceptanceRunId'].includes(k)), 'V3_BATCH_ENTRY_INVALID');
+      const leaf = getCandidate(entry.candidateId);
+      need(leaf.v3Operation === candidate.v3Batch && !seen.has(leaf.id), 'V3_BATCH_LEAF_INVALID');
+      seen.add(leaf.id);
+      const evidence = {...inputs, test_activation_run_id: entry.testActivationRunId ?? inputs.test_activation_run_id,
+        test_e2e_run_id: entry.testE2eRunId ?? inputs.test_e2e_run_id,
+        books_acceptance_run_id: entry.booksAcceptanceRunId ?? inputs.books_acceptance_run_id};
+      if (target === 'production' && candidate.v3Batch === 'activate')
+        need(RUN_ID.test(evidence.test_e2e_run_id ?? ''), 'V3_BATCH_E2E_REQUIRED');
+      return {...planDispatch({candidateId: leaf.id, target, inputs: evidence, context}),
+        testActivationRunId: evidence.test_activation_run_id, testE2eRunId: evidence.test_e2e_run_id,
+        booksAcceptanceRunId: evidence.books_acceptance_run_id};
+    });
+    // Tables retains its existing independent Books acceptance gate; do Books in an earlier dispatch.
+    need(!seen.has('v3-books-activate') || !seen.has('v3-tables-chairs-activate'), 'V3_BATCH_BOOKS_SEPARATE_DISPATCH_REQUIRED');
+    return {candidate, target, plans, priorRuns: []};
+  }
   if (candidate.v3Operation) {
     need(target !== 'adopt', 'V3_INVALID_TARGET');
     const webSha = inputs[target === 'test' ? 'web_staging_sha' : 'web_production_sha'];
