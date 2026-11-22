@@ -1095,8 +1095,14 @@ test('workflow verifies the deployed Web release before any database step and us
     assert(job.indexOf('verifyWebDeployments') > 0);
   }
   assert(yaml.includes("REQUIRE_REAL_PG: '1'"));
-  // the Web token must never reach the step that holds database credentials
-  for (const m of yaml.matchAll(/- name: Execute [^\n]*\n[\s\S]*?(?=\n      - |\n  \w|$)/g)) assert(!m[0].includes('WEB_EVIDENCE_TOKEN') || m[0].includes("WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue') && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}"));
+  // Credential-bearing steps receive the existing read-only Web token only for candidates
+  // that recheck immutable Web evidence in their runner, including the two V3 leaves.
+  const v3Web = "startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-')";
+  for (const m of yaml.matchAll(/- name: Execute [^\n]*\n[\s\S]*?(?=\n      - |\n  \w|$)/g)) {
+    if (!m[0].includes('WEB_EVIDENCE_TOKEN')) continue;
+    const candidates = m[0].includes('Execute Test') ? v3Web : "inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue' || " + v3Web;
+    assert(m[0].includes("WEB_EVIDENCE_TOKEN: ${{ (" + candidates + ") && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}"));
+  }
 });
 
 test('workflow gates Production behind verified evidence and keeps moderation auto-promotion', () => {
@@ -4168,3 +4174,6 @@ test('IDV DigiLocker V1 Production guard fails closed on any deviation from the 
   // The Test fresh-install guard is unchanged: the Production history is not accepted in FairSwapTest.
   assert.throws(() => assertIdvDigilockerLedger('FairSwapTest', idvLedger('FairSwapTest', {tail: rows})), /LEDGER_TAIL_MISMATCH/);
 });
+
+// Additive hook: keep independent V3 operator tests in the existing release/security CI suite.
+import './v3-leaf-release.test.mjs';

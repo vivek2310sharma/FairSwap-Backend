@@ -41,6 +41,13 @@ const unifiedPublishingV3 = Object.fromEntries(v3Candidates.map(([version, name,
 
 export const V3_PRODUCTION_SEQUENCE = Object.freeze([V3_IDENTITY_PREREQUISITE, ...Object.keys(unifiedPublishingV3)]);
 
+export const V3_LEAF_OPERATIONS = Object.freeze({
+  'v3-books-activate': Object.freeze({id: 'v3-books-activate', v3Operation: 'activate', slug: 'v2-books', path: 'supabase/forward-migrations/unified-publishing-v3/activate-one.operator.sql', sha256: '1c0ff201e0249d3eead6ec85830e32a5946225cf2c037fae5328de955e223515', autoPromote: false}),
+  'v3-books-deactivate': Object.freeze({id: 'v3-books-deactivate', v3Operation: 'deactivate', slug: 'v2-books', path: 'supabase/forward-migrations/unified-publishing-v3/deactivate-one.operator.sql', sha256: 'b7671b9452cabc7a86c0d14f995b9c1078b5574eb2aaf22032fe0282975c572f', autoPromote: false}),
+  'v3-tables-chairs-activate': Object.freeze({id: 'v3-tables-chairs-activate', v3Operation: 'activate', slug: 'v2-tables-chairs', path: 'supabase/forward-migrations/unified-publishing-v3/activate-one.operator.sql', sha256: '1c0ff201e0249d3eead6ec85830e32a5946225cf2c037fae5328de955e223515', autoPromote: false}),
+  'v3-tables-chairs-deactivate': Object.freeze({id: 'v3-tables-chairs-deactivate', v3Operation: 'deactivate', slug: 'v2-tables-chairs', path: 'supabase/forward-migrations/unified-publishing-v3/deactivate-one.operator.sql', sha256: 'b7671b9452cabc7a86c0d14f995b9c1078b5574eb2aaf22032fe0282975c572f', autoPromote: false}),
+});
+
 export const CANDIDATES = Object.freeze({
   [V3_IDENTITY_PREREQUISITE]: Object.freeze({
     id: V3_IDENTITY_PREREQUISITE, version: '20261119090000',
@@ -391,7 +398,7 @@ export function adoptionAttestation(adoption, observed = {}) {
 }
 
 export function getCandidate(candidateId) {
-  const candidate = CANDIDATES[candidateId];
+  const candidate = CANDIDATES[candidateId] ?? V3_LEAF_OPERATIONS[candidateId];
   if (!candidate) {
     throw new Error(`REUSABLE_RELEASE_UNKNOWN_CANDIDATE: ${candidateId}`);
   }
@@ -422,6 +429,23 @@ function need(ok, code) {
 export function planDispatch({candidateId, target = 'test', inputs = {}, context = {}}) {
   const candidate = getCandidate(candidateId);
   need(target === 'test' || target === 'production' || target === 'adopt', 'INVALID_TARGET');
+  if (candidate.v3Operation) {
+    need(target !== 'adopt', 'V3_INVALID_TARGET');
+    const webSha = inputs[target === 'test' ? 'web_staging_sha' : 'web_production_sha'];
+    need(SHA40.test(webSha ?? ''), 'V3_WEB_COMMIT_REQUIRED');
+    const priorRuns = [];
+    if (candidate.v3Operation === 'activate') {
+      if (target === 'production') {
+        need(RUN_ID.test(inputs.test_activation_run_id ?? ''), 'V3_TEST_ACCEPTANCE_REQUIRED');
+        priorRuns.push({key: 'test_activation_run_id', runId: inputs.test_activation_run_id, candidateId, environment: 'FairSwapTest'});
+      }
+      if (candidate.slug === 'v2-tables-chairs') {
+        need(RUN_ID.test(inputs.books_acceptance_run_id ?? ''), 'V3_BOOKS_ACCEPTANCE_REQUIRED');
+        priorRuns.push({key: 'books_acceptance_run_id', runId: inputs.books_acceptance_run_id, candidateId: 'v3-books-activate', environment: target === 'test' ? 'FairSwapTest' : 'FairSwapProd'});
+      }
+    }
+    return {candidate, target, webSha, priorRuns};
+  }
   need(!candidate.productionBatchOnly, 'V3_PRODUCTION_BATCH_REQUIRED');
   need(!candidate.testOnly || target === 'test', 'TEST_ONLY_CANDIDATE');
   const waiver = WEARABLES_E2E_WAIVER;
