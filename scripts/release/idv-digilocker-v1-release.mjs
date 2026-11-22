@@ -173,6 +173,78 @@ export const IDV_DIGILOCKER_PREFLIGHT = Object.freeze({
     AND (tgname = 'trg_identity_gate' OR tgname LIKE 'trg\\_idv\\_dl\\_%'))`
 });
 
+// ---------- FairSwapProd: V3 identity prerequisite (20261119090000) already installed ----------
+// FairSwapProd records v3-production-identity-prerequisite before V1. It installed nine of V1's shared identity-gate functions
+// (bodies byte-identical to V1's) and four enabled trg_identity_gate triggers, all with enforcement OFF and client EXECUTE revoked.
+// The Production preflight therefore replaces "absent" with an exact match of that pinned V3 state; anything else fails closed.
+// V1's reviewed effects on that state: (a) the nine functions are re-created with identical bodies, (b) the four V3 triggers are
+// dropped and re-created identically, (c) EXECUTE on is_identity_verified(uuid) and identity_gate_enabled() is GRANTED to
+// authenticated and service_role (V3 had revoked it; app_security is not exposed by PostgREST: supabase/config.toml schemas =
+// ["public"]), (d) conversation/message triggers and the optional context-table triggers are added, gate still OFF.
+// [signature, language, security definer, volatility, return type, md5(prosrc), EXECUTE for service_role after V3 (null = unchanged by V3)]
+const V3_IDENTITY_FUNCTIONS = Object.freeze([
+  ['app_security.is_identity_verified(uuid)', 'sql', true, 's', 'boolean', '155acd8b35554f9aa49b17621593238c', false],
+  ['app_security.identity_gate_enabled()', 'sql', true, 's', 'boolean', '7697fcf0ecf1233afacc31fe3cdffef2', false],
+  ['app_security.idv_request_role()', 'plpgsql', true, 's', 'text', '48c739691fbc24ec36e4ba18cc73438f', null],
+  ['app_security.identity_gate_system_write()', 'sql', false, 's', 'boolean', '16e689f45a7920aca700c86a60b168f7', null],
+  ['app_security.enforce_verified_actor(uuid,boolean)', 'plpgsql', true, 's', 'void', '79ef00dfef18ea693b89f75dc2be3657', true],
+  ['app_security.trg_identity_gate_listings()', 'plpgsql', true, 'v', 'trigger', 'ce08e09e542a2cf111f48ba787b23478', false],
+  ['app_security.trg_identity_gate_by_listing()', 'plpgsql', true, 'v', 'trigger', '7e0b3e832305fcfb9edc09c58c990e34', false],
+  ['app_security.trg_identity_gate_posting_session()', 'plpgsql', true, 'v', 'trigger', '4c4dc8e188254fdd00009b23d6a04577', false],
+  ['app_security.trg_identity_gate_staged_media()', 'plpgsql', true, 'v', 'trigger', '0d7bf1843cfcc24dbed5a89e29945657', false]
+].map(row => Object.freeze(row)));
+// [table, trigger function, tgtype]: BEFORE INSERT OR UPDATE FOR EACH ROW = 23, BEFORE INSERT FOR EACH ROW = 7.
+const V3_IDENTITY_TRIGGERS = Object.freeze([
+  ['public.listings', 'app_security.trg_identity_gate_listings()', 23],
+  ['public.listing_media', 'app_security.trg_identity_gate_by_listing()', 7],
+  ['public.posting_upload_sessions', 'app_security.trg_identity_gate_posting_session()', 7],
+  ['public.posting_staged_media', 'app_security.trg_identity_gate_staged_media()', 23]
+].map(row => Object.freeze(row)));
+const V3_FUNCTION_SIGS = V3_IDENTITY_FUNCTIONS.map(row => row[0]);
+const V3_FUNCTION_NAMES = V3_FUNCTION_SIGS.map(sig => sig.split('(')[0].split('.')[1]);
+
+const v3Function = ([sig, lang, definer, volatility, returns, bodyMd5]) => `EXISTS (SELECT 1 FROM pg_proc p
+  WHERE p.oid = to_regprocedure('${sig}')::oid AND p.proowner = (SELECT oid FROM pg_roles WHERE rolname = 'postgres')
+    AND p.prolang = (SELECT oid FROM pg_language WHERE lanname = '${lang}') AND p.prokind = 'f' AND p.prosecdef = ${definer}
+    AND p.provolatile = '${volatility}' AND p.prorettype = '${returns}'::regtype AND NOT p.proretset AND NOT p.proisstrict
+    AND NOT p.proleakproof AND p.proparallel = 'u' AND p.prosupport = 0 AND p.probin IS NULL
+    AND p.proconfig = ARRAY['search_path=""']::text[] AND md5(p.prosrc) = '${bodyMd5}')`;
+const v3Trigger = ([tbl, fn, type]) => `EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = to_regclass('${tbl}')::oid
+  AND t.tgname = 'trg_identity_gate' AND NOT t.tgisinternal AND t.tgenabled = 'O' AND t.tgfoid = to_regprocedure('${fn}')::oid
+  AND t.tgtype = ${type} AND t.tgqual IS NULL AND t.tgnargs = 0 AND t.tgattr::text = '' AND t.tgconstraint = 0
+  AND t.tgoldtable IS NULL AND t.tgnewtable IS NULL AND NOT t.tgdeferrable AND t.tgparentid = 0)`;
+const allOf = rows => rows.map(row => `(${row})`).join(' AND ');
+// Exact V3 client/anon/PUBLIC EXECUTE posture (service_role only where V3 changed it).
+const v3Execute = () => V3_IDENTITY_FUNCTIONS.map(([sig,,,,,, service]) => {
+  const roles = ['public', 'anon', 'authenticated'].map(role => execBy(role, false, [sig]));
+  return allOf([...roles, ...(service === null ? [] : [execBy('service_role', service, [sig])])]);
+}).join(' AND ');
+
+export const IDV_DIGILOCKER_PRODUCTION_PREFLIGHT = Object.freeze({
+  ...Object.fromEntries(Object.entries(IDV_DIGILOCKER_PREFLIGHT)
+    .filter(([key]) => key !== 'digilocker_functions_absent' && key !== 'digilocker_triggers_absent')),
+  v3_functions_exact: allOf([
+    ...V3_IDENTITY_FUNCTIONS.map(v3Function),
+    // exactly one overload per V3 name and no other function using a V3 or V1 name outside the pinned set
+    `(SELECT count(*) = ${V3_FUNCTION_SIGS.length} FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname IN ('public','app_security') AND p.proname = ANY(${arr(V3_FUNCTION_NAMES)}))`
+  ]),
+  v3_function_grants_exact: v3Execute(),
+  digilocker_functions_absent: `NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname IN ('public','app_security') AND p.proname = ANY(${arr(FUNCTION_NAMES.filter(name => !V3_FUNCTION_NAMES.includes(name)))}))`,
+  v3_triggers_exact: allOf([
+    ...V3_IDENTITY_TRIGGERS.map(v3Trigger),
+    `(SELECT count(*) = ${V3_IDENTITY_TRIGGERS.length} FROM pg_trigger WHERE NOT tgisinternal AND tgname = 'trg_identity_gate')`,
+    `NOT EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgname LIKE 'trg\\_idv\\_dl\\_%')`
+  ])
+});
+
+// Production postflight additions: V1 must leave V3's nine function bodies and four trigger definitions exactly as pinned.
+const PRODUCTION_ONLY_POSTFLIGHT = Object.freeze({
+  v3_function_bodies_preserved: allOf(V3_IDENTITY_FUNCTIONS.map(v3Function)),
+  v3_triggers_preserved: allOf(V3_IDENTITY_TRIGGERS.map(v3Trigger))
+});
+
 export const IDV_DIGILOCKER_POSTFLIGHT = Object.freeze({
   foundation_tables_rls: IDV_DIGILOCKER_PREFLIGHT.foundation_tables_rls,
   tables_rls_forced: `(SELECT count(*) = 2 FROM unnest(${arr(TABLES)}) s JOIN pg_class c ON c.oid = to_regclass(s)::oid
@@ -202,6 +274,9 @@ export const IDV_DIGILOCKER_POSTFLIGHT = Object.freeze({
   binding_triggers: `(SELECT count(*) = 2 FROM pg_trigger t WHERE t.tgrelid = to_regclass('${TABLES[1]}')::oid AND NOT t.tgisinternal
     AND t.tgenabled = 'O' AND t.tgname IN ('trg_idv_dl_binding_guard','trg_idv_dl_binding_orphan_cleanup'))`
 });
+
+export const IDV_DIGILOCKER_PRODUCTION_POSTFLIGHT = Object.freeze({...IDV_DIGILOCKER_POSTFLIGHT, ...PRODUCTION_ONLY_POSTFLIGHT});
+const isProduction = environment => environment === 'FairSwapProd';
 
 // Digest of every pre-existing table, policy, function and trigger in public/app_security that the migration must not
 // change. New DigiLocker objects and the added trg_identity_gate triggers are excluded; everything else must be identical.
@@ -309,11 +384,12 @@ export function runIdvDigilockerV2Postflight(before, query) {
 }
 export const idvDigilockerV2SnapshotSql = (checks, label) => snapshotSql(checks, label, V2_PRESERVED);
 
-export const runIdvDigilockerPreflight = query => readSnapshot(query, IDV_DIGILOCKER_PREFLIGHT, 'preflight');
+export const runIdvDigilockerPreflight = (query, environment) =>
+  readSnapshot(query, isProduction(environment) ? IDV_DIGILOCKER_PRODUCTION_PREFLIGHT : IDV_DIGILOCKER_PREFLIGHT, 'preflight');
 
-export function runIdvDigilockerPostflight(before, query) {
+export function runIdvDigilockerPostflight(before, query, environment) {
   if (!before?.preserved) fail('BASELINE_REQUIRED');
-  const after = readSnapshot(query, IDV_DIGILOCKER_POSTFLIGHT, 'postflight');
+  const after = readSnapshot(query, isProduction(environment) ? IDV_DIGILOCKER_PRODUCTION_POSTFLIGHT : IDV_DIGILOCKER_POSTFLIGHT, 'postflight');
   if (after.preserved !== before.preserved) fail('EXISTING_OBJECTS_CHANGED');
   return {status: 'PASS', scope: IDV_DIGILOCKER_SCOPE};
 }
