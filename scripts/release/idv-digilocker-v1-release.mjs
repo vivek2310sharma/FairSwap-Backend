@@ -21,15 +21,34 @@ export const IDV_FOUNDATION_LEDGER = Object.freeze({
 });
 export const IDV_FOUNDATION_SOURCE_VERSION = '20261026183000';
 
-// Both environments already record the Taxonomy V2 pair, which sorts after 20261117090000. The CLI inserts the older
-// candidate only with --include-all; that is admitted only when the newer tail is exactly these reviewed rows
-// (version, name, statement count and digest of the CLI-split reviewed source, as stored by the reusable workflow).
+// Rows newer than 20261117090000 differ per environment. The CLI inserts the older candidate only with --include-all; that
+// is admitted only when the newer tail is exactly that environment's reviewed rows (version, name, statement count and
+// digest of the CLI-split reviewed source, as stored by the reusable workflow). FairSwapTest: the Taxonomy V2 pair.
 export const IDV_DIGILOCKER_TAIL = Object.freeze([
   Object.freeze({candidateId: 'taxonomy-v2-foundation', statementCount: 47,
     statementsSha256: '9f20f113121f922e89b5a186f0d30101c4d1c50b44bac00c3dfc0420c02369eb'}),
   Object.freeze({candidateId: 'taxonomy-v2-catalogue', statementCount: 16,
     statementsSha256: 'f9233abf20753db40bf206adf2d386c216c64ba9a665086174a0aaa863c8d741'})
 ]);
+
+// FairSwapProd: the Taxonomy V2 pair, then the disabled V3 Production batch in its enforced order. The seven V3 schema
+// digests equal the signed FairSwapTest receipts in unified-publishing-v3/TEST_RECEIPTS.json (which the V3 Production
+// batch requires Production to reproduce); the Production-only identity prerequisite is the CLI split of its pinned source.
+export const IDV_DIGILOCKER_PRODUCTION_TAIL = Object.freeze([
+  ...IDV_DIGILOCKER_TAIL,
+  ...[
+    ['v3-production-identity-prerequisite', 26, 'b521935f8abc9eee155d0a5badffe8adbb162ba0e23d41d63c8ef19bc8fc7e21'],
+    ['ordinary-goods-v3', 31, '7a32a3083666c27b12da8af45083c69733a4b3f2096f49401483ed9f94f36316'],
+    ['bounded-goods-v3', 13, '1aa854e30011d04a73716114aa9dabdc19c9118fbb40e0d5e38940a3ee748a1a'],
+    ['pedal-and-parts-v3', 9, 'eb1863e197c67c08563435e1124cfea69848696998582abbf16afcfa58bda7f1'],
+    ['property-intake-v3', 11, '4889a1f42f5a796a64000fcd2f7bf385ff8c02acf10bdc8333786fb9f95ee5ca'],
+    ['regulated-vehicle-drafts-v3', 11, 'ddbc8b043c6ed848021059b93f2cc292b57fc644af68337382342b58ad89b512'],
+    ['specialist-vehicle-draft-binding-v3', 20, '6b39778d3a32f49c676f45d6450db32f00c6c23800e10f941f858782bf8c1041'],
+    ['v3-require-active-seller-identity', 8, '9652f49945f082ae3c7578f403670c258d915893764727dc4e205c5256401550']
+  ].map(([candidateId, statementCount, statementsSha256]) => Object.freeze({candidateId, statementCount, statementsSha256}))
+]);
+export const idvDigilockerTail = environment =>
+  environment === 'FairSwapProd' ? IDV_DIGILOCKER_PRODUCTION_TAIL : environment === 'FairSwapTest' ? IDV_DIGILOCKER_TAIL : null;
 
 const ledgerName = candidate => candidate.filename.slice(15, -4);
 const matchesTail = (row, pin) => {
@@ -42,7 +61,8 @@ const matchesTail = (row, pin) => {
 export function assertIdvDigilockerLedger(environment, rows) {
   const candidate = getCandidate(IDV_DIGILOCKER_CANDIDATE);
   const own = IDV_FOUNDATION_LEDGER[environment];
-  if (!own || !Array.isArray(rows)) fail('ENVIRONMENT_INVALID');
+  const tail = idvDigilockerTail(environment);
+  if (!own || !tail || !Array.isArray(rows)) fail('ENVIRONMENT_INVALID');
   const foundation = rows.filter(row => row.name === own.name);
   if (foundation.length !== 1 || foundation[0].version !== own.version || foundation[0].hasStatements !== true) {
     fail('FOUNDATION_PREREQUISITE_MISMATCH');
@@ -50,7 +70,7 @@ export function assertIdvDigilockerLedger(environment, rows) {
   if (rows.some(row => row.version === IDV_FOUNDATION_SOURCE_VERSION)) fail('FOUNDATION_HISTORY_MISMATCH');
   if (rows.some(row => row.version === candidate.version || row.name === ledgerName(candidate))) fail('ALREADY_RECORDED');
   const ahead = rows.filter(row => row.version > candidate.version);
-  if (ahead.length !== IDV_DIGILOCKER_TAIL.length || !IDV_DIGILOCKER_TAIL.every((pin, i) => matchesTail(ahead[i], pin))) {
+  if (ahead.length !== tail.length || !tail.every((pin, i) => matchesTail(ahead[i], pin))) {
     fail('LEDGER_TAIL_MISMATCH');
   }
   return {includeAll: true, ahead: ahead.map(row => row.version)};

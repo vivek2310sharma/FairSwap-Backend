@@ -19,6 +19,7 @@ import {assertLedgerOrdering, assertPreflight, parseLedgerVersions, postflightKe
 import {adoptExistingInstallation, parsePendingDryRun, verifyLedgerVersion, verifyRemotePostflight, releaseReusable, releaseV3ProductionBatch, subprocessFailure, REFS, readMobileCatalogueSnapshot, verifyMobileCataloguePostflight, verifyMobileCatalogueTestReceipt} from '../../scripts/release/reusable-supabase-release.mjs';
 import {
   IDV_DIGILOCKER_CANDIDATE, IDV_DIGILOCKER_FUNCTIONS, IDV_DIGILOCKER_POSTFLIGHT, IDV_DIGILOCKER_PREFLIGHT, IDV_DIGILOCKER_SCOPE, IDV_DIGILOCKER_TAIL,
+  IDV_DIGILOCKER_PRODUCTION_TAIL, idvDigilockerTail,
   IDV_FOUNDATION_LEDGER, assertIdvDigilockerLedger, snapshotSql as idvSnapshotSql, verifyIdvDigilockerTestReceipt,
   IDV_DIGILOCKER_INSTALLED, IDV_DIGILOCKER_INSTALLED_SCOPE, IDV_DIGILOCKER_V2_CANDIDATE, IDV_DIGILOCKER_V2_FUNCTIONS, IDV_DIGILOCKER_V2_POSTFLIGHT,
   IDV_DIGILOCKER_V2_PREFLIGHT, IDV_DIGILOCKER_V2_SCOPE, assertIdvDigilockerTestInstalled, idvDigilockerV2SnapshotSql
@@ -3253,11 +3254,11 @@ test('Wearables V1.1 postflight rejects catalogue, enabled-state and security me
 // ---------------------------------------------------------------------------------------------
 const idvContext = {...baseEnv, GITHUB_SHA: 'c'.repeat(40), GITHUB_RUN_ID: '131', GITHUB_RUN_ATTEMPT: '1', TARGET: 'test'};
 const idvByVersion = (a, b) => a.version.localeCompare(b.version);
-const idvTailRows = () => IDV_DIGILOCKER_TAIL.map(pin => {
+const idvTailRows = (environment = 'FairSwapTest') => idvDigilockerTail(environment).map(pin => {
   const c = getCandidate(pin.candidateId);
   return {version: c.version, name: c.filename.slice(15, -4), hasStatements: true, statementCount: pin.statementCount, statementsSha256: pin.statementsSha256};
 });
-const idvLedger = (environment, {extra = [], tail = idvTailRows(), foundation = IDV_FOUNDATION_LEDGER[environment]} = {}) => [
+const idvLedger = (environment, {extra = [], tail = idvTailRows(environment), foundation = IDV_FOUNDATION_LEDGER[environment]} = {}) => [
   ...baseHistory.map(version => ({version, name: 'historical', hasStatements: true, statementCount: 1, statementsSha256: 'e'.repeat(64)})),
   ...(foundation ? [{...foundation, hasStatements: true, statementCount: 1, statementsSha256: 'd'.repeat(64)}] : []),
   ...extra, ...tail
@@ -3351,7 +3352,8 @@ test('IDV DigiLocker checks cover every function in the reviewed SQL, the gate s
 test('IDV DigiLocker ledger guard requires the environment foundation row and exactly the reviewed newer tail', () => {
   const ok = assertIdvDigilockerLedger('FairSwapTest', idvLedger('FairSwapTest'));
   assert.deepEqual(ok, {includeAll: true, ahead: ['20261117185218', '20261118092010']});
-  assert.deepEqual(assertIdvDigilockerLedger('FairSwapProd', idvLedger('FairSwapProd')), ok);
+  assert.deepEqual(assertIdvDigilockerLedger('FairSwapProd', idvLedger('FairSwapProd')),
+    {includeAll: true, ahead: IDV_DIGILOCKER_PRODUCTION_TAIL.map(pin => getCandidate(pin.candidateId).version)});
   const fails = (environment, ledger, re) => assert.throws(() => assertIdvDigilockerLedger(environment, ledger), re);
   fails('FairSwapTest', idvLedger('FairSwapProd'), /FOUNDATION_PREREQUISITE_MISMATCH/);   // other environment's history
   fails('FairSwapProd', idvLedger('FairSwapTest'), /FOUNDATION_PREREQUISITE_MISMATCH/);
@@ -3426,7 +3428,7 @@ test('IDV DigiLocker releases to Test out of order with a verified, sanitized re
     assert.equal(receipt.projectRef, REFS.FairSwapProd);
     assert.equal(receipt.testLedgerStatementsSha256, digest);
     assert.deepEqual(receipt.prerequisiteLedger, IDV_FOUNDATION_LEDGER.FairSwapProd);
-    assert.deepEqual(receipt.outOfOrderInstall, {includeAll: true, aheadVersions: ['20261117185218', '20261118092010']});
+    assert.deepEqual(receipt.outOfOrderInstall, {includeAll: true, aheadVersions: PROD_IDV_TAIL_VERSIONS});
     assert.equal(idvApplies(prod.full).length, 1);
   } finally { rmSync(prod.dir, {recursive: true, force: true}); }
   const mismatch = idvRun('FairSwapProd', {env: {IDV_DIGILOCKER_TEST_LEDGER_SHA: 'a'.repeat(64)}});
@@ -4063,3 +4065,52 @@ test('disposable PostgreSQL: IDV V1 installed check and V2 preflight/postflight 
       'drop function public.idv_v2_probe()'), pre.preserved);
     assert.equal((await snapshot(IDV_DIGILOCKER_V2_POSTFLIGHT, 'v2-postflight', true)).preserved, pre.preserved);
   });
+
+const PROD_IDV_TAIL_VERSIONS = ['20261117185218', '20261118092010', '20261119090000', '20261119092042', '20261119100640', '20261119102359',
+  '20261119103516', '20261119105021', '20261119111559', '20261119114512'];
+
+test('IDV DigiLocker V1 Production tail is exactly the reviewed Taxonomy V2 + disabled V3 Production history, pinned to verified digests', () => {
+  assert.deepEqual(IDV_DIGILOCKER_PRODUCTION_TAIL.map(pin => getCandidate(pin.candidateId).version), PROD_IDV_TAIL_VERSIONS);
+  assert.deepEqual(IDV_DIGILOCKER_PRODUCTION_TAIL.slice(0, 2), [...IDV_DIGILOCKER_TAIL]);
+  assert.deepEqual(IDV_DIGILOCKER_PRODUCTION_TAIL.slice(2).map(pin => pin.candidateId), [...V3_PRODUCTION_SEQUENCE]);
+  assert.deepEqual(IDV_DIGILOCKER_PRODUCTION_TAIL.map(pin => getCandidate(pin.candidateId).filename.slice(15, -4)), ['taxonomy_v2_foundation',
+    'taxonomy_v2_catalogue', 'v3_production_identity_prerequisite', 'ordinary_goods_v3', 'bounded_goods_v3', 'pedal_and_parts_v3', 'property_intake_v3',
+    'regulated_vehicle_drafts_v3', 'specialist_vehicle_draft_binding_v3', 'v3_require_active_seller_identity']);
+  // Every pin is the CLI split of the SHA-pinned reviewed source...
+  for (const pin of IDV_DIGILOCKER_PRODUCTION_TAIL) {
+    verifyCandidateSha(pin.candidateId);
+    const statements = splitStatements(readFileSync(join(process.cwd(), getCandidate(pin.candidateId).path), 'utf8'));
+    assert.equal(statements.length, pin.statementCount, pin.candidateId);
+    assert.equal(pgDigest(statements), pin.statementsSha256, pin.candidateId);
+  }
+  // ...and the seven V3 schema digests equal the signed FairSwapTest receipts the V3 Production batch must reproduce.
+  const receipts = JSON.parse(readFileSync('supabase/forward-migrations/unified-publishing-v3/TEST_RECEIPTS.json', 'utf8'));
+  assert.deepEqual(IDV_DIGILOCKER_PRODUCTION_TAIL.slice(3).map(pin => [pin.candidateId, pin.statementsSha256]),
+    receipts.map(r => [r.candidateId, r.ledgerStatementsSha256]));
+  assert.equal(idvDigilockerTail('FairSwapTest'), IDV_DIGILOCKER_TAIL);
+  assert.equal(idvDigilockerTail('FairSwapStaging'), null);
+});
+
+test('IDV DigiLocker V1 Production guard fails closed on any deviation from the reviewed Production history', () => {
+  const rows = idvTailRows('FairSwapProd');
+  const fails = (ledger, re = /LEDGER_TAIL_MISMATCH/) => assert.throws(() => assertIdvDigilockerLedger('FairSwapProd', ledger), re);
+  assert.deepEqual(assertIdvDigilockerLedger('FairSwapProd', idvLedger('FairSwapProd')).ahead, PROD_IDV_TAIL_VERSIONS);
+  fails(idvLedger('FairSwapProd', {tail: idvTailRows('FairSwapTest')}));                                  // Test history in Production
+  fails(idvLedger('FairSwapProd', {tail: rows.slice(0, -1)}));                                            // V3 batch incomplete
+  fails(idvLedger('FairSwapProd', {tail: rows.filter((_, i) => i !== 2)}));                               // identity prerequisite missing
+  fails(idvLedger('FairSwapProd', {tail: [...rows, {version: '20261119120000', name: 'unreviewed', hasStatements: true, statementCount: 1, statementsSha256: 'a'.repeat(64)}]}));
+  fails(idvLedger('FairSwapProd', {tail: [...rows, {version: '20261119113557', name: '20261119120000_idv_digilocker_oidc_diag_test_only', hasStatements: true,
+    statementCount: 1, statementsSha256: 'a'.repeat(64)}].sort(idvByVersion)}));                          // Test-only diagnostic row
+  fails(idvLedger('FairSwapProd', {tail: [...rows, {version: '20261119200000', name: 'idv_digilocker_oidc_v2_badge', hasStatements: true,
+    statementCount: 1, statementsSha256: 'a'.repeat(64)}]}));                                              // V2 recorded before V1: unsafe order
+  for (const i of rows.keys()) {
+    fails(idvLedger('FairSwapProd', {tail: rows.map((r, j) => j === i ? {...r, statementsSha256: 'f'.repeat(64)} : r)}));
+    fails(idvLedger('FairSwapProd', {tail: rows.map((r, j) => j === i ? {...r, statementCount: r.statementCount + 1} : r)}));
+    fails(idvLedger('FairSwapProd', {tail: rows.map((r, j) => j === i ? {...r, name: 'renamed'} : r)}));
+    fails(idvLedger('FairSwapProd', {tail: rows.map((r, j) => j === i ? {...r, hasStatements: false} : r)}));
+  }
+  fails(idvLedger('FairSwapProd', {foundation: null}), /FOUNDATION_PREREQUISITE_MISMATCH/);
+  fails(idvLedger('FairSwapProd', {extra: [{version: '20261117090000', name: 'idv_digilocker_direct_v1', hasStatements: true}]}), /ALREADY_RECORDED/);
+  // The Test fresh-install guard is unchanged: the Production history is not accepted in FairSwapTest.
+  assert.throws(() => assertIdvDigilockerLedger('FairSwapTest', idvLedger('FairSwapTest', {tail: rows})), /LEDGER_TAIL_MISMATCH/);
+});
