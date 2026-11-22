@@ -22,7 +22,8 @@ import {
   IDV_DIGILOCKER_PRODUCTION_TAIL, idvDigilockerTail,
   IDV_FOUNDATION_LEDGER, assertIdvDigilockerLedger, snapshotSql as idvSnapshotSql, verifyIdvDigilockerTestReceipt,
   IDV_DIGILOCKER_INSTALLED, IDV_DIGILOCKER_INSTALLED_SCOPE, IDV_DIGILOCKER_V2_CANDIDATE, IDV_DIGILOCKER_V2_FUNCTIONS, IDV_DIGILOCKER_V2_POSTFLIGHT,
-  IDV_DIGILOCKER_V2_PREFLIGHT, IDV_DIGILOCKER_V2_SCOPE, assertIdvDigilockerTestInstalled, idvDigilockerV2SnapshotSql
+  IDV_DIGILOCKER_V2_PREFLIGHT, IDV_DIGILOCKER_V2_SCOPE, assertIdvDigilockerTestInstalled, idvDigilockerV2SnapshotSql,
+  IDV_DIGILOCKER_PRODUCTION_PREFLIGHT, IDV_DIGILOCKER_PRODUCTION_POSTFLIGHT
 } from '../../scripts/release/idv-digilocker-v1-release.mjs';
 
 import {verifyV3ProductionEvidence, v3ProductionState} from '../../scripts/release/v3-production-evidence.mjs';
@@ -3276,8 +3277,8 @@ function idvRun(environment, {ledger = idvLedger(environment), env = {}, ledgerD
     if (q.startsWith('-- idv-digilocker-v2-preflight')) return idvChecks(IDV_DIGILOCKER_V2_PREFLIGHT, pre);
     if (q.startsWith('-- idv-digilocker-v2-postflight')) return {...idvChecks(IDV_DIGILOCKER_V2_POSTFLIGHT, post), ...(preserved ? {preserved} : {})};
     if (q.startsWith('-- idv-digilocker-installed')) return idvChecks(IDV_DIGILOCKER_INSTALLED, installed);
-    if (q.startsWith('-- idv-digilocker-preflight')) return idvChecks(IDV_DIGILOCKER_PREFLIGHT, pre);
-    if (q.startsWith('-- idv-digilocker-postflight')) return {...idvChecks(IDV_DIGILOCKER_POSTFLIGHT, post), ...(preserved ? {preserved} : {})};
+    if (q.startsWith('-- idv-digilocker-preflight')) return idvChecks(environment === 'FairSwapProd' ? IDV_DIGILOCKER_PRODUCTION_PREFLIGHT : IDV_DIGILOCKER_PREFLIGHT, pre);
+    if (q.startsWith('-- idv-digilocker-postflight')) return {...idvChecks(environment === 'FairSwapProd' ? IDV_DIGILOCKER_PRODUCTION_POSTFLIGHT : IDV_DIGILOCKER_POSTFLIGHT, post), ...(preserved ? {preserved} : {})};
     return [...ledger, ...(++ledgerReads === 3 ? [{version: c.version, name: c.filename.slice(15, -4), hasStatements: true,
       statementCount: 92, statementsSha256: ledgerDigest}] : [])].sort(idvByVersion);
   }});
@@ -3566,6 +3567,59 @@ test('disposable PostgreSQL: IDV DigiLocker preflight and postflight pass on the
     assert.notEqual(await broken("create function public.idv_release_probe() returns integer language sql as 'select 1'", null,
       'drop function public.idv_release_probe()'), pre.preserved);   // any other public/app_security change is detected
     assert.equal((await snapshot(IDV_DIGILOCKER_POSTFLIGHT, 'postflight')).preserved, pre.preserved);
+  });
+
+test('IDV DigiLocker Production preflight/postflight are Production-only, pinned to the V3 prerequisite and keep the Test guard strict', async () => {
+  const prod = idvRun('FairSwapProd', {env: {IDV_DIGILOCKER_TEST_LEDGER_SHA: 'b'.repeat(64)}});
+  try {
+    await prod.result;
+    const sqls = prod.full.filter(cmd => cmd[0] === 'psql').map(cmd => cmd.at(-1));
+    const pre = sqls.find(q => q.startsWith('-- idv-digilocker-preflight'));
+    const postflight = sqls.find(q => q.startsWith('-- idv-digilocker-postflight'));
+    for (const key of ['v3_functions_exact', 'v3_function_grants_exact', 'v3_triggers_exact']) assert.ok(pre.includes(`'${key}'`), key);
+    assert.ok(!pre.includes("'digilocker_triggers_absent'"));
+    for (const key of ['v3_function_bodies_preserved', 'v3_triggers_preserved']) assert.ok(postflight.includes(`'${key}'`), key);
+  } finally { rmSync(prod.dir, {recursive: true, force: true}); }
+  // Production fails closed when any V3 pin is missing from the preflight result; Test never sees the Production checks.
+  for (const key of ['v3_functions_exact', 'v3_function_grants_exact', 'v3_triggers_exact', 'digilocker_functions_absent']) {
+    const run = idvRun('FairSwapProd', {env: {IDV_DIGILOCKER_TEST_LEDGER_SHA: 'b'.repeat(64)}, pre: {[key]: false}});
+    try { await assert.rejects(run.result, /IDV_DIGILOCKER_PREFLIGHT_FAILED/); assert.equal(idvApplies(run.full).length, 0); }
+    finally { rmSync(run.dir, {recursive: true, force: true}); }
+  }
+  const post = idvRun('FairSwapProd', {env: {IDV_DIGILOCKER_TEST_LEDGER_SHA: 'b'.repeat(64)}, post: {v3_function_bodies_preserved: false}});
+  try { await assert.rejects(post.result, /IDV_DIGILOCKER_POSTFLIGHT_FAILED/); assert.ok(!existsSync(join(post.dir, 'idv-digilocker-v1-fairswapprod.json'))); }
+  finally { rmSync(post.dir, {recursive: true, force: true}); }
+  assert.ok(Object.keys(IDV_DIGILOCKER_PREFLIGHT).includes('digilocker_triggers_absent'));
+  assert.ok(!Object.keys(IDV_DIGILOCKER_PRODUCTION_PREFLIGHT).includes('digilocker_triggers_absent'));
+});
+
+test('IDV V3 identity function pins equal the V3 SQL bodies, and V1 re-creates every one of them byte-identically', () => {
+  const body = (sql, name) => {
+    const m = sql.match(new RegExp(`CREATE (?:OR REPLACE )?FUNCTION app_security\\.${name}\\(([\\s\\S]*?)\\$\\$([\\s\\S]*?)\\$\\$;`, 'i'));
+    assert.ok(m, name);
+    return createHash('md5').update(m[2]).digest('hex');
+  };
+  const v3 = readFileSync(join(process.cwd(), getCandidate('v3-production-identity-prerequisite').path), 'utf8');
+  const v1 = readFileSync(join(process.cwd(), getCandidate(IDV_DIGILOCKER_CANDIDATE).path), 'utf8');
+  const pre = IDV_DIGILOCKER_PRODUCTION_PREFLIGHT.v3_functions_exact;
+  const names = ['is_identity_verified', 'identity_gate_enabled', 'idv_request_role', 'identity_gate_system_write', 'enforce_verified_actor',
+    'trg_identity_gate_listings', 'trg_identity_gate_by_listing', 'trg_identity_gate_posting_session', 'trg_identity_gate_staged_media'];
+  for (const name of names) {
+    const md5 = body(v3, name);
+    assert.equal(body(v1, name), md5, name);
+    assert.ok(pre.includes(`md5(p.prosrc) = '${md5}'`), `${name} pin`);
+  }
+});
+
+test('disposable PostgreSQL (PGlite): FairSwapProd V3 prerequisite -> DigiLocker V1 passes the Production guards and rejects tampered functions, grants and triggers',
+  {skip: PGlite ? false : 'no PGlite module', timeout: 240000}, async () => {
+    const {runProdV3ToV1Scenarios, setupSql} = await import('../idv-pg17/prod-v3-to-v1-scenarios.mjs');
+    const db = new PGlite();
+    await db.exec(setupSql());
+    await runProdV3ToV1Scenarios(async sql => {
+      const rows = (await db.exec(sql)).filter(r => r.rows?.length);
+      return rows.length ? String(Object.values(rows.at(-1).rows[0])[0]) : '';
+    });
   });
 
 test('V3 candidates are digest-pinned, Test-only and ordered against the full preceding V3 chain', async () => {

@@ -610,7 +610,7 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
     return runTaxonomyPostflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
   }
   if (candidate.id === IDV_DIGILOCKER_CANDIDATE) {
-    return runIdvDigilockerPostflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+    return runIdvDigilockerPostflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'), environment);
   }
   if (candidate.id === IDV_DIGILOCKER_V2_CANDIDATE) {
     return runIdvDigilockerV2Postflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
@@ -969,7 +969,7 @@ export async function releaseReusable({
       }
       if (idvDigilocker) {
         phase = 'preflight';
-        catalogueBefore = runIdvDigilockerPreflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
+        catalogueBefore = runIdvDigilockerPreflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'), environment);
       }
       if (idvDigilockerV2) {
         phase = 'preflight';
