@@ -25,7 +25,9 @@ import {readValiditySnapshot, verifyValidityPostflight, VALIDITY_SCOPE} from './
 import {
   IDV_DIGILOCKER_CANDIDATE, IDV_DIGILOCKER_INSTALLED_SCOPE, IDV_DIGILOCKER_SCOPE, IDV_DIGILOCKER_V2_CANDIDATE, IDV_DIGILOCKER_V2_SCOPE,
   assertIdvDigilockerLedger, assertIdvDigilockerTestInstalled, idvDigilockerReceiptFields, runIdvDigilockerInstalledCheck,
-  runIdvDigilockerPostflight, runIdvDigilockerPreflight, runIdvDigilockerV2Postflight, runIdvDigilockerV2Preflight
+  runIdvDigilockerPostflight, runIdvDigilockerPreflight, runIdvDigilockerV2Postflight, runIdvDigilockerV2Preflight,
+  ENFORCE_VERIFIED_ACTOR_STATES, IDV_DIGILOCKER_REQUIRED_CANDIDATE, IDV_DIGILOCKER_REQUIRED_SCOPE, assertIdvDigilockerRequiredLedger, enforceVerifiedActorState,
+  idvDigilockerEvolvedVariant, idvDigilockerRequiredReceiptFields, runIdvDigilockerRequiredPostflight, runIdvDigilockerRequiredPreflight
 } from './idv-digilocker-v1-release.mjs';
 
 import {verifyV3ProductionEvidence, v3ProductionState} from './v3-production-evidence.mjs';
@@ -718,6 +720,10 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
   if (candidate.id === IDV_DIGILOCKER_V2_CANDIDATE) {
     return runIdvDigilockerV2Postflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
   }
+  if (candidate.id === IDV_DIGILOCKER_REQUIRED_CANDIDATE) {
+    if (environment !== 'FairSwapTest') throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_REQUIRED_TEST_ONLY');
+    return runIdvDigilockerRequiredPostflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+  }
   if (candidate.id === 'listing-validity-365') {
     return verifyValidityPostflight(catalogueBefore, readValiditySnapshot(sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql')));
   }
@@ -775,6 +781,15 @@ export async function releaseReusable({
     throw new Error('REUSABLE_RELEASE_TEST_ONLY_CANDIDATE');
   }
   const projectRef = REFS[environment];
+  // A candidate bound to one project ref (FairSwapTest) is refused for any other ref before credentials or tools are used.
+  if (candidate.allowedProjectRef !== undefined &&
+      (projectRef !== candidate.allowedProjectRef || candidate.testOnly !== true || candidate.autoPromote !== false)) {
+    throw new Error('REUSABLE_RELEASE_PROJECT_REF_NOT_ALLOWED');
+  }
+  const idvRequired = candidateId === IDV_DIGILOCKER_REQUIRED_CANDIDATE;
+  if (idvRequired && (environment !== 'FairSwapTest' || context.TARGET !== 'test')) {
+    throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_REQUIRED_TEST_ONLY');
+  }
   const taxonomyCatalogue = candidateId === CATALOGUE_CANDIDATE;
   const taxonomy = taxonomyCatalogue || candidateId === TAXONOMY_CANDIDATE;
   const taxonomyTestLedger = context.TAXONOMY_TEST_LEDGER_SHA;
@@ -915,10 +930,10 @@ export async function releaseReusable({
     // Tablets, Wearables and Mobile Catalogue pin the ledger: history is read before apply, must not change, and the installed
     // statements hash is carried Test -> Production through the receipts.
     const v3 = Boolean(candidate.unifiedPublishingV3) || v3IdentityPrerequisite;
-    const idv = idvDigilocker || idvDigilockerV2;
+    const idv = idvDigilocker || idvDigilockerV2 || idvRequired;
     const pinned = v3 || tablets || wearables || mobileCatalogue || listingValidity || taxonomy || catalogueUpdate || idv;
     const ordered = v3 || candidate.strict || mobileCatalogue || listingValidity || taxonomy || idv;
-    const label = v3 ? 'V3' : idvDigilockerV2 ? 'IDV_DIGILOCKER_V2' : idvDigilocker ? 'IDV_DIGILOCKER' : taxonomy ? 'TAXONOMY' : listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
+    const label = v3 ? 'V3' : idvRequired ? 'IDV_DIGILOCKER_REQUIRED' : idvDigilockerV2 ? 'IDV_DIGILOCKER_V2' : idvDigilocker ? 'IDV_DIGILOCKER' : taxonomy ? 'TAXONOMY' : listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
     const foundationVersion = wearables ? '20261104120000' : '20261102165946';
     const readLedger = () => readTabletsLedger(sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
     let catalogueBefore;
@@ -926,6 +941,7 @@ export async function releaseReusable({
     let ledgerStatementsSha256;
     let outOfOrder = {includeAll: false, ahead: []};
     let idvInstalledAttestation = false;
+    let idvEnforceState;
     if (ordered) {
       // Prerequisites, ordering and partial state fail closed; resumption of a verified release is allowed in both environments.
       const ordering = assertLedgerOrdering(candidate, initialLedger);
@@ -955,8 +971,10 @@ export async function releaseReusable({
       // installed-state integrity). Nothing is applied; the attested digest is the evidence Production must reproduce.
       ledgerBefore = readLedger();
       ledgerStatementsSha256 = assertIdvDigilockerTestInstalled(environment, ledgerBefore);
+      // Explicit, ledger-bound state of enforce_verified_actor: historical V1, or evolved by 20261122100000.
+      idvEnforceState = enforceVerifiedActorState(environment, ledgerBefore);
       phase = 'postflight';
-      runIdvDigilockerInstalledCheck(sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+      runIdvDigilockerInstalledCheck(sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'), idvEnforceState);
       idvInstalledAttestation = true;
     } else if (pinned) {
       // A pre-existing entry has no trusted receipt tying it to the reviewed source bytes.
@@ -969,6 +987,7 @@ export async function releaseReusable({
       }
       // Environment-specific hosted foundation row and the exact reviewed newer tail; never repaired or rewritten.
       if (idvDigilocker) outOfOrder = assertIdvDigilockerLedger(environment, ledgerBefore);
+      if (idvRequired) outOfOrder = assertIdvDigilockerRequiredLedger(environment, ledgerBefore);
       if (v3Production) {
         if (ledgerBefore.some(row => /digilocker.*(?:diag|inspect)|(?:diag|inspect).*digilocker/i.test(row.name))) {
           throw new Error('V3_PRODUCTION_TEST_DIAGNOSTIC_PRESENT');
@@ -1080,6 +1099,10 @@ export async function releaseReusable({
         phase = 'preflight';
         catalogueBefore = runIdvDigilockerV2Preflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
       }
+      if (idvRequired) {
+        phase = 'preflight';
+        catalogueBefore = runIdvDigilockerRequiredPreflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
+      }
       if (mobileCatalogue) {
         phase = 'preflight';
         catalogueBefore = readMobileCatalogueSnapshot(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'), 'before');
@@ -1123,6 +1146,10 @@ export async function releaseReusable({
       if (ordered) verifyHistoryPreserved(beforeRemote, ledgerOutput, candidate.version);
       if (pinned) {
         ledgerStatementsSha256 = verifyTabletsLedger(ledgerBefore, readLedger(), candidate);
+        // The recorded row must be exactly the pinned CLI split, i.e. the ledger-bound requiredGate state.
+        if (idvRequired && ledgerStatementsSha256 !== ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.ledger.statementsSha256) {
+          throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_REQUIRED_LEDGER_MISMATCH');
+        }
         const testLedger = idv ? idvTestLedger : taxonomy ? taxonomyTestLedger : listingValidity ? validityTestLedger : mobileCatalogue ? mobileTestLedger : context.TABLETS_CANDIDATE_LEDGER_SHA;
         if (environment === 'FairSwapProd' && !v3IdentityPrerequisite && ledgerStatementsSha256 !== (v3Production ? testV3Ledger : testLedger)) {
           throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_MISMATCH`);
@@ -1169,10 +1196,12 @@ export async function releaseReusable({
         ...(environment === 'FairSwapProd' ? {testLedgerStatementsSha256: taxonomyTestLedger} : {})
       } : {}),
       ...(idv ? {
-        postflightScope: idvDigilockerV2 ? IDV_DIGILOCKER_V2_SCOPE : idvInstalledAttestation ? IDV_DIGILOCKER_INSTALLED_SCOPE : IDV_DIGILOCKER_SCOPE,
+        postflightScope: idvRequired ? IDV_DIGILOCKER_REQUIRED_SCOPE : idvDigilockerV2 ? IDV_DIGILOCKER_V2_SCOPE : idvInstalledAttestation ? IDV_DIGILOCKER_INSTALLED_SCOPE : IDV_DIGILOCKER_SCOPE,
         releaseWorkflowAttempt: context.GITHUB_RUN_ATTEMPT,
         ...idvDigilockerReceiptFields(environment),
         ...(idvInstalledAttestation ? {installedBeforeThisWorkflow: true} : {}),
+        ...(idvInstalledAttestation && idvEnforceState === 'requiredGate' ? {installedStateVariant: idvDigilockerEvolvedVariant()} : {}),
+        ...(idvRequired ? idvDigilockerRequiredReceiptFields() : {}),
         ...(environment === 'FairSwapProd' ? {testLedgerStatementsSha256: idvTestLedger} : {})
       } : {}),
       ...(listingValidity ? {
