@@ -1150,7 +1150,7 @@ test('workflow verifies the deployed Web release before any database step and us
   assert(yaml.includes("REQUIRE_REAL_PG: '1'"));
   // Credential-bearing steps receive the existing read-only Web token only for candidates
   // that recheck immutable Web evidence in their runner, including the two V3 leaves.
-  const v3Web = "startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-')";
+  const v3Web = "startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-') || startsWith(inputs.candidate, 'v3-goods-batch-')";
   for (const m of yaml.matchAll(/- name: Execute [^\n]*\n[\s\S]*?(?=\n      - |\n  \w|$)/g)) {
     if (!m[0].includes('WEB_EVIDENCE_TOKEN')) continue;
     const candidates = m[0].includes('Execute Test') ? v3Web : "inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue' || " + v3Web;

@@ -41,6 +41,12 @@ on:
           - v3-books-deactivate
           - v3-tables-chairs-activate
           - v3-tables-chairs-deactivate
+          - v3-goods-batch-activate
+          - v3-goods-batch-deactivate
+      v3_batch:
+        description: 'V3 Goods Batch: JSON array of [{candidateId, testActivationRunId?, testE2eRunId?, booksAcceptanceRunId?}]'
+        required: false
+        type: string
       books_acceptance_run_id:
         description: 'V3 Tables & Chairs: successful Books activation acceptance run in the same environment and Backend commit'
         required: false
@@ -325,9 +331,10 @@ jobs:
             test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
             prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID,
-            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID, books_acceptance_run_id: e.BOOKS_ACCEPTANCE_RUN_ID
+            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID, books_acceptance_run_id: e.BOOKS_ACCEPTANCE_RUN_ID,
+            v3_batch: e.V3_BATCH_JSON
           }});
-          if (plan.candidate.v3Operation === 'activate') {
+          if (plan.candidate.v3Operation === 'activate' || plan.candidate.v3Batch === 'activate') {
             const {verifyLeafWeb} = await import('./scripts/release/v3-leaf-release.mjs');
             await verifyLeafWeb(plan, e);
           }
@@ -346,7 +353,7 @@ jobs:
         if: ${{ inputs.candidate != 'v3-test-remaining-batch' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          WEB_EVIDENCE_TOKEN: ${{ (startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-')) && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
+          WEB_EVIDENCE_TOKEN: ${{ (startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-') || startsWith(inputs.candidate, 'v3-goods-batch-')) && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
           TARGET: ${{ inputs.target }}
           ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
           TABLETS_FOUNDATION_LEDGER_SHA: ${{ needs.verify.outputs.foundation_ledger_sha }}
@@ -366,6 +373,7 @@ jobs:
           ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
           BOOKS_ACCEPTANCE_RUN_ID: ${{ inputs.books_acceptance_run_id }}
           TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
+          V3_BATCH_JSON: ${{ inputs.v3_batch }}
         run: |
           node --input-type=module - <<'NODE'
           import {releaseReusable} from './scripts/release/reusable-supabase-release.mjs';
@@ -617,9 +625,10 @@ jobs:
             test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
             prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID,
-            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID, books_acceptance_run_id: e.BOOKS_ACCEPTANCE_RUN_ID
+            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID, books_acceptance_run_id: e.BOOKS_ACCEPTANCE_RUN_ID,
+            v3_batch: e.V3_BATCH_JSON
           }});
-          if (plan.candidate.v3Operation === 'activate') {
+          if (plan.candidate.v3Operation === 'activate' || plan.candidate.v3Batch === 'activate') {
             const {verifyLeafWeb} = await import('./scripts/release/v3-leaf-release.mjs');
             await verifyLeafWeb(plan, e);
           }
@@ -642,7 +651,8 @@ jobs:
           LISTING_VALIDITY_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.listing_validity_ledger_sha }}
           MOBILE_CATALOGUE_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.mobile_catalogue_ledger_sha }}
           IDV_DIGILOCKER_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.idv_digilocker_ledger_sha }}
-          WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue' || startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-')) && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
+          WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue' || startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-') || startsWith(inputs.candidate, 'v3-goods-batch-')) && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
+          V3_BATCH_JSON: ${{ inputs.v3_batch }}
           ACCESSORIES_RECHECK_PROD_FOUNDATION: ${{ needs.verify.outputs.accessories_recheck_prod_foundation }}
           ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
           TARGET: ${{ inputs.target }}

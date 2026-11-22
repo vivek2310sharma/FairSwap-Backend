@@ -5,7 +5,7 @@ const sha='a'.repeat(40),now=Date.now();
 const c={WEB_STAGING_SHA:sha,TEST_ACTIVATION_RUN_ID:'12'};
 const plan={candidate:{slug:'v2-books'}};
 const run={id:15,run_attempt:1,head_sha:sha,created_at:new Date(now-10000).toISOString(),updated_at:new Date(now).toISOString()};
-const receipt={schema:'v3-hosted-e2e/1',result:'PASS',slug:'v2-books',projectRef:'wpppxlnbzqynvhpeuavd',testActivationRunId:'12',runId:'15',runAttempt:1,
+const receipt={schema:'v3-hosted-e2e/2',result:'PASS',slug:'v2-books',projectRef:'wpppxlnbzqynvhpeuavd',testActivationRunId:'12',runId:'15',runAttempt:1,
  runnerSha:sha,deployedWebSha:sha,deploymentId:4,baseUrl:'https://synthetic.vercel.app',generatedAt:new Date(now-1000).toISOString(),steps:Object.fromEntries(STEPS.map(s=>[s,true])),cleanup:{verified:true,requested:2,retired:2,alreadyInactive:0}};
 test('hosted E2E receipt binds category, activation, project, Web, attempt, every check and cleanup',()=>{
  assert.equal(validateHostedReceipt(receipt,plan,c,run,now),receipt);

@@ -1,12 +1,12 @@
 import {createHash} from 'node:crypto';
 import {getJson,downloadArtifact,readZipEntries} from './accessories-v1-release.mjs';
 const repo='vivek2310sharma/FairSwap-Web';
-export const STEPS=['sessions_upload','ownership_identity','frozen_retry','incomplete_nonpublic','held_nonpublic','clean_auto_publication','buyer_visibility'];
+export const STEPS=['sessions_upload','ownership_authorization','frozen_retry','incomplete_nonpublic','held_nonpublic','clean_auto_publication','buyer_visibility'];
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const need=(x,code)=>{if(!x)throw Error('V3_HOSTED_E2E_'+code);};
 export function validateHostedReceipt(r,plan,c,run,now=Date.now()){
  const time=Date.parse(r?.generatedAt);
- need(r?.schema==='v3-hosted-e2e/1'&&r.result==='PASS'&&r.slug===plan.candidate.slug&&r.projectRef==='wpppxlnbzqynvhpeuavd'
+ need(r?.schema==='v3-hosted-e2e/2'&&r.result==='PASS'&&r.slug===plan.candidate.slug&&r.projectRef==='wpppxlnbzqynvhpeuavd'
   &&r.testActivationRunId===c.TEST_ACTIVATION_RUN_ID&&r.runId===String(run.id)&&r.runAttempt===run.run_attempt
   &&r.runnerSha===c.WEB_STAGING_SHA&&r.deployedWebSha===c.WEB_STAGING_SHA&&r.runnerSha===run.head_sha
   &&Number.isSafeInteger(r.deploymentId)&&/^https:\/\/[a-z0-9-]+\.vercel\.app\/?$/.test(r.baseUrl??'')

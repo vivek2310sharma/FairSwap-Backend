@@ -1,0 +1,1494 @@
+[
+  {
+    "slug": "v2-books",
+    "parent": "v2-books-sports-hobbies",
+    "id": "c0ba9c51-8d6a-5c81-99e1-6be9c60a8fc5",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "book_title",
+        "label": "Book title",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "author",
+        "label": "Author",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "edition",
+        "label": "Edition",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "language",
+        "label": "Language",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-air-conditioners",
+    "parent": "v2-home-appliances",
+    "id": "fab9ba78-04ea-500c-b4cd-e8790b38b449",
+    "risk": "electrical",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "capacity",
+        "label": "Cooling capacity (tonnes)",
+        "required": true,
+        "kind": "number",
+        "min": 0.1,
+        "max": 25.0
+      },
+      {
+        "key": "unit_type",
+        "label": "Unit type",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-air-coolers-fans-geysers",
+    "parent": "v2-home-appliances",
+    "id": "fda6a67b-56af-5fbe-bf36-99b34c1cbeff",
+    "risk": "electrical",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Appliance type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "capacity",
+        "label": "Capacity or size",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-aquariums-fish-supplies",
+    "parent": "v2-pets-supplies",
+    "id": "43f09356-8d1c-5a4c-b52d-3ac989a4e034",
+    "risk": "electrical",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Item type",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "Empty tank",
+          "Filter",
+          "Pump",
+          "Tank light",
+          "Tank decoration"
+        ]
+      },
+      {
+        "key": "model",
+        "label": "Make and model",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "capacity",
+        "label": "Dimensions or rated capacity",
+        "required": true,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-bags-luggage",
+    "parent": "v2-fashion",
+    "id": "0ab5049d-e22e-5728-95c5-9dc67b4de96e",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Bag or luggage type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "dimensions",
+        "label": "Dimensions (cm)",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "material",
+        "label": "Material",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-beds-wardrobes",
+    "parent": "v2-furniture-home",
+    "id": "3ba0ef34-6e04-52b9-ac10-d4a8ff61c714",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Bed or wardrobe type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "material",
+        "label": "Material",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "dimensions",
+        "label": "Dimensions (cm)",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-cameras-lenses",
+    "parent": "v2-tvs-audio-cameras",
+    "id": "30e64b09-0f8d-5267-b395-95bd3ef3bb2a",
+    "risk": "electronics",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Camera or lens type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "mount",
+        "label": "Lens mount",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-computer-accessories-storage",
+    "parent": "v2-computers-gaming",
+    "id": "2a6e3c82-ddab-5b8f-a18d-f68cb89c8f9f",
+    "risk": "electronics",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Accessory type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "interface",
+        "label": "Connection type",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "capacity",
+        "label": "Storage capacity (GB)",
+        "required": false,
+        "kind": "number",
+        "min": 1.0,
+        "max": 100000.0
+      }
+    ]
+  },
+  {
+    "slug": "v2-cribs-cots-kids-furniture",
+    "parent": "v2-kids-baby",
+    "id": "9bfe17ce-5eb0-5d4c-973f-23ad120e24e3",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Item type",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "Crib",
+          "Cot",
+          "Kids table",
+          "Kids chair"
+        ]
+      },
+      {
+        "key": "model",
+        "label": "Make and model",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "structure",
+        "label": "Structure",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "Stable and complete"
+        ]
+      },
+      {
+        "key": "included",
+        "label": "Included parts and fixings",
+        "required": true,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-desktops-monitors",
+    "parent": "v2-computers-gaming",
+    "id": "238bf29b-b6c3-5b7d-b6c2-f657ece37320",
+    "risk": "electronics",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Desktop or monitor",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "screen",
+        "label": "Screen size (inches)",
+        "required": false,
+        "kind": "number",
+        "min": 5.0,
+        "max": 150.0
+      },
+      {
+        "key": "resolution",
+        "label": "Resolution",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-gaming-consoles-games",
+    "parent": "v2-computers-gaming",
+    "id": "c4599d86-da57-5f2a-bd96-21c82c4815dd",
+    "risk": "electronics",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Console or game",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "platform",
+        "label": "Platform",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model or game title",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "included",
+        "label": "Included accessories",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-gym-fitness",
+    "parent": "v2-books-sports-hobbies",
+    "id": "ab2eac8e-e20a-54eb-a60f-03b3a636710d",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Fitness equipment type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "load_rating",
+        "label": "Rated load (kg)",
+        "required": false,
+        "kind": "number",
+        "min": 1.0,
+        "max": 1000.0
+      }
+    ]
+  },
+  {
+    "slug": "v2-headphones-earbuds",
+    "parent": "v2-mobiles-tablets",
+    "id": "a0ec60da-f8ef-5b00-bb77-f9d801022c02",
+    "risk": "electronics",
+    "flow": "accessory",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Item type",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "Wired headphones",
+          "Wireless headphones",
+          "Wired earbuds",
+          "Wireless earbuds"
+        ]
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "compatibility",
+        "label": "Connection and compatible devices",
+        "required": true,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-home-decor-garden",
+    "parent": "v2-furniture-home",
+    "id": "129afa6d-6deb-5fef-815d-a3be574cebf3",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Decor or garden item type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "material",
+        "label": "Material",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "dimensions",
+        "label": "Dimensions (cm)",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-kids",
+    "parent": "v2-fashion",
+    "id": "d9b17ca0-a706-5e42-b060-3d6526ae57ca",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Clothing or footwear type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "size",
+        "label": "Labelled size or age range",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "material",
+        "label": "Material",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-kitchen-appliances",
+    "parent": "v2-home-appliances",
+    "id": "6585523d-0714-54c0-8b81-c7ffdb1fa455",
+    "risk": "electrical",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Appliance type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "capacity",
+        "label": "Capacity or size",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-kitchenware-utensils",
+    "parent": "v2-furniture-home",
+    "id": "35c1fe9f-dbf1-5b75-ad8b-9bfea308dd3f",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Utensil type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "material",
+        "label": "Food-contact material",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "quantity",
+        "label": "Pieces",
+        "required": false,
+        "kind": "number",
+        "min": 1.0,
+        "max": 1000.0
+      }
+    ]
+  },
+  {
+    "slug": "v2-laptops",
+    "parent": "v2-computers-gaming",
+    "id": "b73ac36f-878c-5956-bf13-3fb4c8b9aabe",
+    "risk": "electronics",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "processor",
+        "label": "Processor",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "ram",
+        "label": "RAM (GB)",
+        "required": false,
+        "kind": "number",
+        "min": 1.0,
+        "max": 512.0
+      },
+      {
+        "key": "storage",
+        "label": "Storage (GB)",
+        "required": false,
+        "kind": "number",
+        "min": 1.0,
+        "max": 100000.0
+      }
+    ]
+  },
+  {
+    "slug": "v2-men",
+    "parent": "v2-fashion",
+    "id": "e0bdd2a1-dc3c-5a0d-a6a8-fcc6abff74fc",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Clothing or footwear type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "size",
+        "label": "Labelled size",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "material",
+        "label": "Material",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-mobile-tablet-accessories",
+    "parent": "v2-mobiles-tablets",
+    "id": "a190b604-cd48-536e-ab0e-aaf62b263399",
+    "risk": "electrical",
+    "flow": "accessory",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Item type",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "Case",
+          "Screen protector",
+          "Stand",
+          "Cable",
+          "Charger",
+          "Power bank"
+        ]
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "compatibility",
+        "label": "Compatible phone or tablet models",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "authenticity",
+        "label": "Authenticity",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "Original manufacturer",
+          "Third-party compatible"
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "v2-musical-instruments",
+    "parent": "v2-books-sports-hobbies",
+    "id": "58261475-f394-5c18-9d33-0aac8ac4490c",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Instrument type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "included",
+        "label": "Included accessories",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-other-appliances",
+    "parent": "v2-home-appliances",
+    "id": "352804fe-6450-5e28-ad21-7006dca07d7d",
+    "risk": "electrical",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Appliance type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "rating",
+        "label": "Power rating",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-other-electronics-gadgets",
+    "parent": "v2-tvs-audio-cameras",
+    "id": "e9fa587f-fdbf-515a-8eff-7b0df0babed6",
+    "risk": "electronics",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Device type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "power",
+        "label": "Power source",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-other-hobbies",
+    "parent": "v2-books-sports-hobbies",
+    "id": "4a30d94c-4408-5184-9021-61f358fb17aa",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Hobby item type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "material",
+        "label": "Material",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "included",
+        "label": "Included pieces",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-other-household-items",
+    "parent": "v2-furniture-home",
+    "id": "b56cb870-093c-5a1b-baf1-ea68f18d4c79",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Household item type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "material",
+        "label": "Material",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "dimensions",
+        "label": "Dimensions (cm)",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-pet-food-accessories",
+    "parent": "v2-pets-supplies",
+    "id": "5402e408-0bc6-5370-979d-6391b03216c3",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Item type",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "Leash",
+          "Collar",
+          "Pet bed",
+          "Bowl",
+          "Carrier"
+        ]
+      },
+      {
+        "key": "size",
+        "label": "Size and intended pet",
+        "required": true,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-power-backup-solar",
+    "parent": "v2-home-appliances",
+    "id": "f0ab774d-f7f5-59c6-b79e-55abeb6f86b8",
+    "risk": "electrical",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Equipment type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "rating",
+        "label": "Rated output or capacity",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-printers-scanners",
+    "parent": "v2-computers-gaming",
+    "id": "32e07b86-43e7-52db-9bb8-c4f791e6d083",
+    "risk": "electronics",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Printer or scanner",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "print_type",
+        "label": "Print technology",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-projectors",
+    "parent": "v2-tvs-audio-cameras",
+    "id": "cb84e54c-57a8-5e6d-8696-77cc420b2e81",
+    "risk": "electronics",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "resolution",
+        "label": "Native resolution",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "brightness",
+        "label": "Brightness (lumens)",
+        "required": false,
+        "kind": "number",
+        "min": 1.0,
+        "max": 50000.0
+      }
+    ]
+  },
+  {
+    "slug": "v2-refrigerators",
+    "parent": "v2-home-appliances",
+    "id": "45e64a25-0b43-56ec-99c9-61f2ff91b394",
+    "risk": "electrical",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "capacity",
+        "label": "Capacity (litres)",
+        "required": true,
+        "kind": "number",
+        "min": 1.0,
+        "max": 2000.0
+      },
+      {
+        "key": "door_type",
+        "label": "Door type",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-school-bags-kids-essentials",
+    "parent": "v2-kids-baby",
+    "id": "130863d9-8eeb-5e5a-ad1f-b53f33d7da29",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Item type",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "School bag",
+          "Pencil case",
+          "Lunch bag"
+        ]
+      },
+      {
+        "key": "size",
+        "label": "Size or capacity",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "included",
+        "label": "Included contents",
+        "required": true,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-sofas-dining",
+    "parent": "v2-furniture-home",
+    "id": "c57a87d6-9e3c-5a20-afdc-bda20c7418bb",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Sofa or dining furniture type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "material",
+        "label": "Material",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "dimensions",
+        "label": "Dimensions (cm)",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "seats",
+        "label": "Seats",
+        "required": false,
+        "kind": "number",
+        "min": 1.0,
+        "max": 100.0
+      }
+    ]
+  },
+  {
+    "slug": "v2-speakers-home-theatre",
+    "parent": "v2-tvs-audio-cameras",
+    "id": "9707e78d-f5e2-5d0e-9ee7-352154b7af76",
+    "risk": "electronics",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Audio equipment type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "channels",
+        "label": "Channel layout",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-sports-equipment",
+    "parent": "v2-books-sports-hobbies",
+    "id": "ad008d07-df94-5572-bd8c-1ac5b8d9c64f",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Equipment type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "sport",
+        "label": "Sport",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "size",
+        "label": "Size",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-strollers-prams",
+    "parent": "v2-kids-baby",
+    "id": "764c31c7-df3f-5bac-a3f2-1b56e7baabb2",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Item type",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "Stroller",
+          "Pram"
+        ]
+      },
+      {
+        "key": "model",
+        "label": "Make and model",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brakes",
+        "label": "Brakes",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "Working"
+        ]
+      },
+      {
+        "key": "folding",
+        "label": "Folding",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "Locks securely"
+        ]
+      },
+      {
+        "key": "included",
+        "label": "Included parts and wear",
+        "required": true,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-sunglasses-accessories",
+    "parent": "v2-fashion",
+    "id": "531b5e52-df72-535a-b4b9-07503726161b",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Accessory type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "size",
+        "label": "Size or fit",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "material",
+        "label": "Material",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-tables-chairs",
+    "parent": "v2-furniture-home",
+    "id": "ec6a3d86-1ce8-574e-9a7b-bef64e1ccf41",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Table or chair type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "material",
+        "label": "Material",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "dimensions",
+        "label": "Dimensions (cm)",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "quantity",
+        "label": "Quantity",
+        "required": false,
+        "kind": "number",
+        "min": 1.0,
+        "max": 100.0
+      }
+    ]
+  },
+  {
+    "slug": "v2-textbooks-exam-prep",
+    "parent": "v2-books-sports-hobbies",
+    "id": "0990551a-028c-57d9-8089-e568d1da6c6f",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "book_title",
+        "label": "Book title",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "subject",
+        "label": "Subject or exam",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "edition",
+        "label": "Edition",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "publisher",
+        "label": "Publisher",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-toys-games",
+    "parent": "v2-kids-baby",
+    "id": "5fd8809e-19aa-5310-851a-707e033e1baa",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Item type",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "Board game",
+          "Puzzle",
+          "Building toy",
+          "Soft toy"
+        ]
+      },
+      {
+        "key": "age",
+        "label": "Manufacturer age guidance",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "included",
+        "label": "Included parts",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "safety",
+        "label": "Safety",
+        "required": true,
+        "kind": "text",
+        "choices": [
+          "Complete and undamaged"
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "v2-tvs",
+    "parent": "v2-tvs-audio-cameras",
+    "id": "331aa914-39c6-5cb1-9b63-49e50a62dd01",
+    "risk": "electronics",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "screen",
+        "label": "Screen size (inches)",
+        "required": true,
+        "kind": "number",
+        "min": 5.0,
+        "max": 150.0
+      },
+      {
+        "key": "technology",
+        "label": "Screen technology",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "resolution",
+        "label": "Resolution",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-washing-machines",
+    "parent": "v2-home-appliances",
+    "id": "4413f628-e2e9-50b2-aea0-ade25c179d96",
+    "risk": "electrical",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "capacity",
+        "label": "Load capacity (kg)",
+        "required": true,
+        "kind": "number",
+        "min": 1.0,
+        "max": 100.0
+      },
+      {
+        "key": "load_type",
+        "label": "Load type",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-watches",
+    "parent": "v2-fashion",
+    "id": "6cfdf034-9b79-511b-aa74-e56574960477",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Watch type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "model",
+        "label": "Model",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "movement",
+        "label": "Movement or power source",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  },
+  {
+    "slug": "v2-women",
+    "parent": "v2-fashion",
+    "id": "b8270acc-966c-5554-bac4-9feb51b7f572",
+    "risk": "general",
+    "flow": "generic",
+    "fields": [
+      {
+        "key": "item_type",
+        "label": "Clothing or footwear type",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "size",
+        "label": "Labelled size",
+        "required": true,
+        "kind": "text"
+      },
+      {
+        "key": "brand",
+        "label": "Brand",
+        "required": false,
+        "kind": "text"
+      },
+      {
+        "key": "material",
+        "label": "Material",
+        "required": false,
+        "kind": "text"
+      }
+    ]
+  }
+]
