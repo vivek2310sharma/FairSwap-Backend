@@ -9,5 +9,5 @@ test('V1.1 fixture export matches reviewed Web hashes and preserves separate V1 
 test('Existing workflows preserve V1, add update/coexistence checks and gate Web evidence',()=>{
  const ci=readFileSync('.github/workflows/backend-ci.yml','utf8'),release=readFileSync('.github/workflows/reusable-supabase-release.yml','utf8');
  for(const pattern of[/tests\/wearables-v1\/web-fixture/,/tests\/wearables-v11\/web-fixture/,/test-wearables-v1.mjs --catalogue-update/,/test-wearables-tablets-v1.mjs --catalogue-update/])assert.match(ci,pattern);
- assert.match(release,/          - wearables-v11-catalogue\n/);assert.match(release,/inputs.candidate == 'wearables-v11-catalogue'\) && secrets.CHAT_RELEASE_AUDIT_TOKEN/);
+ assert.match(release,/          - wearables-v11-catalogue\n/);assert(release.includes("WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue' || startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-')) && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}"));
 });
