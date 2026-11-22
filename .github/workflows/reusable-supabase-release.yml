@@ -44,7 +44,7 @@ on:
           - v3-goods-batch-activate
           - v3-goods-batch-deactivate
       v3_batch:
-        description: 'V3 Goods Batch: JSON array of [{candidateId, testActivationRunId?, testE2eRunId?, booksAcceptanceRunId?}]'
+        description: 'V3 Goods Batch (max 5 leaves per dispatch): JSON array of [{candidateId, testActivationRunId?, testE2eRunId?, booksAcceptanceRunId?}]'
         required: false
         type: string
       books_acceptance_run_id:
@@ -235,6 +235,7 @@ jobs:
           ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
           BOOKS_ACCEPTANCE_RUN_ID: ${{ inputs.books_acceptance_run_id }}
           TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
+          V3_BATCH_JSON: ${{ inputs.v3_batch }}
         run: |
           node --input-type=module - <<'NODE'
           import {appendFileSync} from 'node:fs';
@@ -247,9 +248,10 @@ jobs:
             test_catalogue_run_id: e.TEST_CATALOGUE_RUN_ID,
             test_foundation_run_id: e.TEST_FOUNDATION_RUN_ID, test_activation_run_id: e.TEST_ACTIVATION_RUN_ID,
             prod_foundation_run_id: e.PROD_FOUNDATION_RUN_ID,
-            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID, books_acceptance_run_id: e.BOOKS_ACCEPTANCE_RUN_ID
+            accessories_prod_foundation_run_id: e.ACCESSORIES_PROD_FOUNDATION_RUN_ID, test_e2e_run_id: e.TEST_E2E_RUN_ID, books_acceptance_run_id: e.BOOKS_ACCEPTANCE_RUN_ID,
+            v3_batch: e.V3_BATCH_JSON
           }});
-          if (plan.candidate.v3Operation) {
+          if (plan.candidate.v3Operation || plan.candidate.v3Batch) {
             const {requireLeafEvidence} = await import('./scripts/release/v3-leaf-release.mjs');
             await requireLeafEvidence(plan, e);
             appendFileSync(e.GITHUB_OUTPUT, 'auto_promote=false\n');
@@ -284,7 +286,7 @@ jobs:
     if: ${{ needs.verify.result == 'success' && inputs.target == 'test' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
     environment: FairSwapTest
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.candidate == 'v3-test-remaining-batch' && 45 || 20 }}
+    timeout-minutes: ${{ inputs.candidate == 'v3-test-remaining-batch' && 45 || startsWith(inputs.candidate, 'v3-goods-batch-') && 30 || 20 }}
     defaults:
       run:
         shell: bash --noprofile --norc -euo pipefail {0}
@@ -318,6 +320,7 @@ jobs:
           ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
           BOOKS_ACCEPTANCE_RUN_ID: ${{ inputs.books_acceptance_run_id }}
           TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
+          V3_BATCH_JSON: ${{ inputs.v3_batch }}
           WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
         run: |
           node --input-type=module - <<'NODE'
@@ -581,7 +584,7 @@ jobs:
       (inputs.target == 'adopt' && inputs.candidate == 'accessories-v1-foundation' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped')) }}
     environment: FairSwapProd
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.candidate == 'v3-production-disabled-batch' && 45 || 20 }}
+    timeout-minutes: ${{ inputs.candidate == 'v3-production-disabled-batch' && 45 || startsWith(inputs.candidate, 'v3-goods-batch-') && 30 || 20 }}
     defaults:
       run:
         shell: bash --noprofile --norc -euo pipefail {0}
@@ -612,6 +615,7 @@ jobs:
           ACCESSORIES_PROD_FOUNDATION_RUN_ID: ${{ inputs.accessories_prod_foundation_run_id }}
           BOOKS_ACCEPTANCE_RUN_ID: ${{ inputs.books_acceptance_run_id }}
           TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
+          V3_BATCH_JSON: ${{ inputs.v3_batch }}
           WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
         run: |
           node --input-type=module - <<'NODE'

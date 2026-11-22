@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {V3_GOODS, PROJECT_REFS, getCandidate, planDispatch, verifyCandidateSha} from './reusable-candidates.mjs';
+import {V3_GOODS, V3_BATCH_MAX_LEAVES, PROJECT_REFS, getCandidate, planDispatch, verifyCandidateSha} from './reusable-candidates.mjs';
 import {getJson, downloadArtifact, readZipEntries, WORKFLOW_PATH} from './accessories-v1-release.mjs';
 import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
 
@@ -282,6 +282,8 @@ function leafContext(c, plan) {
     BOOKS_ACCEPTANCE_RUN_ID: plan.booksAcceptanceRunId};
 }
 
+export const V3_BATCH_BUDGET_MS = 10 * 60 * 1000;
+
 // One workflow and reviewed operators; each category commits and verifies independently.
 // Any later failure compensates every earlier activation from THIS batch, in reverse order.
 export async function releaseV3GoodsBatch(options) {
@@ -296,8 +298,14 @@ export async function releaseV3GoodsBatch(options) {
   }
   const completed = [];
   const receiptDir = options.receiptDir ?? resolve('release-receipts');
+  const now = options.now ?? Date.now;
+  const budgetMs = options.budgetMs ?? V3_BATCH_BUDGET_MS;
+  const started = now();
+  need(plan.plans.length <= V3_BATCH_MAX_LEAVES, 'BATCH_TOO_LARGE');
   try {
     for (const leaf of plan.plans) {
+      // Never start another leaf once the budget is spent, leaving the job timeout for compensation.
+      need(completed.length === 0 || now() - started <= budgetMs, 'BATCH_TIME_BUDGET_EXCEEDED');
       const receipt = await releaseV3Leaf({...options, candidateId: leaf.candidate.id,
         context: leafContext(c, leaf), receiptDir, skipEvidence: true});
       completed.push({leaf, receipt});
