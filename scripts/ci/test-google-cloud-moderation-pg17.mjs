@@ -210,9 +210,9 @@ await db.exec(`
   $$;
 `);
 
-console.log('--- Applying Real Forward Migration 20261119130000_google_cloud_moderation_v1.sql ---');
+console.log('--- Applying Real Forward Migration 20261120000000_google_cloud_moderation_v1.sql ---');
 const migrationSql = readFileSync(
-  resolve(root, 'supabase/forward-migrations/moderation-google-cloud-v1/20261119130000_google_cloud_moderation_v1.sql'),
+  resolve(root, 'supabase/forward-migrations/moderation-google-cloud-v1/20261120000000_google_cloud_moderation_v1.sql'),
   'utf8'
 );
 await db.exec(migrationSql);

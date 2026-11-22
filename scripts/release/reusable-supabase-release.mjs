@@ -664,7 +664,7 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
         'migration_version_applied', (
           SELECT CASE
             WHEN to_regclass('supabase_migrations.schema_migrations') IS NOT NULL
-            THEN (SELECT count(*) = 1 FROM supabase_migrations.schema_migrations WHERE version = '20261119130000')
+            THEN (SELECT count(*) = 1 FROM supabase_migrations.schema_migrations WHERE version = '20261120000000')
             ELSE true
           END
         )
