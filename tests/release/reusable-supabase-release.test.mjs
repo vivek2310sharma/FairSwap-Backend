@@ -4177,3 +4177,5 @@ test('IDV DigiLocker V1 Production guard fails closed on any deviation from the 
 
 // Additive hook: keep independent V3 operator tests in the existing release/security CI suite.
 import './v3-leaf-release.test.mjs';
+
+import "./v3-hosted-e2e.test.mjs";
