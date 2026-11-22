@@ -216,6 +216,7 @@ jobs:
         id: plan
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
           CANDIDATE: ${{ inputs.candidate }}
           TARGET: ${{ inputs.target }}
           WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}

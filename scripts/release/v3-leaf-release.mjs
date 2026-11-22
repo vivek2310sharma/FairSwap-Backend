@@ -1,3 +1,4 @@
+import {requireHostedE2e} from './v3-hosted-e2e.mjs';
 // One-leaf operator orchestration. No migrations, switches, provider calls or automatic promotion.
 import {readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync} from 'node:fs';
 import {join, resolve} from 'node:path';
@@ -83,10 +84,10 @@ export function verifyLeafReceipt(r, p, c) {
 }
 
 export async function requireLeafEvidence(plan, c, fetcher = fetch) {
-  // No reviewed hosted V3 E2E producer/artifact contract is configured in this source.
-  // SQL activation receipts are deliberately insufficient. Only a reviewed integration
-  // with genuine hosted Test E2E evidence can remove this block; no input can waive it.
-  need(plan.target !== 'production' || plan.candidate.v3Operation !== 'activate', 'HOSTED_TEST_E2E_EVIDENCE_UNAVAILABLE');
+  if (plan.target === 'production' && plan.candidate.v3Operation === 'activate') {
+    if (!c.TEST_E2E_RUN_ID || !c.WEB_EVIDENCE_TOKEN) throw Error('V3_LEAF_HOSTED_TEST_E2E_EVIDENCE_UNAVAILABLE');
+    await requireHostedE2e(plan, c, fetcher);
+  }
   for (const p of plan.priorRuns) {
     need(c.GITHUB_TOKEN && /^[1-9][0-9]*$/.test(p.runId), 'EVIDENCE_REQUIRED');
     const base = `https://api.github.com/repos/${backend}/actions/runs/${p.runId}`;
