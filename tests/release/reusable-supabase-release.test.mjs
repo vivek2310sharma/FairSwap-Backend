@@ -29,6 +29,43 @@ import {
 import {verifyV3ProductionEvidence, v3ProductionState} from '../../scripts/release/v3-production-evidence.mjs';
 import {setupOrdinaryGoodsFixture} from '../ordinary-goods/fixture.mjs';
 
+test('Account Security Email V2 candidate pins its exact migration and Test-to-Production plan', () => {
+  const candidate = getCandidate('account-security-email-v2');
+  assert.equal(candidate.version, '20261122213000');
+  assert.equal(candidate.filename, '20261122213000_account_security_digilocker_email_outbox.sql');
+  assert.equal(verifyCandidateSha(candidate.id).sha256, 'fd22fbe3ee453b70dc99436a4cabe984705141001cfe927ece2e682a0e752bd6');
+  assert.equal(candidate.autoPromote, true);
+  assert.equal(candidate.accountSecurityEmail, true);
+  assert.equal(planDispatch({candidateId:candidate.id,target:'test'}).priorRuns.length, 0);
+  assert.equal(planDispatch({candidateId:candidate.id,target:'production'}).target, 'production');
+  assert.throws(() => planDispatch({candidateId:candidate.id,target:'adopt'}), /ACCOUNT_SECURITY_EMAIL_ADOPTION_FORBIDDEN/);
+});
+
+test('Account Security Email V2 postflight rejects failed authorization, trigger or history checks', async () => {
+  const healthy = {
+    queue_rls:true, clients_denied:true, service_can_claim:true,
+    confirmation_trigger:true, rpc_permissions:true, legacy_queue:true,
+    scheduler:true, migration_record:true, event_integrity:true
+  };
+  const runner = (_cmd,args) => {
+    assert.ok(args.at(-1).includes('trg_auth_user_signup_security_email'));
+    return JSON.stringify(healthy);
+  };
+  const verified = await verifyRemotePostflight('FairSwapTest','account-security-email-v2','postgresql://local',{},runner);
+  assert.equal(verified.status,'PASS');
+  for (const key of Object.keys(healthy)) {
+    const broken = {...healthy,[key]:false};
+    await assert.rejects(
+      verifyRemotePostflight('FairSwapTest','account-security-email-v2','postgresql://local',{},() => JSON.stringify(broken)),
+      /ACCOUNT_SECURITY_EMAIL_POSTFLIGHT_FAILED/
+    );
+  }
+  await assert.rejects(
+    verifyRemotePostflight('FairSwapTest','account-security-email-v2','postgresql://local',{},() => 'not json'),
+    /ACCOUNT_SECURITY_EMAIL_POSTFLIGHT_UNREADABLE/
+  );
+});
+
 test('candidate registry correctly registers moderation-analytics-v1', () => {
   const c = getCandidate('moderation-analytics-v1');
   assert.equal(c.version, '20261102000000');
@@ -520,7 +557,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'idv-digilocker-oidc-v2', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
+  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'account-security-email-v2', 'idv-digilocker-oidc-v2', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -3575,7 +3612,7 @@ test('IDV DigiLocker V1 and V2: Production starts only after a verified Test rec
   assert.ok(yaml.includes("if: ${{ inputs.candidate == 'idv-digilocker-v1' || inputs.candidate == 'idv-digilocker-oidc-v2' }}"));
   // The only non-V3 Test-only candidate is the DigiLocker required gate (see its dedicated Production-refusal tests).
   assert.deepEqual(Object.values(CANDIDATES).filter(c => c.testOnly && !c.unifiedPublishingV3).map(c => c.id), ['idv-digilocker-required-gate']);
-  assert.deepEqual(Object.values(CANDIDATES).filter(c => c.autoPromote === true).map(c => c.id).sort(), ['idv-digilocker-oidc-v2', 'idv-digilocker-v1',
+  assert.deepEqual(Object.values(CANDIDATES).filter(c => c.autoPromote === true).map(c => c.id).sort(), ['account-security-email-v2', 'idv-digilocker-oidc-v2', 'idv-digilocker-v1',
     'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'taxonomy-v2-catalogue',
     'taxonomy-v2-foundation', 'v3-provider-neutral-activation']);
 });

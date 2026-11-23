@@ -330,6 +330,30 @@ function verifyDisabledV3(count, exec, production = false) {
 
 export async function verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore) {
   const candidate = getCandidate(candidateId);
+  if (candidate.accountSecurityEmail) {
+    const query = [
+      'BEGIN READ ONLY;',
+      "SET LOCAL statement_timeout = '15s';",
+      "SELECT jsonb_build_object(",
+      "  'queue_rls', EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = to_regclass('public.security_email_outbox') AND c.relrowsecurity AND c.relforcerowsecurity),",
+      "  'clients_denied', NOT has_table_privilege('anon','public.security_email_outbox','SELECT') AND NOT has_table_privilege('anon','public.security_email_outbox','INSERT') AND NOT has_table_privilege('authenticated','public.security_email_outbox','SELECT') AND NOT has_table_privilege('authenticated','public.security_email_outbox','INSERT'),",
+      "  'service_can_claim', has_table_privilege('service_role','public.security_email_outbox','SELECT') AND has_table_privilege('service_role','public.security_email_outbox','UPDATE'),",
+      "  'confirmation_trigger', EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = 'auth.users'::regclass AND t.tgname = 'trg_auth_user_signup_security_email' AND t.tgenabled IN ('O','A') AND t.tgfoid = to_regprocedure('app_security.trg_fn_enqueue_signup_security_email()')),",
+      "  'rpc_permissions', (SELECT count(*) = 4 AND bool_and(to_regprocedure(v.signature) IS NOT NULL AND NOT has_function_privilege('anon',to_regprocedure(v.signature),'EXECUTE') AND NOT has_function_privilege('authenticated',to_regprocedure(v.signature),'EXECUTE') AND has_function_privilege('service_role',to_regprocedure(v.signature),'EXECUTE')) FROM (VALUES ('public.claim_security_email_outbox_batch(integer,uuid,integer)'),('public.claim_security_email_outbox_job_by_id(uuid,uuid,integer)'),('public.complete_security_email_outbox_job(uuid,uuid,text)'),('public.fail_security_email_outbox_job(uuid,uuid,text,integer,text,boolean,integer,integer)')) AS v(signature)),",
+      "  'legacy_queue', to_regclass('public.email_outbox') IS NOT NULL AND to_regprocedure('public.claim_email_outbox_batch(integer,uuid,integer)') IS NOT NULL,",
+      "  'scheduler', EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'process-email-outbox-retries' AND active),",
+      "  'migration_record', EXISTS (SELECT 1 FROM supabase_migrations.schema_migrations WHERE version = '20261122213000' AND name = 'account_security_digilocker_email_outbox'),",
+      "  'event_integrity', NOT EXISTS (SELECT 1 FROM public.security_email_outbox WHERE event_type <> 'account_security_digilocker')",
+      ")::text;",
+      'COMMIT;'
+    ].join('\n');
+    let state;
+    try { state = JSON.parse(psqlQuery(query, psqlUrl, env, runner, 'postflight_sql').trim()); }
+    catch { throw new Error('ACCOUNT_SECURITY_EMAIL_POSTFLIGHT_UNREADABLE'); }
+    if (!state || Object.keys(state).length !== 9 || Object.values(state).some(value => value !== true))
+      throw new Error('ACCOUNT_SECURITY_EMAIL_POSTFLIGHT_FAILED');
+    return {status:'PASS', scope:'confirmed-signup-security-email-rls-and-queue'};
+  }
   if (candidateId === 'v3-provider-neutral-activation') {
     const checks = V3_ACTIVATION_CORRECTION.functions.map(([sig,digest]) =>
       `EXISTS(SELECT FROM pg_proc WHERE oid=to_regprocedure('${sig}') AND md5(prosrc)='${digest}' AND prosecdef AND proconfig @> ARRAY['search_path=""']::text[])`).join(' AND ');
@@ -797,6 +821,10 @@ export async function releaseReusable({
     throw new Error('REUSABLE_RELEASE_PROJECT_REF_NOT_ALLOWED');
   }
   const idvRequired = candidateId === IDV_DIGILOCKER_REQUIRED_CANDIDATE;
+  const accountSecurityEmail = candidate.accountSecurityEmail === true;
+  // Production only runs as automatic promotion of a successful Test dispatch.
+  if (accountSecurityEmail && environment === 'FairSwapProd' && context.TARGET !== 'test')
+    throw new Error('ACCOUNT_SECURITY_EMAIL_PRODUCTION_REQUIRES_TEST_DISPATCH');
   if (idvRequired && (environment !== 'FairSwapTest' || context.TARGET !== 'test')) {
     throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_REQUIRED_TEST_ONLY');
   }
@@ -943,7 +971,7 @@ export async function releaseReusable({
     const v3 = Boolean(candidate.unifiedPublishingV3) || v3IdentityPrerequisite;
     const idv = idvDigilocker || idvDigilockerV2 || idvRequired;
     const pinned = v3 || tablets || wearables || mobileCatalogue || listingValidity || taxonomy || catalogueUpdate || idv;
-    const ordered = v3 || candidate.strict || mobileCatalogue || listingValidity || taxonomy || idv;
+    const ordered = v3 || candidate.strict || mobileCatalogue || listingValidity || taxonomy || idv || accountSecurityEmail;
     const label = v3 ? 'V3' : idvRequired ? 'IDV_DIGILOCKER_REQUIRED' : idvDigilockerV2 ? 'IDV_DIGILOCKER_V2' : idvDigilocker ? 'IDV_DIGILOCKER' : taxonomy ? 'TAXONOMY' : listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
     const foundationVersion = wearables ? '20261104120000' : '20261102165946';
     const readLedger = () => readTabletsLedger(sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
@@ -1045,7 +1073,7 @@ export async function releaseReusable({
           ledgerBefore.find(row => row.version === foundationVersion)?.statementsSha256 !== context.TABLETS_FOUNDATION_LEDGER_SHA) {
         throw new Error(`REUSABLE_RELEASE_${label}_FOUNDATION_EVIDENCE_MISMATCH`);
       }
-      if (!v3Production && !mobileCatalogue && !listingValidity && !taxonomy && !idv && environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
+      if (!v3Production && !mobileCatalogue && !listingValidity && !taxonomy && !idv && !accountSecurityEmail && environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
         throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_EVIDENCE_REQUIRED`);
       }
       if (ledgerBefore.length !== beforeRemote.size || ledgerBefore.some(row =>
@@ -1077,7 +1105,7 @@ export async function releaseReusable({
     if (idvInstalledAttestation) {
       status = 'ALREADY_INSTALLED_VERIFIED';
       dryRunPending = [];
-    } else if ((environment === 'FairSwapTest' || candidate.strict) && isAlreadyApplied) {
+    } else if ((environment === 'FairSwapTest' || candidate.strict || accountSecurityEmail) && isAlreadyApplied) {
       // Support resumption for FairSwapTest if already applied: verify ledger, exact SQL hash, and postflight
       phase = 'postflight';
       const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore);
@@ -1193,6 +1221,7 @@ export async function releaseReusable({
       status,
       dryRunPending,
       postflightVerified: true,
+      ...(accountSecurityEmail ? {postflightScope:'confirmed-signup-security-email-rls-and-queue'} : {}),
       ...(pinned ? {ledgerStatementsSha256} : {}),
       ...(v3Production ? {
         releaseManifestSha256: context.EXPECTED_SHA,
