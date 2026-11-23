@@ -372,6 +372,7 @@ export const RECEIPT_STATUSES = ['APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED', 'ALRE
 export const ENVIRONMENT_NAMES = {test: 'FairSwapTest', prod: 'FairSwapProd'};
 // Which earlier runs a receipt must itself record, keyed by `${candidateId}|${environment}`.
 const RECEIPT_CHAIN = {
+  'canonical-family-chooser-v1|test': [],
   'accessories-v1-foundation|test': [],
   'accessories-v1-activation|test': ['test_foundation_run_id'],
   'accessories-v1-foundation|prod': ['test_foundation_run_id', 'test_activation_run_id'],
@@ -390,7 +391,7 @@ const RECEIPT_CHAIN = {
   'wearables-v1-activation|prod': []
 };
 // Candidates whose receipts must carry the installed-statements ledger hash (Test→Production byte identity).
-export const usesLedgerHash = candidate => ['tablets-v2-catalogue', 'wearables-v11-catalogue', 'taxonomy-v2-foundation', 'taxonomy-v2-catalogue'].includes(candidate.id) || /^(tablets|wearables)-v1-/.test(candidate.id);
+export const usesLedgerHash = candidate => ['canonical-family-chooser-v1', 'tablets-v2-catalogue', 'wearables-v11-catalogue', 'taxonomy-v2-foundation', 'taxonomy-v2-catalogue'].includes(candidate.id) || /^(tablets|wearables)-v1-/.test(candidate.id);
 
 // Minimal bounded ZIP reader for the single GitHub artifact archive (stored or deflate entries only).
 export function readZipEntries(buf) {
@@ -540,7 +541,7 @@ export async function requireStageEvidence(priorRuns, c, fetcher = fetch, {allow
       || (historical && !allowAncestor)) {
       fail('EVIDENCE_RUN_NOT_VERIFIED', p.key);
     }
-    const immutable = allowFoundationAncestors || isWearablesTestFoundation || policyAncestor || ['tablets-v2-catalogue', 'wearables-v11-catalogue'].includes(candidate.id);
+    const immutable = candidate.canonicalFamilyChooser === true || allowFoundationAncestors || isWearablesTestFoundation || policyAncestor || ['tablets-v2-catalogue', 'wearables-v11-catalogue'].includes(candidate.id);
     if (immutable && (c.GITHUB_REPOSITORY !== BACKEND || !c.GITHUB_TOKEN || !ID.test(p.runId)
         || !SHA40.test(run.head_sha) || !SHA40.test(c.GITHUB_SHA)
         || String(run.id) !== p.runId || run.workflow_id !== WORKFLOW_ID

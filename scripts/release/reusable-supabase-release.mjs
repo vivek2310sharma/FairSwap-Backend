@@ -366,6 +366,24 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
   if (candidateId === V3_IDENTITY_PREREQUISITE) {
     return v3ProductionState(sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'), {beforeProperty: true});
   }
+  if (candidate.canonicalFamilyChooser) {
+    const result = JSON.parse(psqlQuery(`begin read only;
+      select jsonb_build_object(
+        'environment_lifecycle',to_regclass('app_security.${environment === 'FairSwapTest' ? 'test' : 'production'}_submission_policies') is not null
+          and to_regprocedure('${environment === 'FairSwapTest' ? 'public.seller_submit_listing(uuid,integer)' : 'public.seller_submit_family_listing(uuid,integer)'}') is not null
+          and to_regclass('app_security.${environment === 'FairSwapTest' ? 'production' : 'test'}_submission_policies') is null,
+        'private_helper',not has_function_privilege('anon','app_security.canonical_family_chooser_v1(text)','EXECUTE')
+          and not has_function_privilege('authenticated','app_security.canonical_family_chooser_v1(text)','EXECUTE'),
+        'no_direct_writes',(select count(*)=5 and bool_and(not c.new_listing_enabled and not app_security.ordinary_goods_available_v3(c.id))
+          from public.categories c where c.slug in ('v2-cars','v2-motorcycles-scooters','v2-houses-apartments','v2-pg-hostels-guest-houses','v2-flatmates-shared-rooms')),
+        'positive_readiness',(select count(*)=5 and bool_and(app_security.canonical_family_chooser_v1(n->>'slug') and (n->>'posting_enabled')::boolean and n->>'status'='live')
+          from jsonb_array_elements(public.get_category_catalogue_v2()->'nodes') n
+          where n->>'slug' in ('v2-cars','v2-motorcycles-scooters','v2-houses-apartments','v2-pg-hostels-guest-houses','v2-flatmates-shared-rooms')));
+      commit;`, psqlUrl, env, runner, 'postflight_sql').trim());
+    if (result.environment_lifecycle !== true || result.private_helper !== true || result.no_direct_writes !== true || result.positive_readiness !== true)
+      throw new Error('REUSABLE_RELEASE_FAMILY_CHOOSER_POSTFLIGHT_FAILED');
+    return result;
+  }
   if (candidate.unifiedPublishingV3) {
     return verifyDisabledV3(candidate.unifiedPublishingV3.count,
       sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'), environment === 'FairSwapProd');
@@ -885,7 +903,12 @@ export async function releaseReusable({
     throw new Error('REUSABLE_RELEASE_MOBILE_CATALOGUE_TEST_EVIDENCE_REQUIRED');
   }
   // Accessories evidence (Web SHAs, earlier stages) is re-derived here; no-op for non-strict candidates.
-  const stagePlan = assertStageInputs(candidate, environment, context);
+  const stagePlan = candidate.canonicalFamilyChooser ? planDispatch({candidateId,
+    target: environment === 'FairSwapProd' ? 'production' : 'test',
+    inputs: {test_catalogue_run_id: context.TEST_CATALOGUE_RUN_ID}, context,
+  }) : assertStageInputs(candidate, environment, context);
+  if (candidate.canonicalFamilyChooser && environment === 'FairSwapProd')
+    await requireStageEvidence(stagePlan.priorRuns, context, fetcher);
 
   let catalogueWebEvidence;
   if (['tablets-v2-catalogue','wearables-v11-catalogue'].includes(candidate.id) && environment === 'FairSwapProd') {
@@ -999,7 +1022,7 @@ export async function releaseReusable({
     const wearables = candidate.id.startsWith('wearables-v1-');
     // Tablets, Wearables and Mobile Catalogue pin the ledger: history is read before apply, must not change, and the installed
     // statements hash is carried Test -> Production through the receipts.
-    const v3 = Boolean(candidate.unifiedPublishingV3) || v3IdentityPrerequisite;
+    const v3 = Boolean(candidate.unifiedPublishingV3) || v3IdentityPrerequisite || candidate.canonicalFamilyChooser === true;
     const idv = idvDigilocker || idvDigilockerV2 || idvRequired || idvAcr;
     const pinned = v3 || tablets || wearables || mobileCatalogue || listingValidity || taxonomy || catalogueUpdate || idv;
     const ordered = v3 || candidate.strict || mobileCatalogue || listingValidity || taxonomy || idv || accountSecurityEmail;
@@ -1147,7 +1170,7 @@ export async function releaseReusable({
     if (idvInstalledAttestation) {
       status = 'ALREADY_INSTALLED_VERIFIED';
       dryRunPending = [];
-    } else if ((environment === 'FairSwapTest' || candidate.strict || accountSecurityEmail) && isAlreadyApplied) {
+    } else if ((environment === 'FairSwapTest' || candidate.strict || accountSecurityEmail || candidate.canonicalFamilyChooser) && isAlreadyApplied) {
       // Support resumption for FairSwapTest if already applied: verify ledger, exact SQL hash, and postflight
       phase = 'postflight';
       const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore);
@@ -1316,7 +1339,7 @@ export async function releaseReusable({
         ...(stagePlan.e2eRunId ? {e2eRunId: stagePlan.e2eRunId} : {}),
         ...(stagePlan.e2eWaiver ? {e2eWaiver: stagePlan.e2eWaiver} : {})
       } : {}),
-      ...(candidate.strict ? {
+      ...(candidate.strict || candidate.canonicalFamilyChooser ? {
         stage: candidate.stage,
         webStagingSha: stagePlan.webStagingSha,
         webProductionSha: stagePlan.webProductionSha,

@@ -76,6 +76,15 @@ const V3_BATCHES = Object.freeze(Object.fromEntries(['activate','deactivate'].ma
 })));
 
 export const CANDIDATES = Object.freeze({
+  'canonical-family-chooser-v1': Object.freeze({
+    id: 'canonical-family-chooser-v1', version: '20261123123000',
+    filename: '20261123123000_canonical_family_chooser_v1.sql',
+    path: 'supabase/forward-migrations/unified-publishing-v3/supabase/migrations/20261123123000_canonical_family_chooser_v1.sql',
+    sha256: '9ad6ca559800728db9816f2361742a335bc2d6fbedde7f133184a1b21b7cdc45',
+    description: 'Guarded canonical choosers for existing reviewed family contracts; no write activation',
+    canonicalFamilyChooser: true, stage: 'catalogue', autoPromote: false,
+    requiredLedgerVersions: Object.freeze(['20261118092010', '20261119114512']),
+  }),
   'account-security-email-v2': Object.freeze({
     id: 'account-security-email-v2',
     version: '20261122213000',
@@ -570,6 +579,13 @@ export function planDispatch({candidateId, target = 'test', inputs = {}, context
       && context.GITHUB_ACTOR === waiver.owner && context.GITHUB_TRIGGERING_ACTOR === waiver.owner
       && context.GITHUB_ACTOR_ID === waiver.ownerId && context.GITHUB_REPOSITORY_OWNER_ID === waiver.ownerId
       && SHA40.test(context.GITHUB_SHA ?? '') && RUN_ID.test(context.GITHUB_RUN_ID ?? ''), 'E2E_WAIVER_OWNER_DISPATCH_REQUIRED');
+  }
+  if (candidate.canonicalFamilyChooser) {
+    need(target !== 'adopt', 'FAMILY_CHOOSER_INVALID_TARGET');
+    const priorRuns = target === 'production'
+      ? [{key: 'test_catalogue_run_id', runId: inputs.test_catalogue_run_id, candidateId, environment: 'test'}] : [];
+    need(target !== 'production' || RUN_ID.test(inputs.test_catalogue_run_id ?? ''), 'FAMILY_CHOOSER_TEST_EVIDENCE_REQUIRED');
+    return {candidate, target, priorRuns, webStagingSha: null, webProductionSha: null};
   }
   if (target === 'adopt') {
     // Read-only attestation of an existing Production installation; only registered installations qualify.

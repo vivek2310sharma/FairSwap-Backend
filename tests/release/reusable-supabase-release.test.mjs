@@ -587,7 +587,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'account-security-email-v2', 'idv-digilocker-aadhaar-acr', 'idv-digilocker-oidc-v2', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
+  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'account-security-email-v2', 'canonical-family-chooser-v1', 'idv-digilocker-aadhaar-acr', 'idv-digilocker-oidc-v2', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -5186,4 +5186,53 @@ test('V3 correction delivery pins version/source, requires history and rejects f
   assert.equal(productionJobRuns(yaml,{candidate:c.id,target:'test',autoPromote:true}),false);
   assert.equal(productionJobRuns(yaml,{candidate:c.id,target:'test',autoPromote:true,verifyTest:'failure'}),false);
   await assert.rejects(releaseReusable({candidateId:c.id,environment:'FairSwapProd',context:{TARGET:'production'},runner:()=>assert.fail('no tools')}),/TEST_EVIDENCE_REQUIRED/);
+});
+
+test('canonical family chooser pins additive SQL and requires Test evidence before Production',()=>{
+ const id='canonical-family-chooser-v1',candidate=verifyCandidateSha(id).candidate;
+ assert.equal(candidate.autoPromote,false);assert.equal(candidate.canonicalFamilyChooser,true);
+ assert.equal(planDispatch({candidateId:id,target:'test'}).priorRuns.length,0);
+ assert.throws(()=>planDispatch({candidateId:id,target:'production'}),/FAMILY_CHOOSER_TEST_EVIDENCE_REQUIRED/);
+ assert.throws(()=>planDispatch({candidateId:id,target:'adopt'}),/FAMILY_CHOOSER_INVALID_TARGET/);
+ assert.equal(planDispatch({candidateId:id,target:'production',inputs:{test_catalogue_run_id:'123'}}).priorRuns[0].candidateId,id);
+ const sql=readFileSync(candidate.path,'utf8');
+ assert.doesNotMatch(sql,/update public\.categories|alter table|create policy|create or replace function app_security\.(impl_submit|impl_moderate)/i);
+ assert.match(sql,/exception when others then return false/);
+});
+
+test('canonical chooser postflight requires private helper, disabled direct writes and catalogue guard',async()=>{
+ const checks={environment_lifecycle:true,private_helper:true,no_direct_writes:true,positive_readiness:true};
+ const call=value=>verifyRemotePostflight('FairSwapTest','canonical-family-chooser-v1','postgres://mock',{},(_cmd,args)=>{
+  assert.match(args.at(-1),/begin read only/i);assert.match(args.at(-1),/canonical_family_chooser_v1/);
+  return JSON.stringify(value);
+ });
+ assert.deepEqual(await call(checks),checks);
+ for(const key of Object.keys(checks)){
+  await assert.rejects(()=>call({...checks,[key]:false}),/FAMILY_CHOOSER_POSTFLIGHT_FAILED/);
+  const missing={...checks};delete missing[key];await assert.rejects(()=>call(missing),/FAMILY_CHOOSER_POSTFLIGHT_FAILED/);
+ }
+});
+
+test('canonical chooser Test receipt records its stage, ledger digest and empty evidence chain',()=>{
+ const candidate=getCandidate('canonical-family-chooser-v1');
+ const p={key:'test_catalogue_run_id',runId:'123',candidateId:candidate.id,environment:'test'};
+ const c={GITHUB_SHA:'a'.repeat(40)};
+ const receipt={candidateId:candidate.id,migrationVersion:candidate.version,migrationFile:candidate.filename,
+  migrationSha256:candidate.sha256,ledgerStatementsSha256:'b'.repeat(64),environment:'FairSwapTest',
+  projectRef:REFS.FairSwapTest,reviewedCommit:c.GITHUB_SHA,releaseWorkflowRun:p.runId,
+  postflightVerified:true,status:'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED',stage:'catalogue',
+  webStagingSha:null,priorRuns:[]};
+ const files=value=>{
+  const name=candidate.id+'-fairswaptest.json',body=Buffer.from(JSON.stringify(value));
+  return new Map([[name,body],['SHA256SUMS_fairswaptest',Buffer.from(createHash('sha256').update(body).digest('hex')+'  '+name+'\n')]]);
+ };
+ assert.equal(validateReceipt(p,c,files(receipt)).candidateId,candidate.id);
+ for(const override of [{ledgerStatementsSha256:null},{stage:null},{priorRuns:null},{projectRef:'foreign'}])
+  assert.throws(()=>validateReceipt(p,c,files({...receipt,...override})),/RECEIPT_CONTENT_INVALID/);
+});
+
+test('canonical chooser positively verifies the real existing Test lifecycle without Production authorization',async()=>{
+ assert(PGlite,'Existing pinned PGlite test dependency is required');
+ const {verifyExistingTestLifecycle}=await import('../canonical-family-chooser/test-lifecycle.mjs');
+ await verifyExistingTestLifecycle(PGlite,getCandidate('canonical-family-chooser-v1').path);
 });
