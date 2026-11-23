@@ -1,5 +1,6 @@
 // Disposable PGlite, no Supabase credentials or network.
 import assert from "node:assert/strict";
+import {createHash} from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -10,7 +11,7 @@ const db = new PGlite();
 const base = "supabase/forward-migrations/";
 const migrate = path => db.exec(readFileSync(path, "utf8"));
 try {
-  await setupOrdinaryGoodsFixture(sql => db.exec(sql));
+  await setupOrdinaryGoodsFixture(sql => db.exec(sql), {providerNeutral: true});
 
   await db.exec(`create or replace function auth.jwt() returns jsonb language sql stable as $$
     select jsonb_build_object('role',current_setting('role',true))
@@ -23,6 +24,71 @@ try {
     await db.query("select set_config('request.user',$1,false)",[user]);
     await db.exec("set role " + name);
   };
+  let quadModePublications = 0;
+  async function fourModes(listing, media) {
+    const baseChecks=['check_india_fraud_rules','check_openai_moderation'];
+    const az=[...baseChecks,'check_azure_vision_nsfw','check_azure_vision_category','check_azure_ocr_qr'];
+    const google=[...baseChecks,'check_google_vision_nsfw','check_google_vision_category','check_google_ocr_qr'];
+    for (const [mode,azure,gcloud,policy,scope,checks] of [
+      ['baseline',false,false,'india_baseline_v1.0.0','baseline_two_check',baseChecks],
+      ['azure',true,false,'india_azure_v1.0.0','multimodal_five_check',az],
+      ['google',false,true,'india_google_v1.0.0','multimodal_five_check',google],
+      ['dual',true,true,'india_dual_cloud_v1.0.0','multimodal_eight_check',[...az,...google.slice(2)]]
+    ]) {
+      await db.exec('begin');
+      try {
+        // Both optional-provider flags and identity enforcement stay independent of category availability.
+        await db.query("update public.app_system_settings set setting_value=$1 where setting_key='moderation_azure_enabled'",[String(azure)]);
+        await db.query("update public.app_system_settings set setting_value=$1 where setting_key='moderation_google_cloud_enabled'",[String(gcloud)]);
+        await db.exec("update public.app_system_settings set setting_value='false' where setting_key='identity_verification_required'");
+        await db.query("update public.listings set status='pending_review',revision=revision+1 where id=$1",[listing]);
+        const request=(await db.query("select * from public.listing_moderation_requests where listing_id=$1 and status='pending'",[listing])).rows[0];
+        const token='00000000-0000-4000-8000-000000000041';
+        await db.query("update public.listing_moderation_requests set status='claimed',claim_token=$2,claim_expires_at=clock_timestamp()+interval '5 minutes',claimed_at=clock_timestamp() where id=$1",[request.id,token]);
+        const path=await scalar('select original_storage_path from public.listing_media where id=$1',[media]);
+        const contentHash='a'.repeat(64);
+        const digest=createHash('sha256').update(`${media}:${path}:${contentHash}`).digest('hex');
+        const manifest=JSON.stringify([{id:media,path,sha256:contentHash}]);
+        await db.query(`insert into app_security.listing_media_verified_hashes(media_id,listing_id,original_storage_path,content_sha256,generation_id)
+          values($1,$2,$3,$4,$5)`,[media,listing,path,contentHash,request.generation_id]);
+        for(const [receiptPolicy,receiptScope,receiptChecks] of mode==='dual'
+          ? [['india_azure_v1.0.0','multimodal_five_check',az],['india_google_v1.0.0','multimodal_five_check',google]]
+          : [[policy,scope,checks]]) {
+          await db.query(`insert into app_security.listing_moderation_scan_receipts(request_id,listing_id,listing_revision,generation_id,
+            media_digest,verdict,ruleset_version,scope,completed_checks,manifest,scanned_media_count)
+            values($1,$2,$3,$4,$5,'APPROVE',$6,$7,$8::text[],$9::jsonb,1)`,
+            [request.id,listing,request.listing_revision,request.generation_id,digest,receiptPolicy,receiptScope,receiptChecks,manifest]);
+        }
+        const finalize=()=>scalar(`select app_security.impl_finalize_moderation_result(
+          $1,$2,'no_review_flags',$3,$4,$5::text[],array[]::text[],'[]','[]')`,[request.id,token,policy,scope,checks]);
+        // A master kill switch veto must remain effective for every provider mode.
+        await db.exec('savepoint kill_switch');
+        await db.exec("update public.app_system_settings set setting_value='false' where setting_key='moderation_automation_enabled'");
+        assert.notEqual((await finalize()).decision,'auto_approved',mode);
+        await db.exec('rollback to kill_switch');
+        assert.equal((await finalize()).decision,'auto_approved',mode);
+        assert.equal(await scalar('select status from public.listings where id=$1',[listing]),'active',mode);
+        // The independent trigger still denies incomplete/failed, stale, unconsumed,
+        // wrong-manifest and wrong-content-hash evidence in every mode.
+        await db.query("update public.listings set status='pending_review' where id=$1",[listing]);
+        for (const mutation of [
+          "update app_security.listing_moderation_scan_receipts set completed_checks=array['check_india_fraud_rules'] where request_id=$1",
+          "update app_security.listing_moderation_scan_receipts set failed_checks=array['check_openai_moderation'] where request_id=$1",
+          "update app_security.listing_moderation_scan_receipts set consumed=false where request_id=$1",
+          "update app_security.listing_moderation_scan_receipts set listing_revision=listing_revision+1 where request_id=$1",
+          "update app_security.listing_moderation_scan_receipts set manifest='[]'::jsonb where request_id=$1",
+          "delete from app_security.listing_media_verified_hashes where generation_id=$1",
+          ...(mode==='dual' ? ["update app_security.listing_moderation_scan_receipts set consumed=false where request_id=$1 and ruleset_version='india_google_v1.0.0'"] : [])
+        ]) {
+          await db.exec('savepoint tamper');
+          await db.query(mutation,[mutation.startsWith('delete') ? request.generation_id : request.id]);
+          await assert.rejects(db.query("update public.listings set status='active' where id=$1",[listing]),/ORDINARY_GOODS_CURRENT_CLEAN_SCAN_REQUIRED/,mode);
+          await db.exec('rollback to tamper');
+        }
+        quadModePublications++;
+      } finally { await db.exec('rollback'); }
+    }
+  }
   const moderationSource=readFileSync("supabase/migrations/20260914000008_create_listing_rpcs.sql","utf8");
   const approvalStart=moderationSource.indexOf("CREATE OR REPLACE FUNCTION app_security.impl_moderate_listing(");
   const approvalEnd=moderationSource.indexOf("CREATE OR REPLACE FUNCTION public.moderate_listing(",approvalStart);
@@ -79,7 +145,7 @@ try {
   await assert.rejects(db.exec(activation),/GOODS_LISTING_OR_IDENTITY_GUARDS_MISSING/);
   await db.exec("rollback");
   await db.exec(`create function app_security.enforce_verified_actor(uuid,boolean) returns void language plpgsql as $$
-    begin if current_setting('request.identity',true)='false' then raise exception 'IDENTITY_VERIFICATION_REQUIRED'; end if; end$$;
+    begin if exists(select 1 from public.app_system_settings where setting_key='identity_verification_required' and setting_value='true') and current_setting('request.identity',true)='false' then raise exception 'IDENTITY_VERIFICATION_REQUIRED'; end if; end$$;
     create function app_security.trg_identity_gate_listings() returns trigger language plpgsql as $$begin return new; end$$;
     create trigger trg_identity_gate before insert on public.listings for each row execute function app_security.trg_identity_gate_listings();
     create function app_security.trg_identity_gate_by_listing() returns trigger language plpgsql as $$begin return new; end$$;
@@ -88,14 +154,15 @@ try {
     create trigger trg_identity_gate before insert on public.posting_upload_sessions for each row execute function app_security.trg_identity_gate_posting_session();
     create function app_security.trg_identity_gate_staged_media() returns trigger language plpgsql as $$begin return new; end$$;
     create trigger trg_identity_gate before insert on public.posting_staged_media for each row execute function app_security.trg_identity_gate_staged_media();`);
-  await assert.rejects(db.exec(activation),/GOODS_SELLER_IDENTITY_ENFORCEMENT_OFF/);
-  await db.exec("rollback");
-  await db.exec("insert into public.app_system_settings values ('identity_verification_required','true','Fixture enforcement')");
+  await db.exec("insert into public.app_system_settings(setting_key,setting_value,description) values ('identity_verification_required','false','Fixture enforcement')");
   const intake = activation.replace("'five_check', true)", "'staff_intake', true)");
   await db.exec("update public.app_system_settings set setting_value='false' where setting_key='moderation_azure_enabled'");
-  await assert.rejects(db.exec(activation),/GOODS_FIVE_CHECK_MODERATION_NOT_READY/);
+  await db.exec("update public.app_system_settings set setting_value='false' where setting_key='moderation_automation_enabled'");
+  await assert.rejects(db.exec(activation),/GOODS_MODERATION_NOT_READY/);
   await db.exec("rollback");
+  await db.exec("update public.app_system_settings set setting_value='true' where setting_key='moderation_automation_enabled'");
   await db.exec(intake);
+  await db.exec("update public.app_system_settings set setting_value='true' where setting_key='identity_verification_required'");
   const activateBicycle = sql => sql.replace("'v2-books'", "'v2-bicycles'");
   await assert.rejects(db.exec(activateBicycle(activation)), /GOODS_CATEGORY_DRIFT/);
   await db.exec("rollback");
@@ -104,6 +171,7 @@ try {
   await db.exec("update public.app_system_settings set setting_value='true' where setting_key='moderation_azure_enabled'");
 
   assert.deepEqual(Object.keys(await scalar("select app_security.ordinary_goods_read_v3(null)")).sort(),["v2-bicycles","v2-books"]);
+  await db.exec("update public.app_system_settings set setting_value='true' where setting_key='identity_verification_required'");
   await role("authenticated",owner);
   await db.exec("select set_config('request.identity','false',false)");
   await assert.rejects(db.query("select public.ordinary_goods_session_v3('v2-books',gen_random_uuid(),'create')"),/IDENTITY_VERIFICATION_REQUIRED/);
@@ -134,12 +202,14 @@ try {
   }
   assert.equal(Object.keys(await scalar("select app_security.ordinary_goods_read_v3(null)")).length,56);
   await db.exec("update public.app_system_settings set setting_value='false' where setting_key='identity_verification_required'");
-  assert.deepEqual(await scalar("select app_security.ordinary_goods_read_v3(null)"),{});
+  assert.equal(Object.keys(await scalar("select app_security.ordinary_goods_read_v3(null)")).length,43);
   await role("authenticated",owner);
-  await assert.rejects(db.query("select public.ordinary_goods_session_v3('v2-books',$1,'create')",[owner]),/ORDINARY_GOODS_CONTRACT_UNAVAILABLE/);
+  await db.exec("begin");
+  assert.equal((await scalar("select public.ordinary_goods_session_v3('v2-books',$1,'create')",[owner])).session.owner_id,owner);
+  await db.exec("rollback");
   await db.exec("reset role");
   await db.exec("update public.app_system_settings set setting_value='true' where setting_key='identity_verification_required'");
-  console.log("PASS installed helper and hooks do not admit posting with identity enforcement off");
+  console.log("PASS all 43 approved goods remain available and sessions open with global identity enforcement off");
 
   for (const [i,d] of eligible.entries()) {
     const session = `00000000-0000-4000-8000-${String(100+i).padStart(12,"0")}`;
@@ -277,18 +347,19 @@ try {
     const checks = ["check_india_fraud_rules","check_openai_moderation","check_vision_nsfw","check_vision_category","check_ocr_qr"];
     const finalize = () => scalar(`select app_security.impl_finalize_moderation_result(
       $1,$2,'no_review_flags','india_v1.0.0','multimodal_five_check',$3::text[],array[]::text[],'[]','[]')`,[request.id,ticket,checks]);
-    await db.query("update public.listing_moderation_requests set status='claimed',claim_token=$2,claim_expires_at=now()+interval '5 minutes' where id=$1",[request.id,ticket]);
+    await db.query("update public.listing_moderation_requests set status='claimed',claim_token=$2,claim_expires_at=now()+interval '5 minutes',claimed_at=clock_timestamp() where id=$1",[request.id,ticket]);
     assert.equal((await finalize()).decision,"awaiting_retry");
     assert.equal(await scalar("select status from public.listings where id=$1",[listing]),"pending_review");
-    await db.query("update public.listing_moderation_requests set status='claimed',claim_token=$2,claim_expires_at=now()+interval '5 minutes' where id=$1",[request.id,ticket]);
+    await db.query("update public.listing_moderation_requests set status='claimed',claim_token=$2,claim_expires_at=now()+interval '5 minutes',claimed_at=clock_timestamp() where id=$1",[request.id,ticket]);
     const path=`${listing}/${media}/original.webp`;
     const hash="a".repeat(64);
+    const digest=createHash("sha256").update(`${media}:${path}:${hash}`).digest("hex");
     await db.query(`insert into app_security.listing_media_verified_hashes(media_id,listing_id,original_storage_path,content_sha256,generation_id)
       values($1,$2,$3,$4,$5)`,[media,listing,path,hash,request.generation_id]);
     await db.query(`insert into app_security.listing_moderation_scan_receipts(request_id,listing_id,listing_revision,generation_id,
       media_digest,verdict,ruleset_version,scope,completed_checks,manifest,scanned_media_count)
       values($1,$2,$3,$4,$5,'APPROVE','india_v1.0.0','multimodal_five_check',$6::text[],$7::jsonb,1)`,
-      [request.id,listing,request.listing_revision,request.generation_id,hash,checks,JSON.stringify([{id:media,path,sha256:hash}])]);
+      [request.id,listing,request.listing_revision,request.generation_id,digest,checks,JSON.stringify([{id:media,path,sha256:hash}])]);
     const staffApprove = revision => scalar("select public.moderate_listing_reviewed($1,'approve',null,$2,'pending_review')",[listing,revision]);
     if (i===0 || d.slug==="v2-books") {
       await role("authenticated",other);
@@ -307,6 +378,11 @@ try {
         await assert.rejects(staffApprove(request.listing_revision),/GOODS_STAFF_INTAKE_PUBLICATION_DISABLED/);
         await db.exec("reset role");
         assert.equal(await scalar("select status from public.listings where id=$1",[listing]),"pending_review");
+      }
+      if(d.slug==='v2-books') {
+        await db.exec("update app_security.ordinary_goods_contracts_v3 set moderation_mode='five_check' where slug='v2-books'");
+        await fourModes(listing,media);
+        await db.exec("update app_security.ordinary_goods_contracts_v3 set moderation_mode='staff_intake' where slug='v2-books'");
       }
       console.log("PASS", d.slug, "staff intake blocks publication even with a five-check result");
       continue;
@@ -334,22 +410,25 @@ try {
       await db.query("update public.listings set status='pending_review',revision=revision+1 where id=$1",[listing]);
       await db.exec("update public.app_system_settings set setting_value='false' where setting_key='moderation_azure_enabled'");
       const next=(await db.query("select id,generation_id,listing_revision from public.listing_moderation_requests where listing_id=$1 and status='pending'",[listing])).rows[0];
-      await db.query("update public.listing_moderation_requests set status='claimed',claim_token=$2,claim_expires_at=now()+interval '5 minutes' where id=$1",[next.id,ticket]);
+      await db.query("update public.listing_moderation_requests set status='claimed',claim_token=$2,claim_expires_at=now()+interval '5 minutes',claimed_at=clock_timestamp() where id=$1",[next.id,ticket]);
       await db.query(`insert into app_security.listing_media_verified_hashes(media_id,listing_id,original_storage_path,content_sha256,generation_id)
         values($1,$2,$3,$4,$5)`,[media,listing,path,hash,next.generation_id]);
       await db.query(`insert into app_security.listing_moderation_scan_receipts(request_id,listing_id,listing_revision,generation_id,
         media_digest,verdict,ruleset_version,scope,completed_checks,manifest,scanned_media_count)
         values($1,$2,$3,$4,$5,'APPROVE','india_baseline_v1.0.0','baseline_two_check',$6::text[],$7::jsonb,1)`,
-        [next.id,listing,next.listing_revision,next.generation_id,hash,checks.slice(0,2),JSON.stringify([{id:media,path,sha256:hash}])]);
+        [next.id,listing,next.listing_revision,next.generation_id,digest,checks.slice(0,2),JSON.stringify([{id:media,path,sha256:hash}])]);
       const result=await scalar(`select app_security.impl_finalize_moderation_result(
         $1,$2,'no_review_flags','india_baseline_v1.0.0','baseline_two_check',$3::text[],array[]::text[],'[]','[]')`,[next.id,ticket,checks.slice(0,2)]);
-      assert.equal(result.decision,"routed_to_admin");
-      assert.equal(await scalar("select status from public.listings where id=$1",[listing]),"pending_review");
+      assert.equal(result.decision,"auto_approved");
+      assert.equal(await scalar("select status from public.listings where id=$1",[listing]),"active");
       await db.exec("update public.app_system_settings set setting_value='true' where setting_key='moderation_azure_enabled'");
-      console.log("PASS provider fallback queues Goods for staff without publishing");
+      console.log("PASS baseline mode publishes through the shared receipt pipeline");
     }
+    await fourModes(listing,media);
     console.log("PASS",d.slug,"session, ownership, photo readiness, atomic submit, idempotency and publication gate");
   }
+  assert.equal(quadModePublications,43*4);
+  console.log("PASS all 43 approved categories publish in all four modes (172), with kill-switch and incomplete-receipt rejection");
   console.log("PASS 58 disabled defaults, 52 end-to-end SQL fixture submissions and four protected draft-only journeys, two forced gates and negative boundaries");
 } catch (error) {
   console.error(error.message, error.cause?.message ?? "", error.where ?? "");

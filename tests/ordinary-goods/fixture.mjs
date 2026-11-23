@@ -1,7 +1,7 @@
 import {readFileSync} from "node:fs";
 
 const base = "supabase/forward-migrations/";
-export async function setupOrdinaryGoodsFixture(exec, {beforeV3} = {}) {
+export async function setupOrdinaryGoodsFixture(exec, {beforeV3, providerNeutral = false} = {}) {
   const migrate = path => exec(readFileSync(path, "utf8"));
   await migrate("tests/taxonomy-v2/fixture.sql");
   await exec("alter table public.listings add column landmark text");
@@ -39,5 +39,10 @@ export async function setupOrdinaryGoodsFixture(exec, {beforeV3} = {}) {
     if (beforeV3 && path.endsWith('_ordinary_goods_v3.sql')) await beforeV3();
     try { await migrate(path); }
     catch (error) { throw Error(path + ": " + error.message, { cause: error }); }
+  }
+  if (providerNeutral) {
+    await exec("alter table public.app_system_settings add column updated_at timestamptz default clock_timestamp()");
+    await migrate(base+"moderation-google-cloud-v1/20261120000000_google_cloud_moderation_v1.sql");
+    await migrate(base+"unified-publishing-v3/supabase/migrations/20261122213157_v3_provider_neutral_activation.sql");
   }
 }

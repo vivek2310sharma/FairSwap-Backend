@@ -41,6 +41,19 @@ const unifiedPublishingV3 = Object.fromEntries(v3Candidates.map(([version, name,
 
 export const V3_PRODUCTION_SEQUENCE = Object.freeze([V3_IDENTITY_PREREQUISITE, ...Object.keys(unifiedPublishingV3)]);
 
+// Separate forward correction: never append to the historical eight-file release/receipt sequence.
+export const V3_ACTIVATION_CORRECTION = Object.freeze({
+  version: '20261122213157',
+  path: 'supabase/forward-migrations/unified-publishing-v3/supabase/migrations/20261122213157_v3_provider_neutral_activation.sql',
+  sha256: '3d1b351d20c943153b93330d206e64a1bdcbf11fa3b6d4bcd0ed5ce95f5c004e',
+  functions: Object.freeze([
+    ['app_security.ordinary_goods_available_v3(uuid)', 'bc2d6685b2e4ea1a379ea00b781bf9fa'],
+    ['app_security.ordinary_goods_actor_v3()', '0485add4be8b2bd682f9bc8c99e02ab0'],
+    ['app_security.ordinary_goods_listing_guard_v3()', '634f78d6652897358d8a0fc4d258da24'],
+    ['app_security.impl_finalize_moderation_result_azure_v1(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)', 'eccfd5bbacac0b561da0f3bb59486773']
+  ].map(Object.freeze))
+});
+
 // Explicit source-reviewed contracts; runtime metadata never expands this allowlist.
 export const V3_GOODS = Object.freeze(JSON.parse(readFileSync(new URL('./v3-goods-allowlist.json', import.meta.url), 'utf8')));
 export const V3_LEAF_OPERATIONS = Object.freeze(Object.fromEntries(V3_GOODS.flatMap(({slug}) =>
@@ -48,7 +61,7 @@ export const V3_LEAF_OPERATIONS = Object.freeze(Object.fromEntries(V3_GOODS.flat
     const id = `v3-${slug.slice(3)}-${operation}`;
     return [id, Object.freeze({id, slug, v3Operation: operation,
       path: `supabase/forward-migrations/unified-publishing-v3/${operation}-one.operator.sql`,
-      sha256: operation === 'activate' ? '1c0ff201e0249d3eead6ec85830e32a5946225cf2c037fae5328de955e223515'
+      sha256: operation === 'activate' ? 'ea3fcd1e6007161a915336423af78a330a5a60fc04bbeacca47213c1bbb930ee'
         : 'b7671b9452cabc7a86c0d14f995b9c1078b5574eb2aaf22032fe0282975c572f', autoPromote: false})];
   }))));
 

@@ -1,4 +1,5 @@
 -- Operator-only, separate from migrations. Invoke with psql -v slug=... -v web_commit=... -v moderation_mode=five_check|staff_intake
+-- five_check is the existing publication contract name; provider selection remains global.
 -- Set these only after verifying the deployed Web SHA and leaf-specific automated acceptance.
 \set ON_ERROR_STOP on
 begin;
@@ -15,6 +16,17 @@ begin
   end if;
   select * into strict g from app_security.ordinary_goods_contracts_v3
   where slug=current_setting('app.goods_v3_slug',true) for update;
+  if g.macro_category='goods' and g.slug not in ('v2-baby-gear-car-seats','v2-other-items') and not (
+    select count(*)=4 and coalesce(bool_and(md5(p.prosrc)=expected.digest and p.prosecdef
+      and p.proconfig @> array['search_path=""']::text[]),false)
+    from (values
+      ('app_security.ordinary_goods_available_v3(uuid)','bc2d6685b2e4ea1a379ea00b781bf9fa'),
+      ('app_security.ordinary_goods_actor_v3()','0485add4be8b2bd682f9bc8c99e02ab0'),
+      ('app_security.ordinary_goods_listing_guard_v3()','634f78d6652897358d8a0fc4d258da24'),
+      ('app_security.impl_finalize_moderation_result_azure_v1(uuid,uuid,text,text,text,text[],text[],jsonb,jsonb)','eccfd5bbacac0b561da0f3bb59486773')
+    ) expected(signature,digest)
+    join pg_catalog.pg_proc p on p.oid=pg_catalog.to_regprocedure(expected.signature)
+  ) then raise exception 'V3_LEAF_CORRECTION_REQUIRED'; end if;
   if g.draft_only and not exists (
     select 1 from pg_catalog.pg_trigger t
     where t.tgrelid='public.listings'::regclass and t.tgname='regulated_vehicle_draft_guard_v3'
@@ -45,13 +57,12 @@ begin
         when 'public.posting_staged_media'::regclass then pg_catalog.to_regprocedure('app_security.trg_identity_gate_staged_media()')
       end))) <> 5
   then raise exception 'GOODS_LISTING_OR_IDENTITY_GUARDS_MISSING'; end if;
-  if not app_security.v3_seller_identity_enforced() then
+  -- Restricted intake contracts keep their existing identity prerequisite.
+  if g.macro_category <> 'goods' and not app_security.v3_seller_identity_enforced() then
     raise exception 'GOODS_SELLER_IDENTITY_ENFORCEMENT_OFF';
   end if;
-  if not exists (select 1 from public.app_system_settings where setting_key='moderation_automation_enabled' and setting_value='true')
-    or (mode='five_check' and not exists (select 1 from public.app_system_settings
-      where setting_key='moderation_azure_enabled' and setting_value='true')) then
-    raise exception 'GOODS_FIVE_CHECK_MODERATION_NOT_READY';
+  if not exists (select 1 from public.app_system_settings where setting_key='moderation_automation_enabled' and setting_value='true') then
+    raise exception 'GOODS_MODERATION_NOT_READY';
   end if;
   update public.categories set status='live', is_active=true where id=g.category_id;
   update app_security.ordinary_goods_contracts_v3 set enabled=true,moderation_mode=mode where category_id=g.category_id;
