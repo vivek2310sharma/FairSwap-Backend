@@ -22,6 +22,8 @@ on:
           - idv-digilocker-oidc-v2
           # FairSwapTest only: testOnly, never promoted; Production is refused by the registry, the runner and the production job.
           - idv-digilocker-required-gate
+          # FairSwapTest only (gate stays ON): testOnly, never promoted; Production is refused by the registry, the runner and the production job.
+          - idv-digilocker-aadhaar-acr
           - account-security-email-v2
           - accessories-v1-foundation
           - accessories-v1-activation
@@ -618,6 +620,17 @@ jobs:
           verifyIdvDigilockerRequiredTestReceipt(JSON.parse(readFileSync('test-evidence/idv-digilocker-required-gate-fairswaptest.json', 'utf8')), process.env);
           NODE
 
+      - name: Verify IDV DigiLocker Aadhaar ACR Test receipt (Test only, never promoted)
+        if: ${{ inputs.candidate == 'idv-digilocker-aadhaar-acr' }}
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {readFileSync} from 'node:fs';
+          import {verifyIdvDigilockerAcrTestReceipt} from './scripts/release/idv-digilocker-v1-release.mjs';
+          verifyIdvDigilockerAcrTestReceipt(JSON.parse(readFileSync('test-evidence/idv-digilocker-aadhaar-acr-fairswaptest.json', 'utf8')), process.env);
+          NODE
+
   production:
     # Moderation, Mobile Catalogue, Listing Validity and Taxonomy: automatic after verified Test. Accessories and Tablets: only a dedicated target=production
     # dispatch, whose Web and earlier-stage Test/Production evidence was already enforced by the verify job.
@@ -625,7 +638,7 @@ jobs:
     needs: [verify, test, verify_test]
     if: >-
       ${{ always() && needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
-      inputs.candidate != 'v3-test-remaining-batch' && inputs.candidate != 'idv-digilocker-required-gate' &&
+      inputs.candidate != 'v3-test-remaining-batch' && inputs.candidate != 'idv-digilocker-required-gate' && inputs.candidate != 'idv-digilocker-aadhaar-acr' &&
       ((inputs.target == 'test' && needs.verify.outputs.auto_promote == 'true' && needs.test.result == 'success' && needs.verify_test.result == 'success' &&
       (inputs.candidate != 'v3-provider-neutral-activation' || needs.verify_test.outputs.correction_ledger_sha != '') &&
       (inputs.candidate != 'mobile-catalogue-india-v1' || needs.verify_test.outputs.mobile_catalogue_ledger_sha != '') &&

@@ -5,10 +5,13 @@
 //   1. the provider's token endpoint returns an ID token whose RS256 signature verifies against one trusted key from the
 //      provider's published JWKS (none/HS*/other algorithms rejected; a missing or null `kid` is accepted only when
 //      exactly one eligible key verifies), with exact issuer, audience (+azp), exp, iat, sub and our state-bound nonce;
-//   2. the signature-verified ID token carries a well-formed `digilockerid`. If the authenticated token response also
+//   2. the same signature-verified ID token carries `acr === "aadhaar"` (exact string; the provider's Aadhaar assurance,
+//      requested via the fixed authorize parameter acr=aadhaar). Missing, null, empty, wrong-typed or other values fail
+//      closed. `eaadhaar`, masked Aadhaar and unsigned response fields are never read or accepted as a substitute;
+//   3. the signature-verified ID token carries a well-formed `digilockerid`. If the authenticated token response also
 //      returns `digilockerid`, both must be equal. The id is only ever HMAC-fingerprinted by the caller;
-//   3. the caller (idv-digilocker-complete) binds that fingerprint atomically to exactly one FairSwap account.
-// No Aadhaar ACR, KYC, PAN or document claim is requested, required or read.
+//   4. the caller (idv-digilocker-complete) binds that fingerprint atomically to exactly one FairSwap account.
+// No KYC, PAN, document, name/DOB or Aadhaar number claim is requested, required or read.
 // Nothing here stores or returns tokens, codes, claims or the raw id.
 import { DIGILOCKER_HOST, DIGILOCKER_ID_PATTERN, DIGILOCKER_PURPOSE, DIGILOCKER_SERVICE_NAME, DigiLockerError, pkceChallenge } from "./digilocker-client.ts";
 import type { DigiLockerClientConfig } from "./digilocker-client.ts";
@@ -18,7 +21,11 @@ export const OIDC_AUTHORIZE_PATH = "/public/oauth2/1/authorize";
 export const OIDC_ISSUER = DIGILOCKER_HOST;
 export const OIDC_JWKS_URL = `${DIGILOCKER_HOST}/public/oauth2/jwks`;
 /** Evidence label stored with the binding; the database refuses any other value for a badge-issuing link. */
-export const OIDC_EVIDENCE_METHOD = "oidc_v2_signed_id_token";
+export const OIDC_EVIDENCE_METHOD = "oidc_v2_signed_aadhaar_acr";
+/** Historical label (signed digilockerid only, no Aadhaar assurance). The database no longer treats it as a badge. */
+export const OIDC_LEGACY_EVIDENCE_METHOD = "oidc_v2_signed_id_token";
+/** Fixed, non-user-controllable authentication context requested and required. */
+export const OIDC_ACR = "aadhaar";
 const TIMEOUT_MS = 8000;
 const CLOCK_SKEW_S = 60;
 const MAX_ATTEMPT_AGE_S = 900; // attempt TTL is capped at 900 s in SQL
@@ -44,6 +51,7 @@ export async function buildOidcAuthorizeUrl(cfg: DigiLockerClientConfig, state: 
   u.searchParams.set("code_challenge", await pkceChallenge(verifier));
   u.searchParams.set("code_challenge_method", "S256");
   u.searchParams.set("scope", "openid");
+  u.searchParams.set("acr", OIDC_ACR);
   u.searchParams.set("nonce", nonce);
   u.searchParams.set("purpose", DIGILOCKER_PURPOSE);
   u.searchParams.set("service_name", DIGILOCKER_SERVICE_NAME);
@@ -195,6 +203,7 @@ export async function verifyOidcIdentity(
   const sub = claims["sub"];
   if (typeof sub !== "string" || !sub.trim() || sub.length > 255) throw bad();
   if (typeof claims["nonce"] !== "string" || claims["nonce"] !== ctx.expectedNonce) throw bad();
+  if (claims["acr"] !== OIDC_ACR) throw bad(); // Aadhaar assurance must be inside the verified token
   const id = claims["digilockerid"];
   if (typeof id !== "string" || !DIGILOCKER_ID_PATTERN.test(id)) throw bad();
   if (ex.responseId !== null && ex.responseId.toLowerCase() !== id.toLowerCase()) throw bad();

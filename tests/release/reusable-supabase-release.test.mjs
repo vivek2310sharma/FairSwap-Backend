@@ -587,7 +587,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'account-security-email-v2', 'idv-digilocker-oidc-v2', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
+  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'account-security-email-v2', 'idv-digilocker-aadhaar-acr', 'idv-digilocker-oidc-v2', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -3438,7 +3438,10 @@ function idvRun(environment, {ledger = idvLedger(environment), env = {}, ledgerD
   const base = makeRunner({before, after: before.includes(c.version) ? before : [...before, c.version], filename: c.filename, sql: q => {
     if (q.startsWith('-- idv-digilocker-v2-preflight')) return idvChecks(IDV_DIGILOCKER_V2_PREFLIGHT, pre);
     if (q.startsWith('-- idv-digilocker-v2-postflight')) return {...idvChecks(IDV_DIGILOCKER_V2_POSTFLIGHT, post), ...(preserved ? {preserved} : {})};
-    if (q.startsWith('-- idv-digilocker-installed')) return idvChecks(idvDigilockerInstalledChecks(), installed);
+    if (q.startsWith('-- idv-digilocker-installed')) {
+      const acr = ledger.some(row => row.version === '20261123120000') ? 'applied' : 'absent';   // the exact ACR row selects its checks
+      return idvChecks(idvDigilockerInstalledChecks('historical', acr), installed);
+    }
     if (q.startsWith('-- idv-digilocker-preflight')) return idvChecks(environment === 'FairSwapProd' ? IDV_DIGILOCKER_PRODUCTION_PREFLIGHT : IDV_DIGILOCKER_PREFLIGHT, pre);
     if (q.startsWith('-- idv-digilocker-postflight')) return {...idvChecks(environment === 'FairSwapProd' ? IDV_DIGILOCKER_PRODUCTION_POSTFLIGHT : IDV_DIGILOCKER_POSTFLIGHT, post), ...(preserved ? {preserved} : {})};
     return [...ledger, ...(++ledgerReads === 3 ? [{version: c.version, name: c.filename.slice(15, -4), hasStatements: true,
@@ -3641,7 +3644,7 @@ test('IDV DigiLocker V1 and V2: Production starts only after a verified Test rec
   assert.match(yaml, /\n  test:\n    needs: verify\n    if: \$\{\{ needs\.verify\.result == 'success' && inputs\.target == 'test'/);
   assert.ok(yaml.includes("if: ${{ inputs.candidate == 'idv-digilocker-v1' || inputs.candidate == 'idv-digilocker-oidc-v2' }}"));
   // The only non-V3 Test-only candidate is the DigiLocker required gate (see its dedicated Production-refusal tests).
-  assert.deepEqual(Object.values(CANDIDATES).filter(c => c.testOnly && !c.unifiedPublishingV3).map(c => c.id), ['idv-digilocker-required-gate']);
+  assert.deepEqual(Object.values(CANDIDATES).filter(c => c.testOnly && !c.unifiedPublishingV3).map(c => c.id), ['idv-digilocker-required-gate', 'idv-digilocker-aadhaar-acr']);
   assert.deepEqual(Object.values(CANDIDATES).filter(c => c.autoPromote === true).map(c => c.id).sort(), ['account-security-email-v2', 'idv-digilocker-oidc-v2', 'idv-digilocker-v1',
     'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'taxonomy-v2-catalogue',
     'taxonomy-v2-foundation', 'v3-provider-neutral-activation']);
@@ -4669,6 +4672,394 @@ test('disposable PostgreSQL (PGlite, not native PG17): required-gate preflight/p
     assert.notEqual(await broken("create function public.idv_required_probe() returns integer language sql as 'select 1'", null,
       'drop function public.idv_required_probe()'), pre.preserved);
     assert.equal((await snapshot(IDV_DIGILOCKER_REQUIRED_POSTFLIGHT, 'required-postflight')).preserved, pre.preserved);
+  });
+
+// ---------------------------------------------------------------------------------------------
+// IDV DigiLocker Aadhaar ACR evidence (20261123120000): FairSwapTest ONLY, never promoted, live gate ON before AND after
+// ---------------------------------------------------------------------------------------------
+const {
+  IDV_DIGILOCKER_ACR_CANDIDATE, IDV_DIGILOCKER_ACR_SCOPE, IDV_DIGILOCKER_ACR_LEDGER, IDV_DIGILOCKER_ACR_BODIES, IDV_DIGILOCKER_ACR_PREFLIGHT,
+  IDV_DIGILOCKER_ACR_POSTFLIGHT, assertIdvDigilockerAcrLedger, idvAcrLedgerState, idvDigilockerAcrSnapshotSql, verifyIdvDigilockerAcrTestReceipt
+} = await import('../../scripts/release/idv-digilocker-v1-release.mjs');
+const acrRow = (over = {}) => ({version: IDV_DIGILOCKER_ACR_LEDGER.version, name: IDV_DIGILOCKER_ACR_LEDGER.name, hasStatements: true,
+  statementCount: IDV_DIGILOCKER_ACR_LEDGER.statementCount, statementsSha256: IDV_DIGILOCKER_ACR_LEDGER.statementsSha256, ...over});
+// Every historical prerequisite receipt as pinned: V1 (version/name), V2 (count/digest) and the required gate (count/digest).
+const acrLedger = ({gate = reqRow(), ...rest} = {}) => reqLedger({extra: [...(gate ? [gate] : []), ...(rest.extra ?? [])], ...Object.fromEntries(Object.entries(rest).filter(([k]) => k !== 'extra'))});
+const fnBodyMd5 = (path, signature) => {
+  const text = readFileSync(join(process.cwd(), path), 'utf8');
+  const at = text.indexOf(`FUNCTION ${signature}(`);
+  assert.ok(at >= 0, `${path} ${signature}`);
+  const start = text.indexOf('$$', at) + 2;
+  return createHash('md5').update(text.slice(start, text.indexOf('$$', start))).digest('hex');
+};
+
+function acrRun(environment = 'FairSwapTest', {ledger = acrLedger(), env = {}, recorded = {}, pre = {}, post = {}, preserved, dryOutput} = {}) {
+  const c = getCandidate(IDV_DIGILOCKER_ACR_CANDIDATE);
+  const dir = mkdtempSync(join(tmpdir(), 'idv-acr-'));
+  const full = [];
+  const before = ledger.map(row => row.version);
+  let reads = 0;
+  const base = makeRunner({before, after: [...before, c.version], filename: c.filename, sql: q => {
+    if (q.startsWith('-- idv-digilocker-acr-preflight')) return idvChecks(IDV_DIGILOCKER_ACR_PREFLIGHT, pre);
+    if (q.startsWith('-- idv-digilocker-acr-postflight')) return {...idvChecks(IDV_DIGILOCKER_ACR_POSTFLIGHT, post), ...(preserved ? {preserved} : {})};
+    if (q.startsWith('-- idv-digilocker')) assert.fail(`unexpected IDV query ${q.split('\n')[0]}`);
+    return [...ledger, ...(++reads === 3 ? [acrRow(recorded)] : [])].sort(idvByVersion);
+  }});
+  const runner = (cmd, args, ...rest) => {
+    full.push([cmd, ...args]);
+    if (cmd === 'supabase' && args.includes('--dry-run') && dryOutput) return dryOutput;
+    return base(cmd, args, ...rest);
+  };
+  const result = releaseReusable({environment, candidateId: c.id, receiptDir: dir, context: {...idvContext, ...env}, runner});
+  return {result, full, dir};
+}
+
+test('IDV Aadhaar ACR: exact Test-only registry entry, source-derived pins, and Production impossible from every dispatch target', () => {
+  const {candidate, sha256} = verifyCandidateSha(IDV_DIGILOCKER_ACR_CANDIDATE);
+  assert.deepEqual([candidate.version, candidate.filename, candidate.path, sha256], ['20261123120000', '20261123120000_idv_digilocker_aadhaar_acr.sql',
+    'supabase/forward-migrations/idv/20261123120000_idv_digilocker_aadhaar_acr.sql', '4e2b5ed60d4e799a69114e5ba445e27e7bb37ab9eace268608f414718649d79d']);
+  assert.equal(candidate.testOnly, true);
+  assert.equal(candidate.autoPromote, false);
+  assert.equal(candidate.strict, undefined);
+  assert.equal(candidate.allowedProjectRef, 'wpppxlnbzqynvhpeuavd');
+  assert.equal(candidate.allowedProjectRef, REFS.FairSwapTest);
+  assert.notEqual(candidate.allowedProjectRef, REFS.FairSwapProd);
+  assert.deepEqual(candidate.requiredLedgerVersions, ['20261117090000', '20261119200000', '20261122100000']);
+  assert.equal(planDispatch({candidateId: candidate.id, target: 'test'}).candidate, candidate);
+  assert.throws(() => planDispatch({candidateId: candidate.id, target: 'production'}), /TEST_ONLY_CANDIDATE/);
+  assert.throws(() => planDispatch({candidateId: candidate.id, target: 'adopt'}), /TEST_ONLY_CANDIDATE/);
+  assert.equal(EXISTING_INSTALLATIONS[`${candidate.id}|FairSwapProd`], undefined);
+  assert.ok(!V3_PRODUCTION_SEQUENCE.includes(candidate.id));
+
+  // Ledger and body pins are derived from the SHA-pinned sources, never typed in independently.
+  const statements = splitStatements(readFileSync(join(process.cwd(), candidate.path), 'utf8'));
+  assert.deepEqual([IDV_DIGILOCKER_ACR_LEDGER.version, IDV_DIGILOCKER_ACR_LEDGER.name, IDV_DIGILOCKER_ACR_LEDGER.statementCount, IDV_DIGILOCKER_ACR_LEDGER.statementsSha256],
+    [candidate.version, candidate.filename.slice(15, -4), statements.length, pgDigest(statements)]);
+  const v2 = getCandidate(IDV_DIGILOCKER_V2_CANDIDATE).path;
+  assert.equal(IDV_DIGILOCKER_ACR_BODIES.before.badge, fnBodyMd5(v2, 'app_security.has_digilocker_badge'));
+  assert.equal(IDV_DIGILOCKER_ACR_BODIES.before.complete, fnBodyMd5(v2, 'app_security.impl_idv_dl_complete_v2'));
+  assert.equal(IDV_DIGILOCKER_ACR_BODIES.after.badge, fnBodyMd5(candidate.path, 'app_security.has_digilocker_badge'));
+  assert.equal(IDV_DIGILOCKER_ACR_BODIES.after.complete, fnBodyMd5(candidate.path, 'app_security.impl_idv_dl_complete_v2'));
+  assert.equal(IDV_DIGILOCKER_ACR_BODIES.wrapper, fnBodyMd5(v2, 'public.server_idv_dl_complete_v2'));   // unchanged wrapper
+  assert.notEqual(IDV_DIGILOCKER_ACR_BODIES.before.badge, IDV_DIGILOCKER_ACR_BODIES.after.badge);
+  assert.notEqual(IDV_DIGILOCKER_ACR_BODIES.before.complete, IDV_DIGILOCKER_ACR_BODIES.after.complete);
+
+  // Gate: ON before and after (never OFF, never written); the OFF assertions of earlier releases are absent from this candidate.
+  assert.deepEqual(Object.keys(IDV_DIGILOCKER_ACR_PREFLIGHT), Object.keys(IDV_DIGILOCKER_ACR_POSTFLIGHT));
+  for (const checks of [IDV_DIGILOCKER_ACR_PREFLIGHT, IDV_DIGILOCKER_ACR_POSTFLIGHT]) {
+    assert.ok('gate_setting_on' in checks && 'gate_function_on' in checks && !('gate_setting_off' in checks) && !('gate_function_off' in checks));
+    assert.ok(checks.gate_setting_on.includes("setting_value = 'true'") && checks.gate_function_on.includes('IS TRUE'));
+  }
+  const text = readFileSync(join(process.cwd(), candidate.path), 'utf8');
+  assert.doesNotMatch(text.split('\n').filter(line => !line.startsWith('--')).join('\n'), /app_system_settings|identity_verification_required/i);   // never touches the switch
+
+  const yaml = readFileSync('.github/workflows/reusable-supabase-release.yml', 'utf8');
+  assert.match(yaml, /- idv-digilocker-required-gate\n(?: {10}#[^\n]*\n)? {10}- idv-digilocker-aadhaar-acr\n/);
+  assert.ok(yaml.includes("inputs.candidate != 'idv-digilocker-required-gate' && inputs.candidate != 'idv-digilocker-aadhaar-acr' &&"));
+  assert.ok(yaml.includes("if: ${{ inputs.candidate == 'idv-digilocker-aadhaar-acr' }}"));
+  assert.ok(yaml.includes('verifyIdvDigilockerAcrTestReceipt'));
+  assert.equal((yaml.match(/idv-digilocker-aadhaar-acr/g) ?? []).length, 4);   // option, receipt step condition, receipt path, production exclusion
+  assert.doesNotMatch(yaml, /identity_verification_required/i);
+});
+
+test('IDV Aadhaar ACR: a candidate whose bytes differ from the pinned SHA-256 is rejected before anything runs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-acr-root-'));
+  try {
+    const c = getCandidate(IDV_DIGILOCKER_ACR_CANDIDATE);
+    mkdirSync(join(root, c.path, '..'), {recursive: true});
+    writeFileSync(join(root, c.path), readFileSync(join(process.cwd(), c.path), 'utf8') + '\n-- extra');
+    assert.throws(() => verifyCandidateSha(c.id, root), /REUSABLE_RELEASE_CANDIDATE_HASH_MISMATCH/);
+  } finally { rmSync(root, {recursive: true, force: true}); }
+  const registry = readFileSync('scripts/release/reusable-candidates.mjs', 'utf8');
+  assert.equal(getCandidate(IDV_DIGILOCKER_ACR_CANDIDATE).sha256.length, 64);   // pinned: an unpinned entry cannot exist
+  assert.ok(registry.includes('4e2b5ed60d4e799a69114e5ba445e27e7bb37ab9eace268608f414718649d79d'));
+});
+
+test('IDV Aadhaar ACR: the production job is skipped for every input combination, so the candidate can never auto-promote', () => {
+  const yaml = readFileSync('.github/workflows/reusable-supabase-release.yml', 'utf8');
+  const id = IDV_DIGILOCKER_ACR_CANDIDATE;
+  const digests = {idv_digilocker_ledger_sha: 'b'.repeat(64), mobile_catalogue_ledger_sha: 'b'.repeat(64), listing_validity_ledger_sha: 'b'.repeat(64),
+    taxonomy_ledger_sha: 'b'.repeat(64)};
+  for (const target of ['test', 'production', 'adopt']) {
+    for (const autoPromote of [false, true]) {   // true is impossible for this candidate, but the job must still not run
+      for (const [testResult, verifyTest] of [['success', 'success'], ['skipped', 'skipped'], ['failure', 'skipped']]) {
+        for (const outputs of [{}, digests]) {
+          assert.equal(productionJobRuns(yaml, {candidate: id, target, autoPromote, test: testResult, verifyTest, outputs}), false,
+            JSON.stringify({target, autoPromote, testResult, verifyTest, outputs}));
+        }
+      }
+    }
+  }
+  assert.equal(planDispatch({candidateId: id, target: 'test'}).candidate.autoPromote, false);
+});
+
+test('IDV Aadhaar ACR: in-order FairSwapTest apply with exact prerequisite receipts, gate ON before/after, and a sanitized receipt', async () => {
+  const c = getCandidate(IDV_DIGILOCKER_ACR_CANDIDATE);
+  const run = acrRun();
+  let receipt;
+  try {
+    receipt = await run.result;
+    assert.equal(receipt.status, 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED');
+    assert.deepEqual([receipt.environment, receipt.projectRef, receipt.migrationVersion, receipt.migrationFile, receipt.migrationSha256],
+      ['FairSwapTest', 'wpppxlnbzqynvhpeuavd', c.version, c.filename, c.sha256]);
+    assert.deepEqual(receipt.dryRunPending, [c.filename]);
+    assert.equal(receipt.outOfOrderInstall, undefined);
+    assert.equal(receipt.ledgerStatementsSha256, IDV_DIGILOCKER_ACR_LEDGER.statementsSha256);
+    assert.equal(receipt.postflightScope, IDV_DIGILOCKER_ACR_SCOPE);
+    assert.equal(receipt.identityVerificationRequired, true);   // the live Test gate; never written by this release
+    assert.equal(receipt.edgeFunctionsDeployedByThisWorkflow, false);
+    assert.equal(receipt.testOnly, true);
+    assert.equal(receipt.autoPromote, false);
+    assert.equal(receipt.testLedgerStatementsSha256, undefined);
+    assert.deepEqual(receipt.requiredLedger, [{version: '20261117090000', name: 'idv_digilocker_direct_v1'},
+      {version: '20261119200000', name: 'idv_digilocker_oidc_v2_badge'}, {version: REQ_PIN.version, name: REQ_PIN.name}]);
+    assert.deepEqual(receipt.bodyTransition, {
+      hasDigilockerBadge: {from: IDV_DIGILOCKER_ACR_BODIES.before.badge, to: IDV_DIGILOCKER_ACR_BODIES.after.badge},
+      completeV2: {from: IDV_DIGILOCKER_ACR_BODIES.before.complete, to: IDV_DIGILOCKER_ACR_BODIES.after.complete}});
+    assert.deepEqual(readdirSync(run.dir).sort(), ['SHA256SUMS_fairswaptest', 'idv-digilocker-aadhaar-acr-fairswaptest.json']);
+    const bytes = readFileSync(join(run.dir, 'idv-digilocker-aadhaar-acr-fairswaptest.json'), 'utf8');
+    assert.equal(readFileSync(join(run.dir, 'SHA256SUMS_fairswaptest'), 'utf8'),
+      `${createHash('sha256').update(bytes).digest('hex')}  idv-digilocker-aadhaar-acr-fairswaptest.json\n`);
+    for (const secret of ['sbp_mock_token', 'mock_password', 'pooler.supabase.com', 'BEGIN CERTIFICATE', 'f'.repeat(64)]) assert.ok(!bytes.includes(secret), secret);
+    const link = run.full.find(cmd => cmd[0] === 'supabase' && cmd.includes('link'));
+    assert.equal(link[link.indexOf('--project-ref') + 1], 'wpppxlnbzqynvhpeuavd');
+    assert.ok(!run.full.flat().some(arg => String(arg).includes(REFS.FairSwapProd)));
+    const [dry, apply] = pushes(run.full);
+    assert.ok(dry.includes('--dry-run') && !dry.includes('--include-all') && apply.includes('--yes') && !apply.includes('--include-all'));
+    const at = label => run.full.findIndex(cmd => cmd[0] === 'psql' && cmd.at(-1).startsWith(`-- idv-digilocker-${label}\nBEGIN READ ONLY;`));
+    assert.ok(at('acr-preflight') >= 0 && at('acr-preflight') < run.full.indexOf(dry) && at('acr-postflight') > run.full.indexOf(apply));
+    const sql = run.full.filter(cmd => cmd[0] === 'psql').map(cmd => cmd.at(-1));
+    const preSql = sql.find(q => q.startsWith('-- idv-digilocker-acr-preflight'));
+    const postSql = sql.find(q => q.startsWith('-- idv-digilocker-acr-postflight'));
+    assert.ok(preSql.includes(IDV_DIGILOCKER_ACR_BODIES.before.badge) && preSql.includes(IDV_DIGILOCKER_ACR_BODIES.before.complete));
+    assert.ok(postSql.includes(IDV_DIGILOCKER_ACR_BODIES.after.badge) && postSql.includes(IDV_DIGILOCKER_ACR_BODIES.after.complete));
+    assert.ok(!preSql.includes(IDV_DIGILOCKER_ACR_BODIES.after.badge) && !postSql.includes(IDV_DIGILOCKER_ACR_BODIES.before.badge));
+    for (const q of [preSql, postSql]) assert.ok(q.includes("setting_value = 'true'") && !q.includes("setting_value = 'false'") && q.includes('IS TRUE'));
+    // Read-only SQL only: nothing in this release can write (let alone lower) the gate setting.
+    assert.ok(!sql.some(q => /UPDATE |INSERT |DELETE |app_system_settings'\s*,/i.test(q.replace(/FROM public\.app_system_settings/g, ''))));
+  } finally { rmSync(run.dir, {recursive: true, force: true}); }
+
+  const ctx = {...idvContext, CANDIDATE: c.id};
+  assert.equal(verifyIdvDigilockerAcrTestReceipt(receipt, ctx), IDV_DIGILOCKER_ACR_LEDGER.statementsSha256);
+  for (const invalid of [{environment: 'FairSwapProd'}, {projectRef: REFS.FairSwapProd}, {releaseWorkflowRun: '132'}, {releaseWorkflowAttempt: '2'},
+    {reviewedCommit: 'f'.repeat(40)}, {migrationSha256: 'd'.repeat(64)}, {postflightVerified: false}, {postflightScope: IDV_DIGILOCKER_REQUIRED_SCOPE},
+    {identityVerificationRequired: false}, {edgeFunctionsDeployedByThisWorkflow: true}, {testOnly: false}, {autoPromote: true},
+    {ledgerStatementsSha256: 'b'.repeat(64)}, {testLedgerStatementsSha256: IDV_DIGILOCKER_ACR_LEDGER.statementsSha256}, {status: 'ALREADY_APPLIED_VERIFIED'},
+    {dryRunPending: []}, {outOfOrderInstall: {includeAll: true, aheadVersions: []}}, {requiredLedger: []},
+    {bodyTransition: {hasDigilockerBadge: {from: 'x', to: 'y'}, completeV2: {from: 'x', to: 'y'}}},
+    {prerequisiteLedger: IDV_FOUNDATION_LEDGER.FairSwapProd}]) {
+    assert.throws(() => verifyIdvDigilockerAcrTestReceipt({...receipt, ...invalid}, ctx), /IDV_DIGILOCKER_ACR_TEST_RECEIPT_INVALID/, JSON.stringify(invalid));
+  }
+  assert.throws(() => verifyIdvDigilockerAcrTestReceipt(receipt, {...ctx, CANDIDATE: IDV_DIGILOCKER_REQUIRED_CANDIDATE}), /ACR_TEST_RECEIPT_INVALID/);
+  // It is never accepted as V1/V2/required-gate evidence.
+  assert.throws(() => verifyIdvDigilockerTestReceipt(receipt, idvContext), /IDV_DIGILOCKER_TEST_RECEIPT_INVALID/);
+  assert.throws(() => verifyIdvDigilockerRequiredTestReceipt(receipt, idvContext), /REQUIRED_TEST_RECEIPT_INVALID/);
+});
+
+test('IDV Aadhaar ACR: Production, a wrong target or wrong project is refused before any tool, credential or SQL runs', async () => {
+  const c = getCandidate(IDV_DIGILOCKER_ACR_CANDIDATE);
+  for (const env of [{}, {TARGET: 'production'}, {TARGET: 'adopt'}, {TARGET: 'test', IDV_DIGILOCKER_TEST_LEDGER_SHA: IDV_DIGILOCKER_ACR_LEDGER.statementsSha256}]) {
+    const run = acrRun('FairSwapProd', {env});
+    try {
+      await assert.rejects(run.result, /REUSABLE_RELEASE_TEST_ONLY_CANDIDATE/);
+      assert.deepEqual(run.full, []);
+      assert.deepEqual(readdirSync(run.dir), []);
+    } finally { rmSync(run.dir, {recursive: true, force: true}); }
+  }
+  for (const TARGET of ['production', 'adopt', '']) {   // FairSwapTest, but not a target=test dispatch
+    const run = acrRun('FairSwapTest', {env: {TARGET}});
+    try { await assert.rejects(run.result, /IDV_DIGILOCKER_ACR_TEST_ONLY/); assert.deepEqual(run.full, []); }
+    finally { rmSync(run.dir, {recursive: true, force: true}); }
+  }
+  // The registry binds the project ref: a tampered binding (other ref, not test-only, auto-promote) is refused before any tool runs.
+  for (const tampered of [{allowedProjectRef: REFS.FairSwapProd}, {testOnly: false}, {autoPromote: true}]) {
+    const entry = CANDIDATES[c.id];
+    const saved = {...entry};
+    try {
+      Object.defineProperty(CANDIDATES, c.id, {value: {...entry, ...tampered}, configurable: true, writable: true, enumerable: true});
+      const run = acrRun('FairSwapTest');
+      try { await assert.rejects(run.result, /PROJECT_REF_NOT_ALLOWED|TEST_ONLY/); assert.deepEqual(run.full, []); }
+      finally { rmSync(run.dir, {recursive: true, force: true}); }
+    } catch (error) {
+      if (error instanceof TypeError) continue;   // frozen registry: the entry itself cannot be tampered with at runtime
+      throw error;
+    } finally {
+      try { Object.defineProperty(CANDIDATES, c.id, {value: saved, configurable: true, writable: true, enumerable: true}); } catch { /* frozen */ }
+    }
+  }
+  await assert.rejects(verifyRemotePostflight('FairSwapProd', c.id, 'url', {}, () => assert.fail('no SQL may run')), /ACR_TEST_ONLY/);
+  await assert.rejects(adoptExistingInstallation({environment: 'FairSwapProd', candidateId: c.id, context: idvContext,
+    runner: () => assert.fail('no tool may run')}), /ADOPTION_NOT_REGISTERED/);
+  await assert.rejects(releaseV3ProductionBatch({environment: 'FairSwapProd', candidateId: c.id, context: idvContext,
+    runner: () => assert.fail('no tool may run')}), /V3_PRODUCTION_BATCH_CONTEXT_REQUIRED/);
+  assert.throws(() => assertIdvDigilockerAcrLedger('FairSwapProd', idvLedger('FairSwapProd')), /ACR_TEST_ONLY/);
+  assert.throws(() => idvAcrLedgerState('FairSwapProd', idvLedger('FairSwapProd', {extra: [acrRow()]})), /ACR_PRODUCTION_FORBIDDEN/);
+  assert.equal(idvAcrLedgerState('FairSwapProd', idvLedger('FairSwapProd')), 'absent');
+  // The Production V1 guard still rejects the row as an unreviewed tail; Production assertions are not loosened.
+  assert.throws(() => assertIdvDigilockerLedger('FairSwapProd', idvLedger('FairSwapProd', {extra: [acrRow()]})), /LEDGER_TAIL_MISMATCH/);
+});
+
+test('IDV Aadhaar ACR fails closed before any apply on prerequisite, gate or schema drift, double apply, and withholds receipts after apply', async () => {
+  const attempt = async (options, re, {dryRuns = 0, applies = 0} = {}) => {
+    const run = acrRun('FairSwapTest', options);
+    try {
+      await assert.rejects(run.result, re);
+      assert.equal(idvApplies(run.full).length, applies);
+      assert.equal(pushes(run.full).length, dryRuns);
+      assert.ok(!existsSync(join(run.dir, 'idv-digilocker-aadhaar-acr-fairswaptest.json')));
+    } finally { rmSync(run.dir, {recursive: true, force: true}); }
+  };
+  const c = getCandidate(IDV_DIGILOCKER_ACR_CANDIDATE);
+  // Missing or tampered historical receipts: V1, V2 and the required gate must each be exactly as pinned.
+  await attempt({ledger: acrLedger({v1: null})}, /PREREQUISITE_MIGRATION_MISSING/);
+  await attempt({ledger: acrLedger({v2: null})}, /PREREQUISITE_MIGRATION_MISSING/);
+  await attempt({ledger: acrLedger({gate: null})}, /PREREQUISITE_MIGRATION_MISSING/);
+  await attempt({ledger: acrLedger({v2: reqV2Row({statementsSha256: 'a'.repeat(64)})})}, /ACR_PREREQUISITE_LEDGER_MISMATCH/);
+  await attempt({ledger: acrLedger({v2: reqV2Row({statementCount: 22})})}, /ACR_PREREQUISITE_LEDGER_MISMATCH/);
+  await attempt({ledger: acrLedger({v1: idvV1Row({name: 'renamed'})})}, /PREREQUISITE_LEDGER_MISMATCH/);
+  await attempt({ledger: acrLedger({v1: idvV1Row({hasStatements: false, statementCount: 0})})}, /PREREQUISITE_LEDGER_MISMATCH/);
+  for (const over of [{statementsSha256: 'a'.repeat(64)}, {statementCount: 9}, {hasStatements: false}, {name: 'renamed'}]) {
+    await attempt({ledger: acrLedger({gate: reqRow(over)})}, /PREREQUISITE_LEDGER_MISMATCH|PREREQUISITE_MIGRATION_MISSING/);
+  }
+  await attempt({ledger: acrLedger({foundation: null})}, /FOUNDATION_PREREQUISITE_MISMATCH/);
+  await attempt({ledger: acrLedger({foundation: IDV_FOUNDATION_LEDGER.FairSwapProd})}, /FOUNDATION_PREREQUISITE_MISMATCH/);
+  // Double apply / partial recording: the exact row, a renamed or re-versioned row, and a newer unreviewed row all stop the run.
+  await attempt({ledger: acrLedger({extra: [acrRow()]})}, /IDV_DIGILOCKER_ACR_ALREADY_RECORDED/);
+  await attempt({ledger: acrLedger({extra: [acrRow({statementsSha256: 'a'.repeat(64)})]})}, /ACR_ALREADY_RECORDED|ACR_LEDGER_MISMATCH/);
+  await attempt({ledger: acrLedger({extra: [acrRow({version: '20261123120001'})]})}, /ACR_LEDGER_MISMATCH|ALREADY_RECORDED/);
+  await attempt({ledger: acrLedger({extra: [{version: '20261124000000', name: 'newer', hasStatements: true, statementCount: 1,
+    statementsSha256: 'a'.repeat(64)}]})}, /IDV_DIGILOCKER_ACR_LEDGER_MISMATCH/);
+  // Preflight: the gate must already be ON (OFF, missing or duplicated switch is refused), and the current schema must be exact.
+  for (const key of ['gate_setting_on', 'gate_function_on', 'acr_bodies_exact', 'acr_evidence_constraint', 'enforce_state_exact', 'enforce_server_only',
+    'v1_structure', 'provenance_columns', 'service_only_execute', 'unexpected_key']) {
+    await attempt({pre: {[key]: false}}, /IDV_DIGILOCKER_ACR_PREFLIGHT_FAILED/);
+  }
+  await attempt({dryOutput: `Would push these migrations:\n • ${c.filename}\n • 20261124000000_unreviewed.sql`}, /DRY_RUN_MISMATCH/, {dryRuns: 1});
+  await attempt({dryOutput: 'Remote database is up to date.'}, /DRY_RUN_MISMATCH/, {dryRuns: 1});
+  // After apply: the ledger row and every postflight key are binding; no receipt is written.
+  for (const recorded of [{statementsSha256: 'a'.repeat(64)}, {hasStatements: false, statementCount: 0}, {name: 'other'}]) {
+    await attempt({recorded}, /IDV_DIGILOCKER_ACR_LEDGER_MISMATCH|TABLETS_LEDGER_CHANGED/, {dryRuns: 2, applies: 1});
+  }
+  for (const key of ['gate_setting_on', 'gate_function_on', 'acr_bodies_exact', 'acr_evidence_constraint', 'enforce_state_exact', 'enforce_single_overload',
+    'enforce_server_only', 'v1_grants_unchanged', 'service_only_execute', 'projection_execute']) {
+    await attempt({post: {[key]: false}}, /IDV_DIGILOCKER_ACR_POSTFLIGHT_FAILED/, {dryRuns: 2, applies: 1});
+  }
+  await attempt({preserved: 'a'.repeat(64)}, /IDV_DIGILOCKER_EXISTING_OBJECTS_CHANGED/, {dryRuns: 2, applies: 1});
+  for (const [checks, label] of [[IDV_DIGILOCKER_ACR_PREFLIGHT, 'acr-preflight'], [IDV_DIGILOCKER_ACR_POSTFLIGHT, 'acr-postflight']]) {
+    const text = idvDigilockerAcrSnapshotSql(checks, label);
+    assert.ok(text.startsWith(`-- idv-digilocker-${label}\nBEGIN READ ONLY;\n`) && text.endsWith('COMMIT;'), label);
+    assert.equal(text.split(';').length - 1, 4, label);
+  }
+});
+
+test('IDV Aadhaar ACR: the installed-state attestation accepts the new state only with the exact ledger row; historical and Production stay strict', async () => {
+  assert.equal(idvAcrLedgerState('FairSwapTest', acrLedger()), 'absent');
+  assert.equal(idvAcrLedgerState('FairSwapTest', acrLedger({extra: [acrRow()]})), 'applied');
+  for (const over of [{statementsSha256: 'a'.repeat(64)}, {statementCount: 14}, {hasStatements: false}, {name: 'renamed'}, {version: '20261123120001'}]) {
+    assert.throws(() => idvAcrLedgerState('FairSwapTest', acrLedger({extra: [acrRow(over)]})), /ACR_LEDGER_MISMATCH/, JSON.stringify(over));
+  }
+  // The row without the required-gate row is not a valid state.
+  assert.throws(() => idvAcrLedgerState('FairSwapTest', acrLedger({gate: null, extra: [acrRow()]})), /ACR_LEDGER_MISMATCH/);
+  assert.throws(() => idvAcrLedgerState('FairSwapStaging', acrLedger()), /ACR_STATE_ENVIRONMENT_INVALID/);
+
+  // V1 FairSwapTest attestation, ACR state: ledger-bound variant, gate ON, pinned bodies and constraint.
+  const applied = idvRun('FairSwapTest', {ledger: acrLedger({extra: [acrRow()]}), installed: {}});
+  let receipt;
+  try {
+    receipt = await applied.result;
+    assert.equal(receipt.status, 'ALREADY_INSTALLED_VERIFIED');
+    assert.equal(receipt.identityVerificationRequired, true);
+    assert.deepEqual(receipt.installedStateVariant, idvDigilockerEvolvedVariant('applied'));
+    assert.deepEqual(receipt.installedStateVariant.aadhaarAcr, {ledger: {...IDV_DIGILOCKER_ACR_LEDGER},
+      hasDigilockerBadgeBodyMd5: IDV_DIGILOCKER_ACR_BODIES.after.badge, completeV2BodyMd5: IDV_DIGILOCKER_ACR_BODIES.after.complete});
+    assert.deepEqual(pushes(applied.full), []);
+    const q = applied.full.find(cmd => cmd[0] === 'psql' && cmd.at(-1).startsWith('-- idv-digilocker-installed')).at(-1);
+    assert.ok(q.includes("'gate_setting_on'") && q.includes("'acr_bodies_exact'") && q.includes(IDV_DIGILOCKER_ACR_BODIES.after.badge));
+    assert.ok(!q.includes("'gate_setting_off'") && !q.includes(IDV_DIGILOCKER_ACR_BODIES.before.badge));
+  } finally { rmSync(applied.dir, {recursive: true, force: true}); }
+  assert.equal(verifyIdvDigilockerTestReceipt(receipt, idvContext), 'b'.repeat(64));
+  for (const invalid of [{identityVerificationRequired: false}, {installedStateVariant: idvDigilockerEvolvedVariant()},
+    {installedStateVariant: {...idvDigilockerEvolvedVariant('applied'), aadhaarAcr: {...idvDigilockerEvolvedVariant('applied').aadhaarAcr, completeV2BodyMd5: 'x'}}},
+    {installedStateVariant: {...idvDigilockerEvolvedVariant('applied'), aadhaarAcr: {...idvDigilockerEvolvedVariant('applied').aadhaarAcr, ledger: {...IDV_DIGILOCKER_ACR_LEDGER, statementsSha256: 'a'.repeat(64)}}}}]) {
+    assert.throws(() => verifyIdvDigilockerTestReceipt({...receipt, ...invalid}, idvContext), /IDV_DIGILOCKER_TEST_RECEIPT_INVALID/, JSON.stringify(invalid));
+  }
+  // The ACR claim never rescues a non-attestation receipt, and a gate-true claim without the ACR variant is refused.
+  assert.throws(() => verifyIdvDigilockerTestReceipt({...receipt, status: 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED'}, idvContext), /IDV_DIGILOCKER_TEST_RECEIPT_INVALID/);
+  assert.throws(() => verifyIdvDigilockerTestReceipt({...receipt, installedStateVariant: undefined}, idvContext), /IDV_DIGILOCKER_TEST_RECEIPT_INVALID/);
+  // Body or gate drift in the ACR state is refused by the SQL; a partially matching row never reaches it.
+  for (const key of ['acr_bodies_exact', 'acr_evidence_constraint', 'gate_setting_on', 'gate_function_on']) {
+    const drift = idvRun('FairSwapTest', {ledger: acrLedger({extra: [acrRow()]}), installed: {[key]: false}});
+    try { await assert.rejects(drift.result, /IDV_DIGILOCKER_INSTALLED_FAILED/, key); } finally { rmSync(drift.dir, {recursive: true, force: true}); }
+  }
+  const partial = idvRun('FairSwapTest', {ledger: acrLedger({extra: [acrRow({statementsSha256: 'a'.repeat(64)})]})});
+  try {
+    await assert.rejects(partial.result, /ACR_LEDGER_MISMATCH/);
+    assert.ok(!partial.full.some(cmd => cmd[0] === 'psql' && cmd.at(-1).startsWith('-- idv-digilocker-installed')));
+  } finally { rmSync(partial.dir, {recursive: true, force: true}); }
+  // Historical / required-gate-only states keep their gate-OFF assertions unchanged.
+  assert.ok('gate_setting_off' in idvDigilockerInstalledChecks('requiredGate') && !('gate_setting_on' in idvDigilockerInstalledChecks('requiredGate')));
+  assert.ok('gate_setting_off' in idvDigilockerInstalledChecks('historical', 'absent'));
+});
+
+test('disposable PostgreSQL (PGlite, not native PG17): ACR preflight/postflight on the reviewed SQL chain with the live gate ON throughout',
+  {skip: PGlite ? false : 'no PGlite module', timeout: 240000}, async () => {
+    const src = path => readFileSync(join(process.cwd(), path), 'utf8');
+    const db = new PGlite();
+    for (const path of ['tests/idv-pg17/fixture.sql', 'tests/idv-pg17/fixture-digilocker.sql',
+      'supabase/forward-migrations/idv/20261026183000_idv_digilocker_foundation.sql', getCandidate(IDV_DIGILOCKER_CANDIDATE).path,
+      getCandidate(IDV_DIGILOCKER_V2_CANDIDATE).path, getCandidate(IDV_DIGILOCKER_REQUIRED_CANDIDATE).path]) await db.exec(src(path));
+    // FairSwapTest runs with the identity gate ON (owner decision); the disposable database mirrors that before the ACR preflight.
+    const setGate = value => db.exec(`update public.app_system_settings set setting_value = '${value}' where setting_key = 'identity_verification_required'`);
+    const gateValue = async () => (await db.query("select setting_value from public.app_system_settings where setting_key = 'identity_verification_required'")).rows[0].setting_value;
+    await setGate('true');
+    const snapshot = async (checks, label, acr = true) => {
+      const results = await db.exec(acr ? idvDigilockerAcrSnapshotSql(checks, label) : idvSnapshotSql(checks, label));
+      return JSON.parse(Object.values(results.find(r => r.rows?.length).rows[0])[0]);
+    };
+    const allTrue = value => Object.values(value.checks).every(v => v === true);
+    const pre = await snapshot(IDV_DIGILOCKER_ACR_PREFLIGHT, 'acr-preflight');
+    assert.ok(allTrue(pre), JSON.stringify(pre.checks));
+    assert.equal((await snapshot(IDV_DIGILOCKER_ACR_POSTFLIGHT, 'acr-postflight')).checks.acr_bodies_exact, false);
+    assert.equal((await snapshot(IDV_DIGILOCKER_ACR_POSTFLIGHT, 'acr-postflight')).checks.acr_evidence_constraint, false);
+    // Gate OFF at preflight is refused: the candidate demands the live ON state.
+    await setGate('false');
+    const off = await snapshot(IDV_DIGILOCKER_ACR_PREFLIGHT, 'acr-preflight');
+    assert.deepEqual([off.checks.gate_setting_on, off.checks.gate_function_on], [false, false]);
+    await setGate('true');
+
+    await db.exec(src(getCandidate(IDV_DIGILOCKER_ACR_CANDIDATE).path));
+    assert.equal(await gateValue(), 'true');   // the migration never touches the switch
+    const post = await snapshot(IDV_DIGILOCKER_ACR_POSTFLIGHT, 'acr-postflight');
+    assert.ok(allTrue(post), JSON.stringify(post.checks));
+    assert.equal(post.preserved, pre.preserved);
+    assert.equal((await snapshot(IDV_DIGILOCKER_ACR_PREFLIGHT, 'acr-preflight')).checks.acr_bodies_exact, false);   // no re-run
+    assert.ok(allTrue(await snapshot(idvDigilockerInstalledChecks('requiredGate', 'applied'), 'installed', false)));
+    assert.equal((await snapshot(idvDigilockerInstalledChecks('requiredGate', 'absent'), 'installed', false)).checks.gate_setting_off, false);
+
+    const broken = async (sql, key, undo) => {
+      await db.exec(sql);
+      const value = await snapshot(IDV_DIGILOCKER_ACR_POSTFLIGHT, 'acr-postflight');
+      await db.exec(undo);
+      return key ? value.checks[key] : value.preserved;
+    };
+    assert.equal(await broken("update public.app_system_settings set setting_value = 'false' where setting_key = 'identity_verification_required'",
+      'gate_setting_on', "update public.app_system_settings set setting_value = 'true' where setting_key = 'identity_verification_required'"), false);
+    assert.equal(await broken('grant execute on function app_security.has_digilocker_badge(uuid) to authenticated', 'service_only_execute',
+      'revoke execute on function app_security.has_digilocker_badge(uuid) from authenticated'), false);
+    assert.equal(await broken('grant execute on function public.server_idv_dl_complete_v2(uuid,uuid,text,text,text[],text) to anon', 'service_only_execute',
+      'revoke execute on function public.server_idv_dl_complete_v2(uuid,uuid,text,text,text[],text) from anon'), false);
+    assert.equal(await broken("alter function app_security.impl_idv_dl_complete_v2(uuid,uuid,text,text,text[],text) set search_path = public", 'acr_bodies_exact',
+      "alter function app_security.impl_idv_dl_complete_v2(uuid,uuid,text,text,text[],text) set search_path = ''"), false);
+    assert.equal(await broken('alter function app_security.has_digilocker_badge(uuid) security invoker', 'acr_bodies_exact',
+      'alter function app_security.has_digilocker_badge(uuid) security definer'), false);
+    assert.equal(await broken("create function app_security.has_digilocker_badge(text) returns boolean language sql as 'select true'", 'acr_bodies_exact',
+      'drop function app_security.has_digilocker_badge(text)'), false);   // extra overload
+    assert.equal(await broken('alter table app_security.idv_digilocker_bindings drop constraint chk_idv_dl_evidence_method', 'acr_evidence_constraint',
+      "alter table app_security.idv_digilocker_bindings add constraint chk_idv_dl_evidence_method check (evidence_method in ('legacy_account_link','oidc_v2_signed_id_token','oidc_v2_signed_aadhaar_acr') and ((evidence_method <> 'legacy_account_link') = (evidence_verified_at is not null)))"), false);
+    assert.notEqual(await broken("create function public.idv_acr_probe() returns integer language sql as 'select 1'", null,
+      'drop function public.idv_acr_probe()'), pre.preserved);
+    assert.equal((await snapshot(IDV_DIGILOCKER_ACR_POSTFLIGHT, 'acr-postflight')).preserved, pre.preserved);
+    assert.equal(await gateValue(), 'true');
   });
 
 // Additive hook: keep independent V3 operator tests in the existing release/security CI suite.
