@@ -1,6 +1,6 @@
 -- Minimal stand-ins for tables/functions the DigiLocker-direct migration touches (disposable PG17 only).
 create table if not exists public.app_system_settings (
-  setting_key text primary key, setting_value text not null, description text
+  setting_key text primary key, setting_value text not null, description text, updated_at timestamptz not null default now()
 );
 create type public.listing_status_enum as enum ('draft','pending_review','active','reserved','sold','rejected','paused','expired','removed');
 create table public.listings (
@@ -31,4 +31,12 @@ create table if not exists public.test_audit_log (action text, entity text, enti
 create or replace function app_security.log_audit_event(p_action text, p_entity text, p_entity_id uuid, p_details jsonb)
 returns void language sql security definer set search_path = '' as $$
   insert into public.test_audit_log (action, entity, entity_id, details) values (p_action, p_entity, p_entity_id, p_details);
+$$;
+
+-- Match the exact deployed Production V3 seller-identity predicate for disposable PG17.
+CREATE OR REPLACE FUNCTION app_security.v3_seller_identity_enforced()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' AS $$
+  select pg_catalog.to_regprocedure('app_security.enforce_verified_actor(uuid,boolean)') is not null
+    and exists (select 1 from public.app_system_settings
+      where setting_key='identity_verification_required' and setting_value='true');
 $$;

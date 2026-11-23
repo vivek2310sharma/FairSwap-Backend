@@ -587,7 +587,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'account-security-email-v2', 'canonical-family-chooser-v1', 'idv-digilocker-aadhaar-acr', 'idv-digilocker-acr-request-only', 'idv-digilocker-oidc-v2', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
+  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'account-security-email-v2', 'canonical-family-chooser-v1', 'idv-digilocker-aadhaar-acr', 'idv-digilocker-acr-request-only', 'idv-digilocker-oidc-v2', 'idv-digilocker-prod-parity', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -3482,14 +3482,19 @@ test('IDV DigiLocker V1 is pinned to the reviewed migration and reaches Producti
   assert.ok(yaml.indexOf('sha256sum --check --status') < yaml.indexOf('Verify IDV DigiLocker V1 Test postflight receipt'));
   assert.ok(yaml.includes("inputs.candidate != 'idv-digilocker-v1' || needs.verify_test.outputs.idv_digilocker_ledger_sha != ''"));
   assert.ok(yaml.includes("inputs.candidate != 'idv-digilocker-oidc-v2' || needs.verify_test.outputs.idv_digilocker_ledger_sha != ''"));
+  assert.ok(yaml.includes("inputs.candidate != 'idv-digilocker-prod-parity' || needs.verify_test.outputs.idv_digilocker_ledger_sha != ''"));
   assert.ok(yaml.includes("inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'v3-provider-neutral-activation' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'idv-digilocker-oidc-v2'"));
   assert.ok(yaml.includes('IDV_DIGILOCKER_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.idv_digilocker_ledger_sha }}'));
   assert.ok(yaml.includes("test-evidence/${process.env.CANDIDATE}-fairswaptest.json"));
-  // Existing credentials and environments only; no feature flag, provider secret or Edge deployment in this workflow.
+  // Existing V1/V2 candidates stay dark. The separately guarded parity candidate is permitted to deploy Edge functions.
   assert.deepEqual([...new Set(yaml.match(/secrets\.[A-Z0-9_]+/g))].sort(), ['secrets.CHAT_DATABASE_PASSWORD', 'secrets.CHAT_DB_SSL_ROOT_CERT_PEM',
     'secrets.CHAT_RELEASE_AUDIT_TOKEN', 'secrets.FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN', 'secrets.FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN']);
   assert.deepEqual([...new Set(yaml.match(/^ {4}environment: \S+$/gm))].sort(), ['    environment: FairSwapProd', '    environment: FairSwapTest']);
-  assert.doesNotMatch(yaml, /DIGILOCKER_ENABLED|identity_verification_required|functions deploy|secrets set/i);
+  const parityStep = yaml.indexOf('Verify DigiLocker Production Web and provider secret names before gate activation');
+  assert(parityStep > yaml.indexOf('\n  production:'));
+  assert.match(yaml.slice(parityStep), /functions deploy idv-digilocker-start/);
+  assert.doesNotMatch(yaml.slice(0, parityStep), /functions deploy idv-digilocker-start|secrets set/i);
+  assert.doesNotMatch(yaml, /secrets set/i);
 });
 
 test('IDV DigiLocker checks cover every function in the reviewed SQL, the gate stays default OFF, and the tail is pinned to reviewed CLI digests', () => {
@@ -3635,6 +3640,10 @@ test('IDV DigiLocker V1 and V2: Production starts only after a verified Test rec
     assert.equal(productionJobRuns(yaml, {candidate: id, target: 'production', autoPromote: true, test: 'skipped', verifyTest: 'skipped'}), false);
     assert.equal(productionJobRuns(yaml, {candidate: id, target: 'adopt', autoPromote: true, test: 'skipped', verifyTest: 'skipped'}), false);
   }
+  // Production parity cannot be manually dispatched; the same-run Test receipt digest is mandatory.
+  assert.equal(productionJobRuns(yaml,{candidate:'idv-digilocker-prod-parity',target:'test',autoPromote:true,outputs:digest}),true);
+  assert.equal(productionJobRuns(yaml,{candidate:'idv-digilocker-prod-parity',target:'test',autoPromote:true}),false);
+  assert.equal(productionJobRuns(yaml,{candidate:'idv-digilocker-prod-parity',target:'production',autoPromote:true,test:'skipped',verifyTest:'skipped'}),false);
   // Other candidates keep their existing behaviour under the same evaluator.
   assert.equal(productionJobRuns(yaml, {candidate: 'mobile-catalogue-india-v1', target: 'test', autoPromote: true, outputs: {mobile_catalogue_ledger_sha: 'b'.repeat(64)}}), true);
   assert.equal(productionJobRuns(yaml, {candidate: 'moderation-analytics-v1', target: 'test', autoPromote: true}), true);
@@ -3645,7 +3654,7 @@ test('IDV DigiLocker V1 and V2: Production starts only after a verified Test rec
   assert.ok(yaml.includes("if: ${{ inputs.candidate == 'idv-digilocker-v1' || inputs.candidate == 'idv-digilocker-oidc-v2' }}"));
   // Non-V3 Test-only candidates remain restricted to DigiLocker releases.
   assert.deepEqual(Object.values(CANDIDATES).filter(c => c.testOnly && !c.unifiedPublishingV3).map(c => c.id), ['idv-digilocker-required-gate', 'idv-digilocker-aadhaar-acr', 'idv-digilocker-acr-request-only']);
-  assert.deepEqual(Object.values(CANDIDATES).filter(c => c.autoPromote === true).map(c => c.id).sort(), ['account-security-email-v2', 'idv-digilocker-oidc-v2', 'idv-digilocker-v1',
+  assert.deepEqual(Object.values(CANDIDATES).filter(c => c.autoPromote === true).map(c => c.id).sort(), ['account-security-email-v2', 'idv-digilocker-oidc-v2', 'idv-digilocker-prod-parity', 'idv-digilocker-v1',
     'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'taxonomy-v2-catalogue',
     'taxonomy-v2-foundation', 'v3-provider-neutral-activation']);
 });

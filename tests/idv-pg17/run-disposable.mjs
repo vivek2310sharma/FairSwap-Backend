@@ -21,6 +21,8 @@ const sources = [
   'tests/idv-pg17/assertions-digilocker-aadhaar-acr.sql',
   'supabase/forward-migrations/idv/20261123150000_idv_digilocker_acr_request_only.sql',
   'tests/idv-pg17/assertions-digilocker-acr-request-only.sql',
+  'supabase/forward-migrations/idv/20261123180000_idv_digilocker_production_parity.sql',
+  'tests/idv-pg17/assertions-digilocker-production-parity.sql',
 ];
 
 // DigiLocker fraud-suspension integration runs against the REAL account-status implementation (not a stub):

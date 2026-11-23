@@ -178,6 +178,18 @@ export const CANDIDATES = Object.freeze({
     testOnly: true,
     autoPromote: false
   }),
+  // Production-safe signed DigiLocker parity; Test already contains effective prior rules.
+  // The same reviewed SQL is applied and verified in Test, then promoted to Production.
+  // Mandatory gate is activated atomically with final signed-identity rules; no historical SQL rewritten.
+  'idv-digilocker-prod-parity': Object.freeze({
+    id: 'idv-digilocker-prod-parity', version: '20261123180000',
+    filename: '20261123180000_idv_digilocker_production_parity.sql',
+    path: 'supabase/forward-migrations/idv/20261123180000_idv_digilocker_production_parity.sql',
+    sha256: '9bdb4ef6ea71aee98b5009e4405f9566e60ef52fa3cb259dc0f152fb2bb7d941',
+    description: 'DigiLocker signed identity plus requested Aadhaar ACR, mandatory identity gate ON, Test then Production',
+    requiredLedgerVersions: Object.freeze(['20261117090000', '20261119200000']),
+    autoPromote: true
+  }),
   'taxonomy-v2-catalogue': Object.freeze({
     id: 'taxonomy-v2-catalogue', version: '20261118092010',
     filename: '20261118092010_taxonomy_v2_catalogue.sql',
@@ -605,6 +617,10 @@ export function planDispatch({candidateId, target = 'test', inputs = {}, context
     // Read-only attestation of an existing Production installation; only registered installations qualify.
     need(candidate.strict && EXISTING_INSTALLATIONS[`${candidate.id}|FairSwapProd`], 'ADOPTION_NOT_REGISTERED');
     return {candidate, target, priorRuns: [], webStagingSha: null, webProductionSha: null, adoption: getAdoption(candidate.id, 'FairSwapProd')};
+  }
+  if (candidate.id === 'idv-digilocker-prod-parity') {
+    need(target === 'test' || target === 'production', 'IDV_PROD_PARITY_INVALID_TARGET');
+    return {candidate, target, priorRuns: [], webStagingSha: null, webProductionSha: null};
   }
   if (!candidate.strict) {
     need(target === 'test', 'TARGET_NOT_SUPPORTED');
