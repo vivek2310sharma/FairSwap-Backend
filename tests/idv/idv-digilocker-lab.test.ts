@@ -223,7 +223,7 @@ describe("Lab access control and contract", () => {
   });
 });
 
-describe("Lab complete: verdicts and strict value-free result", () => {
+describe("Lab complete: verdicts and Test-only signed response inspection", () => {
   it("VERIFIED only with signed, nonce-matched acr=aadhaar; result matches the strict schema and nothing else", async () => {
     const { r, p, state } = await verified();
     expect(r.status).toBe(200);
@@ -244,10 +244,13 @@ describe("Lab complete: verdicts and strict value-free result", () => {
     expect(sent.get("redirect_uri")).toBe(LAB_REDIRECT);
     expect(sent.get("code_verifier")).toBe(await deriveLabPkceVerifier(LAB_KEY, state));
   });
-  it("never returns tokens, codes, claim values, identifiers, secrets or keys, and makes no badge/binding RPC", async () => {
+  it("returns the exact token response only to the allowed tester after signed checks; never exposes client secrets or writes a badge", async () => {
     const { r, w } = await verified();
-    for (const leak of [SENTINEL, "Ravi", "01011990", "999999990019", "XXXXXXXX1234", "123e4567", TOKEN, "refresh-SENTINEL", "auth-code", "lab-secret-value", "primary-secret", LAB_KEY, PRIMARY_KEY, "service", "eyJ"]) {
-      expect(r.text).not.toContain(leak);
+    const raw = r.body.result.raw?.tokenResponse;
+    expect(raw).toMatchObject({ httpStatus: 200, json: { access_token: TOKEN, refresh_token: "refresh-SENTINEL", token_type: "Bearer" } });
+    expect(typeof raw?.json?.id_token).toBe("string");
+    for (const secret of ["auth-code", "lab-secret-value", "primary-secret", LAB_KEY, PRIMARY_KEY, "service"]) {
+      expect(r.text).not.toContain(secret);
     }
     for (const n of NO_BADGE_RPCS) expect(w.calls).not.toContain(n);
     expect(w.calls).toEqual(["server_idv_dl_diag_start", "server_idv_dl_diag_consume"]);
@@ -264,12 +267,14 @@ describe("Lab complete: verdicts and strict value-free result", () => {
       const { r } = await verified(over);
       expect(r.body.result).toMatchObject({ outcome: "FAILED", checks: { audience: "failed" } });
       expect(r.body.result.outcome).not.toBe("VERIFIED");
+      expect(r.body.result.raw).toBeUndefined();
     }
   });
   it("invalid signature (other key) is FAILED; wrong issuer is FAILED", async () => {
     const w = makeWorld(); const { state } = await start(w);
     const bad = await complete(w, provider({ idToken: await signJwt(await goodClaims(state), otherPriv) }).f, state);
     expect(bad.body.result).toMatchObject({ outcome: "FAILED", errorCode: "TOKEN_EXCHANGE_FAILED", checks: { signature: "failed" } });
+    expect(bad.body.result.raw).toBeUndefined();
     const { r } = await verified({ iss: "https://evil.example" });
     expect(r.body.result).toMatchObject({ outcome: "FAILED", checks: { issuer: "failed" } });
   });
@@ -316,6 +321,7 @@ describe("Lab complete: verdicts and strict value-free result", () => {
     const w = makeWorld(); const { state } = await start(w);
     const r = await complete(w, provider({ bigBody: true }).f, state);
     expect(r.body.result).toMatchObject({ outcome: "FAILED", errorCode: "RESPONSE_TOO_LARGE", tokenResponseFields: [], idTokenClaims: [] });
+    expect(r.body.result.raw).toBeUndefined();
     expect(r.text).not.toContain("access_token");
   });
   it("provider errors: access_denied is CANCELLED, others FAILED; no provider text is relayed; no provider call is made", async () => {
@@ -334,6 +340,7 @@ describe("Lab complete: verdicts and strict value-free result", () => {
     const rejected = await complete(w, provider({ tokenStatus: 400, idToken }).f, state);
     expect(rejected.body.result).toMatchObject({ outcome: "FAILED", errorCode: "TOKEN_EXCHANGE_FAILED", httpStatusBucket: "4xx" });
     expect(rejected.body.result.outcome).not.toBe("VERIFIED");
+    expect(rejected.body.result.raw).toBeUndefined();
   });
   it("provider unavailable is a sanitized failure and a rejected token exchange reports the status bucket only", async () => {
     const w = makeWorld(); const { state } = await start(w);
