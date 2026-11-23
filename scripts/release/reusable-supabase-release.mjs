@@ -1085,7 +1085,7 @@ export async function releaseReusable({
         // independently verified Test-to-Production statements digest.
         const installed = ledgerBefore.find(row => row.version === candidate.version);
         if (!installed?.hasStatements || installed.name !== candidate.filename.slice(15, -4) ||
-            !SHA256.test(installed.statementsSha256 ?? '') || ledgerBefore.length !== beforeRemote.size ||
+            installed.statementsSha256 !== candidate.statementsSha256 || ledgerBefore.length !== beforeRemote.size ||
             ledgerBefore.some(row => !beforeRemote.has(row.version)))
           throw new Error('FAMILY_CHOOSER_RECORDED_LEDGER_MISMATCH');
         ledgerStatementsSha256 = installed.statementsSha256;
@@ -1271,6 +1271,8 @@ export async function releaseReusable({
       if (ordered) verifyHistoryPreserved(beforeRemote, ledgerOutput, candidate.version);
       if (pinned) {
         ledgerStatementsSha256 = verifyTabletsLedger(ledgerBefore, readLedger(), candidate);
+        if (candidate.canonicalFamilyChooser && ledgerStatementsSha256 !== candidate.statementsSha256)
+          throw new Error('FAMILY_CHOOSER_SOURCE_LEDGER_MISMATCH');
         // The recorded row must be exactly the pinned CLI split, i.e. the ledger-bound requiredGate state.
         if (idvRequired && ledgerStatementsSha256 !== ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.ledger.statementsSha256) {
           throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_REQUIRED_LEDGER_MISMATCH');

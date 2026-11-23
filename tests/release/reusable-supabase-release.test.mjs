@@ -5191,6 +5191,7 @@ test('V3 correction delivery pins version/source, requires history and rejects f
 test('canonical family chooser pins additive SQL and requires Test evidence before Production',()=>{
  const id='canonical-family-chooser-v1',candidate=verifyCandidateSha(id).candidate;
  assert.equal(candidate.autoPromote,false);assert.equal(candidate.canonicalFamilyChooser,true);
+ assert.equal(candidate.statementsSha256,'b82b92828af061aad9924795979c9e07fa0b0072f761660bf1f456d49702102e');
  assert.equal(planDispatch({candidateId:id,target:'test'}).priorRuns.length,0);
  assert.throws(()=>planDispatch({candidateId:id,target:'production'}),/FAMILY_CHOOSER_TEST_EVIDENCE_REQUIRED/);
  assert.throws(()=>planDispatch({candidateId:id,target:'adopt'}),/FAMILY_CHOOSER_INVALID_TARGET/);
@@ -5240,6 +5241,8 @@ test('canonical chooser positively verifies the real existing Test lifecycle wit
 test('canonical family receipt recovery guards pinned Test and Production history',()=>{
  const source=readFileSync('scripts/release/reusable-supabase-release.mjs','utf8');
  assert.match(source,/FAMILY_CHOOSER_RECORDED_LEDGER_MISMATCH/);
+ assert.match(source,/FAMILY_CHOOSER_SOURCE_LEDGER_MISMATCH/);
+ assert.match(source,/installed\.statementsSha256 !== candidate\.statementsSha256/);
  assert.match(source,/FAMILY_CHOOSER_TEST_LEDGER_MISMATCH/);
  assert.match(source,/canonicalFamilyChooser \? familyTestLedger/);
  assert.match(source,/receipts\.test_catalogue_run_id\?\.ledgerStatementsSha256/);

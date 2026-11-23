@@ -81,6 +81,7 @@ export const CANDIDATES = Object.freeze({
     filename: '20261123123000_canonical_family_chooser_v1.sql',
     path: 'supabase/forward-migrations/unified-publishing-v3/supabase/migrations/20261123123000_canonical_family_chooser_v1.sql',
     sha256: '9ad6ca559800728db9816f2361742a335bc2d6fbedde7f133184a1b21b7cdc45',
+    statementsSha256: 'b82b92828af061aad9924795979c9e07fa0b0072f761660bf1f456d49702102e',
     description: 'Guarded canonical choosers for existing reviewed family contracts; no write activation',
     canonicalFamilyChooser: true, stage: 'catalogue', autoPromote: false,
     requiredLedgerVersions: Object.freeze(['20261118092010', '20261119114512']),
