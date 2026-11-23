@@ -587,7 +587,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'account-security-email-v2', 'canonical-family-chooser-v1', 'idv-digilocker-aadhaar-acr', 'idv-digilocker-oidc-v2', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
+  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'account-security-email-v2', 'canonical-family-chooser-v1', 'idv-digilocker-aadhaar-acr', 'idv-digilocker-acr-request-only', 'idv-digilocker-oidc-v2', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -3643,8 +3643,8 @@ test('IDV DigiLocker V1 and V2: Production starts only after a verified Test rec
   assert.equal(productionJobRuns(yaml, {candidate: 'v3-test-remaining-batch', target: 'test', autoPromote: true}), false);
   assert.match(yaml, /\n  test:\n    needs: verify\n    if: \$\{\{ needs\.verify\.result == 'success' && inputs\.target == 'test'/);
   assert.ok(yaml.includes("if: ${{ inputs.candidate == 'idv-digilocker-v1' || inputs.candidate == 'idv-digilocker-oidc-v2' }}"));
-  // The only non-V3 Test-only candidate is the DigiLocker required gate (see its dedicated Production-refusal tests).
-  assert.deepEqual(Object.values(CANDIDATES).filter(c => c.testOnly && !c.unifiedPublishingV3).map(c => c.id), ['idv-digilocker-required-gate', 'idv-digilocker-aadhaar-acr']);
+  // Non-V3 Test-only candidates remain restricted to DigiLocker releases.
+  assert.deepEqual(Object.values(CANDIDATES).filter(c => c.testOnly && !c.unifiedPublishingV3).map(c => c.id), ['idv-digilocker-required-gate', 'idv-digilocker-aadhaar-acr', 'idv-digilocker-acr-request-only']);
   assert.deepEqual(Object.values(CANDIDATES).filter(c => c.autoPromote === true).map(c => c.id).sort(), ['account-security-email-v2', 'idv-digilocker-oidc-v2', 'idv-digilocker-v1',
     'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'taxonomy-v2-catalogue',
     'taxonomy-v2-foundation', 'v3-provider-neutral-activation']);
@@ -5246,4 +5246,59 @@ test('canonical family receipt recovery guards pinned Test and Production histor
  assert.match(source,/FAMILY_CHOOSER_TEST_LEDGER_MISMATCH/);
  assert.match(source,/canonicalFamilyChooser \? familyTestLedger/);
  assert.match(source,/receipts\.test_catalogue_run_id\?\.ledgerStatementsSha256/);
+});
+
+test('IDV request-only ACR: signed identity remains mandatory, requested acr stays fixed, Test-only release is pinned', async () => {
+  const {
+    IDV_DIGILOCKER_REQUEST_CANDIDATE, IDV_DIGILOCKER_REQUEST_SCOPE,
+    IDV_DIGILOCKER_REQUEST_PREFLIGHT, IDV_DIGILOCKER_REQUEST_POSTFLIGHT,
+    assertIdvDigilockerRequestLedger, idvDigilockerRequestReceiptFields,
+    verifyIdvDigilockerRequestTestReceipt
+  } = await import('../../scripts/release/idv-digilocker-v1-release.mjs');
+  const {candidate, sha256} = verifyCandidateSha(IDV_DIGILOCKER_REQUEST_CANDIDATE);
+  assert.deepEqual([candidate.version, candidate.filename, sha256],
+    ['20261123150000', '20261123150000_idv_digilocker_acr_request_only.sql',
+      '6bc3877a9e6a6d9491960a3437390ab1672122682442326fa739e1d22589db3c']);
+  assert.equal(candidate.testOnly, true);
+  assert.equal(candidate.autoPromote, false);
+  assert.equal(candidate.allowedProjectRef, REFS.FairSwapTest);
+  assert.equal(planDispatch({candidateId: candidate.id, target: 'test'}).target, 'test');
+  for(const target of ['production', 'adopt'])
+    assert.throws(() => planDispatch({candidateId:candidate.id,target}), /TEST_ONLY_CANDIDATE/);
+  assert.deepEqual(assertIdvDigilockerRequestLedger('FairSwapTest', acrLedger({extra:[acrRow()]})),
+    {includeAll:false,ahead:[]});
+  assert.throws(() => assertIdvDigilockerRequestLedger('FairSwapProd', acrLedger({extra:[acrRow()]})), /REQUEST_TEST_ONLY/);
+  assert.throws(() => assertIdvDigilockerRequestLedger('FairSwapTest', acrLedger()), /REQUEST_ACR_PREREQUISITE_MISSING/);
+  assert.throws(() => assertIdvDigilockerRequestLedger('FairSwapTest',
+    acrLedger({extra:[acrRow(),{version:candidate.version,name:candidate.filename.slice(15,-4)}]})), /REQUEST_ALREADY_RECORDED/);
+  const oidc = readFileSync('supabase/functions/_shared/idv/digilocker-oidc.ts','utf8');
+  assert.match(oidc, /u\.searchParams\.set\("acr", OIDC_ACR\)/);
+  assert.match(oidc, /OIDC_ACR = "aadhaar"/);
+  assert.doesNotMatch(oidc, /if \(claims\["acr"\]/);
+  assert.match(oidc, /OIDC_EVIDENCE_METHOD = "oidc_v2_signed_id_requested_aadhaar"/);
+  const sql = readFileSync(candidate.path,'utf8');
+  assert.match(sql, /oidc_v2_signed_id_requested_aadhaar/);
+  assert.match(sql, /oidc_v2_signed_aadhaar_acr/);
+  assert.doesNotMatch(sql, /update public\.app_system_settings/i);
+  const wf=readFileSync('.github/workflows/reusable-supabase-release.yml','utf8');
+  assert.match(wf, /- idv-digilocker-acr-request-only/);
+  assert.match(wf, /inputs\.candidate != 'idv-digilocker-acr-request-only'/);
+  assert.ok(Object.keys(IDV_DIGILOCKER_REQUEST_PREFLIGHT).includes('acr_bodies_exact'));
+  assert.ok(IDV_DIGILOCKER_REQUEST_POSTFLIGHT.acr_bodies_exact.includes('oidc_v2_signed_id_requested_aadhaar'));
+  assert.ok(IDV_DIGILOCKER_REQUEST_POSTFLIGHT.acr_evidence_constraint.includes('oidc_v2_signed_aadhaar_acr'));
+  const context={GITHUB_SHA:'a'.repeat(40),GITHUB_RUN_ID:'135',GITHUB_RUN_ATTEMPT:'1',CANDIDATE:candidate.id};
+  const receipt={
+    environment:'FairSwapTest',projectRef:REFS.FairSwapTest,candidateId:candidate.id,
+    migrationVersion:candidate.version,migrationFile:candidate.filename,migrationSha256:candidate.sha256,
+    reviewedCommit:context.GITHUB_SHA,releaseWorkflowRun:context.GITHUB_RUN_ID,
+    releaseWorkflowAttempt:context.GITHUB_RUN_ATTEMPT,postflightVerified:true,
+    status:'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED',dryRunPending:[candidate.filename],
+    ledgerStatementsSha256:'f'.repeat(64),postflightScope:IDV_DIGILOCKER_REQUEST_SCOPE,
+    prerequisiteLedger:IDV_FOUNDATION_LEDGER.FairSwapTest,
+    edgeFunctionsDeployedByThisWorkflow:false, ...idvDigilockerRequestReceiptFields()
+  };
+  assert.equal(verifyIdvDigilockerRequestTestReceipt(receipt,context),receipt.ledgerStatementsSha256);
+  for(const overrides of [{identityVerificationRequired:false},{autoPromote:true},{postflightScope:'incorrect'},
+    {status:'ALREADY_APPLIED_VERIFIED'},{acrRequested:'no'},{projectRef:REFS.FairSwapProd}])
+    assert.throws(()=>verifyIdvDigilockerRequestTestReceipt({...receipt,...overrides},context),/REQUEST_TEST_RECEIPT_INVALID/);
 });

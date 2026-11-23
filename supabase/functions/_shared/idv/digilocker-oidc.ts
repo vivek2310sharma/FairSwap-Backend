@@ -5,9 +5,9 @@
 //   1. the provider's token endpoint returns an ID token whose RS256 signature verifies against one trusted key from the
 //      provider's published JWKS (none/HS*/other algorithms rejected; a missing or null `kid` is accepted only when
 //      exactly one eligible key verifies), with exact issuer, audience (+azp), exp, iat, sub and our state-bound nonce;
-//   2. the same signature-verified ID token carries `acr === "aadhaar"` (exact string; the provider's Aadhaar assurance,
-//      requested via the fixed authorize parameter acr=aadhaar). Missing, null, empty, wrong-typed or other values fail
-//      closed. `eaadhaar`, masked Aadhaar and unsigned response fields are never read or accepted as a substitute;
+//   2. the authorize request includes fixed acr=aadhaar; we rely on provider enforcement of this request,
+//      not on an acr claim in the signed ID token. OAuth completion alone does not independently prove Aadhaar status.
+//      `eaadhaar`, masked Aadhaar and unsigned response fields are not accepted as substitutes;
 //   3. the signature-verified ID token carries a well-formed `digilockerid`. If the authenticated token response also
 //      returns `digilockerid`, both must be equal. The id is only ever HMAC-fingerprinted by the caller;
 //   4. the caller (idv-digilocker-complete) binds that fingerprint atomically to exactly one FairSwap account.
@@ -20,11 +20,11 @@ export const OIDC_TOKEN_PATH = "/public/oauth2/2/token";
 export const OIDC_AUTHORIZE_PATH = "/public/oauth2/1/authorize";
 export const OIDC_ISSUER = DIGILOCKER_HOST;
 export const OIDC_JWKS_URL = `${DIGILOCKER_HOST}/public/oauth2/jwks`;
-/** Evidence label stored with the binding; the database refuses any other value for a badge-issuing link. */
-export const OIDC_EVIDENCE_METHOD = "oidc_v2_signed_aadhaar_acr";
+/** Evidence label: signed DigiLocker ID + requested Aadhaar ACR, not a signed provider ACR claim. */
+export const OIDC_EVIDENCE_METHOD = "oidc_v2_signed_id_requested_aadhaar";
 /** Historical label (signed digilockerid only, no Aadhaar assurance). The database no longer treats it as a badge. */
 export const OIDC_LEGACY_EVIDENCE_METHOD = "oidc_v2_signed_id_token";
-/** Fixed, non-user-controllable authentication context requested and required. */
+/** Fixed, non-user-controllable authentication context requested from provider. */
 export const OIDC_ACR = "aadhaar";
 const TIMEOUT_MS = 8000;
 const CLOCK_SKEW_S = 60;
@@ -203,7 +203,6 @@ export async function verifyOidcIdentity(
   const sub = claims["sub"];
   if (typeof sub !== "string" || !sub.trim() || sub.length > 255) throw bad();
   if (typeof claims["nonce"] !== "string" || claims["nonce"] !== ctx.expectedNonce) throw bad();
-  if (claims["acr"] !== OIDC_ACR) throw bad(); // Aadhaar assurance must be inside the verified token
   const id = claims["digilockerid"];
   if (typeof id !== "string" || !DIGILOCKER_ID_PATTERN.test(id)) throw bad();
   if (ex.responseId !== null && ex.responseId.toLowerCase() !== id.toLowerCase()) throw bad();
