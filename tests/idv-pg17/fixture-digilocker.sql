@@ -32,3 +32,11 @@ create or replace function app_security.log_audit_event(p_action text, p_entity 
 returns void language sql security definer set search_path = '' as $$
   insert into public.test_audit_log (action, entity, entity_id, details) values (p_action, p_entity, p_entity_id, p_details);
 $$;
+
+-- Match the exact deployed Production V3 seller-identity predicate for disposable PG17.
+CREATE OR REPLACE FUNCTION app_security.v3_seller_identity_enforced()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' AS $$
+  select pg_catalog.to_regprocedure('app_security.enforce_verified_actor(uuid,boolean)') is not null
+    and exists (select 1 from public.app_system_settings
+      where setting_key='identity_verification_required' and setting_value='true');
+$$;
