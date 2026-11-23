@@ -76,3 +76,56 @@ export function verifyIdvProdTestReceipt(r,e) {
     ||!/^[0-9a-f]{64}$/.test(r.ledgerStatementsSha256??''))throw new Error('IDV_PROD_PARITY_TEST_UNVERIFIED');
   return r.ledgerStatementsSha256;
 }
+
+const SHA40 = /^[0-9a-f]{40}$/;
+const PROD_REF = 'kriuhwppxgxsyyrbjsau';
+const WEB_REPO = 'vivek2310sharma/FairSwap-Web';
+async function readGitHub(url, token, fetcher) {
+  const response = await fetcher(url,{headers:{Authorization:`Bearer ${token}`,
+    Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}});
+  if (!response.ok) throw new Error('IDV_PROD_WEB_EVIDENCE_NOT_AVAILABLE');
+  return response.json();
+}
+export async function verifyIdvProductionWeb(env, fetcher=fetch) {
+  const sha=env.WEB_PRODUCTION_SHA;
+  const token=env.WEB_EVIDENCE_TOKEN;
+  if (!SHA40.test(sha??'') || !token)throw new Error('IDV_PROD_WEB_SOURCE_EVIDENCE_MISSING');
+  const main=await readGitHub(`https://api.github.com/repos/${WEB_REPO}/branches/main`,token,fetcher);
+  if (main.commit?.sha !== sha)throw new Error('IDV_PROD_WEB_SHA_NOT_MAIN');
+  const dep=await readGitHub(`https://api.github.com/repos/${WEB_REPO}/deployments?sha=${sha}&environment=Production&per_page=30`,token,fetcher);
+  if (!Array.isArray(dep) || !dep.some(x=>x.sha===sha && x.environment==='Production'))
+    throw new Error('IDV_PROD_WEB_DEPLOYMENT_MISSING');
+  let ready=false;
+  for(const d of dep.filter(x=>x.sha===sha && x.environment==='Production')){
+    const states=await readGitHub(`https://api.github.com/repos/${WEB_REPO}/deployments/${d.id}/statuses?per_page=1`,token,fetcher);
+    if (Array.isArray(states) && states[0]?.state==='success'){ready=true;break;}
+  }
+  if (!ready)throw new Error('IDV_PROD_WEB_NOT_READY');
+  // Unauthenticated same-origin POST must be 401 when the production DigiLocker feature is ON.
+  // 503 means Web flag OFF. A 404/redirect means the verified route was not deployed.
+  const response=await fetcher('https://fairswap.in/api/idv/digilocker/start',{
+    method:'POST',redirect:'manual',signal:AbortSignal.timeout(15000),
+    headers:{Origin:'https://fairswap.in','Content-Type':'application/json'},
+    body:JSON.stringify({consentAcknowledged:true})});
+  if (response.status!==401)throw new Error('IDV_PROD_WEB_FEATURE_NOT_LIVE');
+  return {status:'PASS',sha};
+}
+export function verifyIdvProviderSecretNames(rows) {
+  if (!Array.isArray(rows) || rows.some(r=>!r || typeof r.name!=='string'))
+    throw new Error('IDV_PROD_SECRET_NAMES_INVALID');
+  const names=new Set(rows.map(r=>r.name));
+  const required=['FAIRSWAP_DIGILOCKER_ENABLED','DIGILOCKER_AUTH_MODE','DIGILOCKER_CLIENT_ID',
+    'DIGILOCKER_CLIENT_SECRET','DIGILOCKER_REDIRECT_URI','IDV_DIGILOCKER_STATE_KEY',
+    'IDV_DIGILOCKER_FP_KEY_CURRENT','IDV_DIGILOCKER_FP_KEY_V1'];
+  if(required.some(k=>!names.has(k)))throw new Error('IDV_PROD_PROVIDER_CONFIG_MISSING');
+  return {status:'PASS',projectRef:PROD_REF};
+}
+export function verifyIdvDeployedFunctions(rows) {
+  if(!Array.isArray(rows))throw new Error('IDV_PROD_EDGE_LIST_INVALID');
+  for(const slug of ['idv-digilocker-start','idv-digilocker-complete']){
+    const fn=rows.find(x=>x.slug===slug);
+    if(!fn || fn.status!=='ACTIVE' || fn.verify_jwt!==true)
+      throw new Error('IDV_PROD_EDGE_UNVERIFIED_'+slug);
+  }
+  return {status:'PASS',projectRef:PROD_REF};
+}
