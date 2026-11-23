@@ -31,3 +31,6 @@ const worker=readFileSync(new URL("../supabase/functions/_shared/email-outbox-wo
 assert.ok(worker.includes("brandListingEmail(rendered.html)"));
 assert.ok(worker.includes("Idempotency-Key"));
 console.log("PASS: " + names.length + " branded Auth templates, security placeholders, and outbox wiring (source-level only)");
+
+const { runAccountSecurityEmailTests } = await import("./ci/test-account-security-email.mjs");
+await runAccountSecurityEmailTests();
