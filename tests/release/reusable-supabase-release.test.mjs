@@ -16,7 +16,7 @@ import {
 } from '../../scripts/release/wearables-v1-release.mjs';
 import {readTabletsLedger, verifyTabletsLedger} from '../../scripts/release/tablets-v1-release.mjs';
 import {assertLedgerOrdering, assertPreflight, parseLedgerVersions, postflightKeys, postflightQuery, preflightEnabledQuery, preflightQuery, readZipEntries, recoveredFoundationSha, requireStageEvidence, runAccessoriesPostflight, runLivePreflight, validateReceipt, verifyAccessoriesLedger, verifyHistoryPreserved, verifyWebDeployments} from '../../scripts/release/accessories-v1-release.mjs';
-import {adoptExistingInstallation, parsePendingDryRun, verifyLedgerVersion, verifyRemotePostflight, releaseReusable, releaseV3ProductionBatch, subprocessFailure, REFS, readMobileCatalogueSnapshot, verifyMobileCataloguePostflight, verifyMobileCatalogueTestReceipt} from '../../scripts/release/reusable-supabase-release.mjs';
+import {adoptExistingInstallation, parsePendingDryRun, verifyLedgerVersion, verifyRemotePostflight, assertAccountSecurityEmailTail, releaseReusable, releaseV3ProductionBatch, subprocessFailure, REFS, readMobileCatalogueSnapshot, verifyMobileCataloguePostflight, verifyMobileCatalogueTestReceipt} from '../../scripts/release/reusable-supabase-release.mjs';
 import {
   IDV_DIGILOCKER_CANDIDATE, IDV_DIGILOCKER_FUNCTIONS, IDV_DIGILOCKER_POSTFLIGHT, IDV_DIGILOCKER_PREFLIGHT, IDV_DIGILOCKER_SCOPE, IDV_DIGILOCKER_TAIL,
   IDV_DIGILOCKER_PRODUCTION_TAIL, idvDigilockerTail,
@@ -39,6 +39,36 @@ test('Account Security Email V2 candidate pins its exact migration and Test-to-P
   assert.equal(planDispatch({candidateId:candidate.id,target:'test'}).priorRuns.length, 0);
   assert.equal(planDispatch({candidateId:candidate.id,target:'production'}).target, 'production');
   assert.throws(() => planDispatch({candidateId:candidate.id,target:'adopt'}), /ACCOUNT_SECURITY_EMAIL_ADOPTION_FORBIDDEN/);
+});
+
+test('Account Security Email V2 accepts only immutable, later V3 ledger row in Test and Production', () => {
+  const candidate = getCandidate('account-security-email-v2');
+  const prior = {version:'20261120000000',name:'google_cloud_moderation_v1',
+    hasStatements:true,statementCount:1,statementsSha256:'0'.repeat(64)};
+  const ahead = {version:'20261122213157',name:'v3_provider_neutral_activation',
+    hasStatements:true,statementCount:9,
+    statementsSha256:'0d9b556c102a7a5ce57c72d7009a73bfa3fb510c3185d40a3a2b18dcea2a8853'};
+  const ledger = [prior, ahead];
+  const remote = new Set(ledger.map(row => row.version));
+  assert.deepEqual(assertAccountSecurityEmailTail(candidate, ledger, remote),
+    {includeAll:true, ahead:['20261122213157']});
+  for (const altered of [
+    {...ahead, version:'20261122213158'},
+    {...ahead, name:'different_migration'},
+    {...ahead, hasStatements:false},
+    {...ahead, statementCount:8},
+    {...ahead, statementsSha256:'1'.repeat(64)}
+  ]) {
+    assert.throws(() => assertAccountSecurityEmailTail(candidate,[prior,altered],
+      new Set([prior.version, altered.version])), /ACCOUNT_SECURITY_EMAIL_UNEXPECTED_LEDGER_TAIL/);
+  }
+  assert.throws(() => assertAccountSecurityEmailTail(candidate,ledger,new Set([prior.version])),
+    /ACCOUNT_SECURITY_EMAIL_UNEXPECTED_LEDGER_TAIL/);
+  assert.throws(() => assertAccountSecurityEmailTail(candidate,
+    [...ledger,{...ahead,version:'20261122213159'}],new Set([prior.version,ahead.version,'20261122213159'])),
+    /ACCOUNT_SECURITY_EMAIL_UNEXPECTED_LEDGER_TAIL/);
+  assert.throws(() => assertAccountSecurityEmailTail(candidate,[prior],new Set([prior.version])),
+    /ACCOUNT_SECURITY_EMAIL_UNEXPECTED_LEDGER_TAIL/);
 });
 
 test('Account Security Email V2 postflight rejects failed authorization, trigger or history checks', async () => {
