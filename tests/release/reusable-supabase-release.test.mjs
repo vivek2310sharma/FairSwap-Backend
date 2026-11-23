@@ -16,7 +16,7 @@ import {
 } from '../../scripts/release/wearables-v1-release.mjs';
 import {readTabletsLedger, verifyTabletsLedger} from '../../scripts/release/tablets-v1-release.mjs';
 import {assertLedgerOrdering, assertPreflight, parseLedgerVersions, postflightKeys, postflightQuery, preflightEnabledQuery, preflightQuery, readZipEntries, recoveredFoundationSha, requireStageEvidence, runAccessoriesPostflight, runLivePreflight, validateReceipt, verifyAccessoriesLedger, verifyHistoryPreserved, verifyWebDeployments} from '../../scripts/release/accessories-v1-release.mjs';
-import {adoptExistingInstallation, parsePendingDryRun, verifyLedgerVersion, verifyRemotePostflight, assertAccountSecurityEmailTail, releaseReusable, releaseV3ProductionBatch, subprocessFailure, REFS, readMobileCatalogueSnapshot, verifyMobileCataloguePostflight, verifyMobileCatalogueTestReceipt} from '../../scripts/release/reusable-supabase-release.mjs';
+import {adoptExistingInstallation, parsePendingDryRun, verifyLedgerVersion, verifyRemotePostflight, assertAccountSecurityEmailTail, assertFamilyChooserLedger, releaseReusable, releaseV3ProductionBatch, subprocessFailure, REFS, readMobileCatalogueSnapshot, verifyMobileCataloguePostflight, verifyMobileCatalogueTestReceipt} from '../../scripts/release/reusable-supabase-release.mjs';
 import {
   IDV_DIGILOCKER_CANDIDATE, IDV_DIGILOCKER_FUNCTIONS, IDV_DIGILOCKER_POSTFLIGHT, IDV_DIGILOCKER_PREFLIGHT, IDV_DIGILOCKER_SCOPE, IDV_DIGILOCKER_TAIL,
   IDV_DIGILOCKER_PRODUCTION_TAIL, idvDigilockerTail,
@@ -5186,6 +5186,31 @@ test('V3 correction delivery pins version/source, requires history and rejects f
   assert.equal(productionJobRuns(yaml,{candidate:c.id,target:'test',autoPromote:true}),false);
   assert.equal(productionJobRuns(yaml,{candidate:c.id,target:'test',autoPromote:true,verifyTest:'failure'}),false);
   await assert.rejects(releaseReusable({candidateId:c.id,environment:'FairSwapProd',context:{TARGET:'production'},runner:()=>assert.fail('no tools')}),/TEST_EVIDENCE_REQUIRED/);
+});
+
+test('canonical chooser permits only the pinned Test DigiLocker out-of-order ledger row',()=>{
+  const candidate = getCandidate('canonical-family-chooser-v1');
+  const exact = {
+    version:'20261123150000', name:'idv_digilocker_acr_request_only',
+    hasStatements:true, statementCount:15,
+    statementsSha256:'b0f20fde43e46690707cf18a1d706fb6a4518d159da8f94a71774bf8758bbc87'
+  };
+  assert.deepEqual(assertFamilyChooserLedger('FairSwapTest',candidate,[]),{includeAll:false,ahead:[]});
+  assert.deepEqual(assertFamilyChooserLedger('FairSwapTest',candidate,[exact]),
+    {includeAll:true,ahead:['20261123150000']});
+  for(const bad of [
+    {...exact,version:'20261123160000'},
+    {...exact,name:'unexpected_migration'},
+    {...exact,hasStatements:false},
+    {...exact,statementCount:14},
+    {...exact,statementsSha256:'f'.repeat(64)},
+    [exact,{...exact,version:'20261123160000'}]
+  ]) {
+    assert.throws(()=>assertFamilyChooserLedger('FairSwapTest',candidate,Array.isArray(bad)?bad:[bad]),
+      /FAMILY_CHOOSER_UNEXPECTED_LEDGER_TAIL/);
+  }
+  assert.throws(()=>assertFamilyChooserLedger('FairSwapProd',candidate,[exact]),
+    /FAMILY_CHOOSER_UNEXPECTED_LEDGER_TAIL/);
 });
 
 test('canonical family chooser pins additive SQL and requires Test evidence before Production',()=>{
