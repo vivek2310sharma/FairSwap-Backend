@@ -16,7 +16,7 @@ import {
 } from '../../scripts/release/wearables-v1-release.mjs';
 import {readTabletsLedger, verifyTabletsLedger} from '../../scripts/release/tablets-v1-release.mjs';
 import {assertLedgerOrdering, assertPreflight, parseLedgerVersions, postflightKeys, postflightQuery, preflightEnabledQuery, preflightQuery, readZipEntries, recoveredFoundationSha, requireStageEvidence, runAccessoriesPostflight, runLivePreflight, validateReceipt, verifyAccessoriesLedger, verifyHistoryPreserved, verifyWebDeployments} from '../../scripts/release/accessories-v1-release.mjs';
-import {adoptExistingInstallation, parsePendingDryRun, verifyLedgerVersion, verifyRemotePostflight, assertAccountSecurityEmailTail, assertFamilyChooserLedger, releaseReusable, releaseV3ProductionBatch, subprocessFailure, REFS, readMobileCatalogueSnapshot, verifyMobileCataloguePostflight, verifyMobileCatalogueTestReceipt} from '../../scripts/release/reusable-supabase-release.mjs';
+import {adoptExistingInstallation, parsePendingDryRun, verifyLedgerVersion, verifyRemotePostflight, assertAccountSecurityEmailTail, assertFamilyChooserLedger, assertRemainingCategoriesLedger, releaseReusable, releaseV3ProductionBatch, subprocessFailure, REFS, readMobileCatalogueSnapshot, verifyMobileCataloguePostflight, verifyMobileCatalogueTestReceipt} from '../../scripts/release/reusable-supabase-release.mjs';
 import {
   IDV_DIGILOCKER_CANDIDATE, IDV_DIGILOCKER_FUNCTIONS, IDV_DIGILOCKER_POSTFLIGHT, IDV_DIGILOCKER_PREFLIGHT, IDV_DIGILOCKER_SCOPE, IDV_DIGILOCKER_TAIL,
   IDV_DIGILOCKER_PRODUCTION_TAIL, idvDigilockerTail,
@@ -587,7 +587,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'account-security-email-v2', 'canonical-family-chooser-v1', 'idv-digilocker-aadhaar-acr', 'idv-digilocker-acr-request-only', 'idv-digilocker-oidc-v2', 'idv-digilocker-prod-parity', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
+  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'account-security-email-v2', 'canonical-family-chooser-v1', 'idv-digilocker-aadhaar-acr', 'idv-digilocker-acr-request-only', 'idv-digilocker-oidc-v2', 'idv-digilocker-prod-parity', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'remaining-categories-launch-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -5335,4 +5335,228 @@ test('IDV request-only ACR: signed identity remains mandatory, requested acr sta
   for(const overrides of [{identityVerificationRequired:false},{autoPromote:true},{postflightScope:'incorrect'},
     {status:'ALREADY_APPLIED_VERIFIED'},{acrRequested:'no'},{projectRef:REFS.FairSwapProd}])
     assert.throws(()=>verifyIdvDigilockerRequestTestReceipt({...receipt,...overrides},context),/REQUEST_TEST_RECEIPT_INVALID/);
+});
+
+test('remaining categories launch candidate pins additive SQL and requires Test evidence before Production', () => {
+  const id = 'remaining-categories-launch-v1', candidate = verifyCandidateSha(id).candidate;
+  assert.equal(candidate.autoPromote, false);
+  assert.equal(candidate.remainingCategoriesLaunch, true);
+  assert.equal(candidate.statementsSha256, '244075f843ec04bf2c1488c96963c2e32624f8131c6c64a1107a3d1c44a64f9d');
+  assert.equal(planDispatch({candidateId: id, target: 'test'}).priorRuns.length, 0);
+  assert.throws(() => planDispatch({candidateId: id, target: 'production'}), /REMAINING_CATEGORIES_TEST_EVIDENCE_REQUIRED/);
+  assert.throws(() => planDispatch({candidateId: id, target: 'adopt'}), /REMAINING_CATEGORIES_INVALID_TARGET/);
+  assert.equal(planDispatch({candidateId: id, target: 'production', inputs: {test_catalogue_run_id: '123'}}).priorRuns[0].candidateId, id);
+  const sql = readFileSync(candidate.path, 'utf8');
+  assert.match(sql, /v2-dogs/);
+  assert.match(sql, /v2-other-pets/);
+  assert.match(sql, /adoption_rehoming/);
+});
+
+test('remaining categories postflight verifies 63 catalogue leaves and staff intake guard', async () => {
+  const checks = {catalogue_leaf_count: 63, dogs_rehoming: true, other_pets_rehoming: true, staff_intake_guard: true};
+  const call = value => verifyRemotePostflight('FairSwapTest', 'remaining-categories-launch-v1', 'postgres://mock', {}, (_cmd, args) => {
+    assert.match(args.at(-1), /begin read only/i);
+    assert.match(args.at(-1), /get_category_catalogue_v2/);
+    return JSON.stringify(value);
+  });
+  assert.deepEqual(await call(checks), {status: 'PASS', catalogue_leaf_count: 63});
+  for (const [key, badVal] of [['catalogue_leaf_count', 62], ['dogs_rehoming', false], ['other_pets_rehoming', false], ['staff_intake_guard', false]]) {
+    await assert.rejects(() => call({...checks, [key]: badVal}), /REUSABLE_RELEASE_REMAINING_CATEGORIES_POSTFLIGHT_FAILED/);
+  }
+});
+
+test('remaining categories assertRemainingCategoriesLedger fails closed on any ahead migration', () => {
+  const candidate = getCandidate('remaining-categories-launch-v1');
+  assert.deepEqual(assertRemainingCategoriesLedger('FairSwapTest', candidate, []), {includeAll: false, ahead: []});
+  assert.deepEqual(assertRemainingCategoriesLedger('FairSwapProd', candidate, []), {includeAll: false, ahead: []});
+  const olderRow = {version: '20261119092042', name: 'ordinary_goods_v3', hasStatements: true, statementCount: 10, statementsSha256: 'a'.repeat(64)};
+  assert.deepEqual(assertRemainingCategoriesLedger('FairSwapTest', candidate, [olderRow]), {includeAll: false, ahead: []});
+  const aheadRow = {version: '20261123200000', name: 'unexpected_future', hasStatements: true, statementCount: 5, statementsSha256: 'b'.repeat(64)};
+  assert.throws(() => assertRemainingCategoriesLedger('FairSwapTest', candidate, [aheadRow]), /REMAINING_CATEGORIES_UNEXPECTED_LEDGER_TAIL/);
+  assert.throws(() => assertRemainingCategoriesLedger('FairSwapProd', candidate, [aheadRow]), /REMAINING_CATEGORIES_UNEXPECTED_LEDGER_TAIL/);
+});
+
+test('remaining categories receipt recovery guards pinned Test and Production history', () => {
+  const source = readFileSync('scripts/release/reusable-supabase-release.mjs', 'utf8');
+  assert.match(source, /REMAINING_CATEGORIES_RECORDED_LEDGER_MISMATCH/);
+  assert.match(source, /REMAINING_CATEGORIES_SOURCE_LEDGER_MISMATCH/);
+  assert.match(source, /REMAINING_CATEGORIES_TEST_LEDGER_MISMATCH/);
+  assert.match(source, /REMAINING_CATEGORIES_TEST_LEDGER_EVIDENCE_REQUIRED/);
+  assert.match(source, /assertRemainingCategoriesLedger/);
+});
+
+test('remaining categories releaseReusable tests actual Test apply and Production ledger-pinned release path', async () => {
+  const candidate = getCandidate('remaining-categories-launch-v1');
+  const postflightJson = JSON.stringify({catalogue_leaf_count: 63, dogs_rehoming: true, other_pets_rehoming: true, staff_intake_guard: true});
+
+  const historyVersions = [...baseHistory, ...candidate.requiredLedgerVersions];
+
+  const makeTestRunner = () => {
+    let isApplied = false;
+    return (cmd, args) => {
+      if (cmd === 'supabase' && args.includes('--version')) return '2.117.0\n';
+      if (cmd === 'supabase' && args.includes('link')) {
+        const ws = args[args.indexOf('--workdir') + 1];
+        mkdirSync(join(ws, 'supabase/.temp'), {recursive: true});
+        writeFileSync(join(ws, 'supabase/.temp/project-ref'), `${args[args.indexOf('--project-ref') + 1]}\n`);
+        return '';
+      }
+      if (cmd === 'supabase' && args.includes('fetch')) {
+        const ws = args[args.indexOf('--workdir') + 1];
+        mkdirSync(join(ws, 'supabase/migrations'), {recursive: true});
+        historyVersions.forEach(v => writeFileSync(join(ws, 'supabase/migrations', `${v}_t.sql`), '-- t'));
+        return '';
+      }
+      if (cmd === 'supabase' && args.includes('--dry-run')) {
+        return `Applying migration ${candidate.filename}...`;
+      }
+      if (cmd === 'supabase' && args.includes('db') && args.includes('push')) {
+        isApplied = true;
+        return '';
+      }
+      if (cmd === 'supabase' && args.includes('list')) {
+        const vers = isApplied ? [...historyVersions, candidate.version] : historyVersions;
+        return ledger(vers);
+      }
+      if (cmd === 'psql') {
+        const query = args[args.indexOf('-c') + 1] || '';
+        if (query.includes('get_category_catalogue_v2')) return postflightJson;
+        if (query.includes('schema_migrations')) {
+          const rows = historyVersions.map(v => {
+            const prereq = Object.values(CANDIDATES).find(e => e.version === v);
+            return {
+              version: v,
+              name: prereq ? prereq.filename.slice(15, -4) : 't',
+              statementCount: 1,
+              statementsSha256: 'a'.repeat(64),
+              hasStatements: true
+            };
+          });
+          if (isApplied) {
+            rows.push({
+              version: candidate.version,
+              name: candidate.filename.slice(15, -4),
+              statementCount: 17,
+              statementsSha256: candidate.statementsSha256,
+              hasStatements: true
+            });
+          }
+          return JSON.stringify(rows);
+        }
+        return '1\n';
+      }
+      return '';
+    };
+  };
+
+  // 1. FairSwapTest apply succeeds and records ledgerStatementsSha256
+  const testContext = {
+    ...baseEnv,
+    TARGET: 'test',
+    GITHUB_SHA: 'a'.repeat(40),
+    GITHUB_RUN_ID: '1001',
+    GITHUB_RUN_ATTEMPT: '1',
+    TEST_CATALOGUE_RUN_ID: ''
+  };
+
+  const testReceipt = await releaseReusable({
+    candidateId: candidate.id,
+    environment: 'FairSwapTest',
+    context: testContext,
+    runner: makeTestRunner()
+  });
+  assert.equal(testReceipt.candidateId, candidate.id);
+  assert.equal(testReceipt.status, 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED');
+  assert.equal(testReceipt.ledgerStatementsSha256, candidate.statementsSha256);
+
+  // 2. FairSwapProd requires Test evidence
+  await assert.rejects(
+    releaseReusable({
+      candidateId: candidate.id,
+      environment: 'FairSwapProd',
+      context: {...baseEnv, TARGET: 'production', GITHUB_SHA: 'a'.repeat(40), GITHUB_RUN_ID: '1002'},
+      runner: makeTestRunner()
+    }),
+    /REMAINING_CATEGORIES_TEST_EVIDENCE_REQUIRED/
+  );
+
+  // 3. FairSwapProd rejects mismatched Test evidence receipt
+  const artifactUrl = 'https://api.github.com/repos/vivek2310sharma/FairSwap-Backend/actions/artifacts/1/zip';
+  const makeEvidenceFetcher = (receiptOverride = {}) => {
+    const r = {...testReceipt, ...receiptOverride};
+    const zipName = `${candidate.id}-fairswaptest.json`;
+    const body = Buffer.from(JSON.stringify(r));
+    const zip = makeZip({[zipName]: body, SHA256SUMS_fairswaptest: `${createHash('sha256').update(body).digest('hex')}  ${zipName}\n`});
+    const digest = `sha256:${createHash('sha256').update(zip).digest('hex')}`;
+    return async url => {
+      if (url.includes('/artifacts?per_page=100')) {
+        return {
+          ok: true, status: 200,
+          json: async () => ({
+            artifacts: [{
+              id: 1,
+              name: `reusable-test-${candidate.id}-1001-1`,
+              expired: false,
+              archive_download_url: artifactUrl,
+              digest,
+              workflow_run: {id: 1001, head_sha: 'a'.repeat(40)}
+            }]
+          })
+        };
+      }
+      if (url.includes('/actions/runs/1001')) {
+        return {
+          ok: true, status: 200,
+          json: async () => ({
+            id: 1001, head_branch: 'main', head_sha: 'a'.repeat(40),
+            event: 'workflow_dispatch', status: 'completed', conclusion: 'success',
+            workflow_id: 404601811, run_attempt: 1, path: '.github/workflows/reusable-supabase-release.yml',
+            head_repository: {full_name: 'vivek2310sharma/FairSwap-Backend'},
+            actor: {login: 'vivek2310sharma'}, triggering_actor: {login: 'vivek2310sharma'}
+          })
+        };
+      }
+      if (url === artifactUrl) {
+        return {
+          ok: true, status: 200,
+          arrayBuffer: async () => zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.length)
+        };
+      }
+      return {ok: true, status: 200, json: async () => ({})};
+    };
+  };
+
+  const prodContextWithTestRun = {
+    ...baseEnv,
+    TARGET: 'production',
+    GITHUB_SHA: 'a'.repeat(40),
+    GITHUB_RUN_ID: '1002',
+    GITHUB_RUN_ATTEMPT: '1',
+    GITHUB_REPOSITORY: 'vivek2310sharma/FairSwap-Backend',
+    GITHUB_TOKEN: 'fake_token',
+    TEST_CATALOGUE_RUN_ID: '1001'
+  };
+
+  await assert.rejects(
+    releaseReusable({
+      candidateId: candidate.id,
+      environment: 'FairSwapProd',
+      context: prodContextWithTestRun,
+      runner: makeTestRunner(),
+      fetcher: makeEvidenceFetcher({ledgerStatementsSha256: '0'.repeat(64)})
+    }),
+    /REMAINING_CATEGORIES_TEST_LEDGER_MISMATCH/
+  );
+
+  // 4. FairSwapProd with matching Test receipt succeeds
+  const prodReceipt = await releaseReusable({
+    candidateId: candidate.id,
+    environment: 'FairSwapProd',
+    context: prodContextWithTestRun,
+    runner: makeTestRunner(),
+    fetcher: makeEvidenceFetcher()
+  });
+  assert.equal(prodReceipt.candidateId, candidate.id);
+  assert.equal(prodReceipt.status, 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED');
+  assert.equal(prodReceipt.ledgerStatementsSha256, candidate.statementsSha256);
 });

@@ -86,6 +86,16 @@ export const CANDIDATES = Object.freeze({
     canonicalFamilyChooser: true, stage: 'catalogue', autoPromote: false,
     requiredLedgerVersions: Object.freeze(['20261118092010', '20261119114512']),
   }),
+  'remaining-categories-launch-v1': Object.freeze({
+    id: 'remaining-categories-launch-v1', version: '20261123190000',
+    filename: '20261123190000_remaining_categories_launch_v1.sql',
+    path: 'supabase/forward-migrations/unified-publishing-v3/supabase/migrations/20261123190000_remaining_categories_launch_v1.sql',
+    sha256: '58d9675cf41776cabe9c1aff63ce594e779cfc34a852d966539f52f64b7ca9cb',
+    statementsSha256: '244075f843ec04bf2c1488c96963c2e32624f8131c6c64a1107a3d1c44a64f9d',
+    description: 'Launch remaining 12 categories: 10 disabled contracts, Dogs and Other Pets free rehoming, and reviewed publication path',
+    remainingCategoriesLaunch: true, stage: 'catalogue', autoPromote: false,
+    requiredLedgerVersions: Object.freeze(['20261118092010', '20261119114512', '20261123123000']),
+  }),
   'account-security-email-v2': Object.freeze({
     id: 'account-security-email-v2',
     version: '20261122213000',
@@ -606,11 +616,11 @@ export function planDispatch({candidateId, target = 'test', inputs = {}, context
       && context.GITHUB_ACTOR_ID === waiver.ownerId && context.GITHUB_REPOSITORY_OWNER_ID === waiver.ownerId
       && SHA40.test(context.GITHUB_SHA ?? '') && RUN_ID.test(context.GITHUB_RUN_ID ?? ''), 'E2E_WAIVER_OWNER_DISPATCH_REQUIRED');
   }
-  if (candidate.canonicalFamilyChooser) {
-    need(target !== 'adopt', 'FAMILY_CHOOSER_INVALID_TARGET');
+  if (candidate.canonicalFamilyChooser || candidate.remainingCategoriesLaunch) {
+    need(target !== 'adopt', candidate.canonicalFamilyChooser ? 'FAMILY_CHOOSER_INVALID_TARGET' : 'REMAINING_CATEGORIES_INVALID_TARGET');
     const priorRuns = target === 'production'
       ? [{key: 'test_catalogue_run_id', runId: inputs.test_catalogue_run_id, candidateId, environment: 'test'}] : [];
-    need(target !== 'production' || RUN_ID.test(inputs.test_catalogue_run_id ?? ''), 'FAMILY_CHOOSER_TEST_EVIDENCE_REQUIRED');
+    need(target !== 'production' || RUN_ID.test(inputs.test_catalogue_run_id ?? ''), candidate.canonicalFamilyChooser ? 'FAMILY_CHOOSER_TEST_EVIDENCE_REQUIRED' : 'REMAINING_CATEGORIES_TEST_EVIDENCE_REQUIRED');
     return {candidate, target, priorRuns, webStagingSha: null, webProductionSha: null};
   }
   if (target === 'adopt') {
