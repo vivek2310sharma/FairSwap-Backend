@@ -186,7 +186,7 @@ describe("Lab access control and contract", () => {
     }
     expect(w.calls).toEqual(["server_idv_dl_diag_start"]); expect(p.log).toEqual([]);
   });
-  it("start: AVS-only Lab redirect without OIDC parameters, with PKCE S256 and isolated state", async () => {
+  it("start: Stage-compatible OpenID v1 redirect without ACR, with nonce and isolated PKCE", async () => {
     const w = makeWorld();
     const { res, body, state } = await start(w);
     expect(res.status).toBe(200);
@@ -197,12 +197,13 @@ describe("Lab access control and contract", () => {
     expect(u.searchParams.get("client_id")).toBe(CLIENT);
     expect(u.searchParams.get("redirect_uri")).toBe(LAB_REDIRECT);
     expect(u.searchParams.get("response_type")).toBe("code");
-    expect(u.searchParams.get("scope")).toBe("avs");
+    expect(u.pathname).toBe("/public/oauth2/1/authorize");
+    expect(u.searchParams.get("scope")).toBe("openid");
     expect(u.searchParams.has("acr")).toBe(false);
     expect(u.searchParams.has("openid")).toBe(false);
     expect(u.searchParams.get("code_challenge_method")).toBe("S256");
     expect(u.searchParams.get("code_challenge")).toBe(await pkceChallenge(await deriveLabPkceVerifier(LAB_KEY, state)));
-    expect(u.searchParams.has("nonce")).toBe(false); // AVS must not claim an OIDC nonce
+    expect(u.searchParams.get("nonce")).toBe(await deriveLabNonce(LAB_KEY, state));
     expect(u.searchParams.has("req_doctype")).toBe(false);
     // only the Lab-namespaced hash is stored; never the plain or diagnostic hash
     expect([...w.states.keys()]).toEqual([await labStateHash(state)]);
@@ -210,6 +211,10 @@ describe("Lab access control and contract", () => {
     // domain separation of derivations
     expect(await deriveLabPkceVerifier(LAB_KEY, state)).not.toBe(await deriveDiagPkceVerifier(LAB_KEY, state));
     expect(await deriveLabNonce(LAB_KEY, state)).not.toBe(await deriveDiagNonce(LAB_KEY, state));
+    // Prior owner-set /2 override must not move the Lab off the documented OIDC endpoint.
+    const forcedV1 = readLabRuntime(env({ DIGILOCKER_LAB_AUTHORIZE_VERSION: "2" }));
+    expect(forcedV1.kind).toBe("ready");
+    if (forcedV1.kind === "ready") expect(forcedV1.lab.rt.authorizeVersion).toBe("1");
   });
   it("rate limiting is surfaced as 429 in the Lab shape", async () => {
     const w = makeWorld(); w.clock.now = -1;
