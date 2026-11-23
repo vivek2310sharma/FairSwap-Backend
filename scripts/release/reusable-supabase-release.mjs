@@ -9,7 +9,7 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
-import {CANDIDATES, adoptionAttestation, getAdoption, getCandidate, planDispatch, verifyCandidateSha, PROJECT_REFS, MOBILE_CATALOGUE_CANDIDATE, V3_TEST_DIAGNOSTIC_LEDGER, V3_PRODUCTION_BATCH, V3_PRODUCTION_SEQUENCE, V3_IDENTITY_PREREQUISITE} from './reusable-candidates.mjs';
+import {V3_ACTIVATION_CORRECTION, CANDIDATES, adoptionAttestation, getAdoption, getCandidate, planDispatch, verifyCandidateSha, PROJECT_REFS, MOBILE_CATALOGUE_CANDIDATE, V3_TEST_DIAGNOSTIC_LEDGER, V3_PRODUCTION_BATCH, V3_PRODUCTION_SEQUENCE, V3_IDENTITY_PREREQUISITE} from './reusable-candidates.mjs';
 import {
   assertLedgerOrdering, parseLedgerVersions, assertStageInputs, requireStageEvidence, postflightQuery, runAccessoriesPostflight, runLivePreflight, verifyHistoryPreserved, verifyAccessoriesLedger
 } from './accessories-v1-release.mjs';
@@ -174,8 +174,11 @@ const MOBILE_CATALOGUE_COUNTS = {before: [21, 100], after: [27, 1473]};
 const SHA256 = /^[a-f0-9]{64}$/;
 const MOBILE_CATALOGUE_SCOPE = 'mobile-catalogue-v1-integrity';
 
-export function verifyMobileCatalogueTestReceipt(receipt, context) {
-  const candidate = getCandidate(MOBILE_CATALOGUE_CANDIDATE);
+export function verifyCorrectionTestReceipt(receipt, context) {
+  return verifyMobileCatalogueTestReceipt(receipt, context, 'v3-provider-neutral-activation');
+}
+export function verifyMobileCatalogueTestReceipt(receipt, context, candidateId = MOBILE_CATALOGUE_CANDIDATE) {
+  const candidate = getCandidate(candidateId);
   if (!/^[a-f0-9]{40}$/.test(context.GITHUB_SHA ?? '') ||
       !/^[1-9]\d*$/.test(context.GITHUB_RUN_ID ?? '') ||
       !/^[1-9]\d*$/.test(context.GITHUB_RUN_ATTEMPT ?? '') ||
@@ -185,7 +188,7 @@ export function verifyMobileCatalogueTestReceipt(receipt, context) {
       receipt.reviewedCommit !== context.GITHUB_SHA || receipt.releaseWorkflowRun !== context.GITHUB_RUN_ID ||
       receipt.releaseWorkflowAttempt !== context.GITHUB_RUN_ATTEMPT ||
       receipt.status !== 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED' || receipt.postflightVerified !== true ||
-      receipt.postflightScope !== MOBILE_CATALOGUE_SCOPE ||
+      receipt.postflightScope !== (candidateId === 'v3-provider-neutral-activation' ? 'v3-correction-integrity' : MOBILE_CATALOGUE_SCOPE) ||
       !Array.isArray(receipt.dryRunPending) || receipt.dryRunPending.length !== 1 ||
       receipt.dryRunPending[0] !== candidate.filename || !SHA256.test(receipt.ledgerStatementsSha256 ?? '')) {
     throw new Error('REUSABLE_RELEASE_MOBILE_CATALOGUE_TEST_RECEIPT_INVALID');
@@ -327,6 +330,13 @@ function verifyDisabledV3(count, exec, production = false) {
 
 export async function verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore) {
   const candidate = getCandidate(candidateId);
+  if (candidateId === 'v3-provider-neutral-activation') {
+    const checks = V3_ACTIVATION_CORRECTION.functions.map(([sig,digest]) =>
+      `EXISTS(SELECT FROM pg_proc WHERE oid=to_regprocedure('${sig}') AND md5(prosrc)='${digest}' AND prosecdef AND proconfig @> ARRAY['search_path=""']::text[])`).join(' AND ');
+    const result = psqlQuery(`BEGIN READ ONLY; SET LOCAL statement_timeout='15s'; SELECT (${checks})::text; COMMIT;`, psqlUrl, env, runner, 'postflight_sql');
+    if (result.trim() !== 'true') throw Error('V3_CORRECTION_POSTFLIGHT_FAILED');
+    return {status:'PASS'};
+  }
   if (candidateId === V3_IDENTITY_PREREQUISITE) {
     return v3ProductionState(sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'), {beforeProperty: true});
   }
@@ -808,8 +818,9 @@ export async function releaseReusable({
   if ((idvDigilocker || idvDigilockerV2) && environment === 'FairSwapProd' && (context.TARGET !== 'test' || !SHA256.test(idvTestLedger ?? ''))) {
     throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_TEST_EVIDENCE_REQUIRED');
   }
-  const mobileCatalogue = candidateId === MOBILE_CATALOGUE_CANDIDATE;
-  const mobileTestLedger = context.MOBILE_CATALOGUE_TEST_LEDGER_SHA;
+  const correction = candidateId === 'v3-provider-neutral-activation';
+  const mobileCatalogue = candidateId === MOBILE_CATALOGUE_CANDIDATE || correction;
+  const mobileTestLedger = correction ? context.V3_CORRECTION_TEST_LEDGER_SHA : context.MOBILE_CATALOGUE_TEST_LEDGER_SHA;
   if (mobileCatalogue && environment === 'FairSwapProd' &&
       (context.TARGET !== 'test' || !SHA256.test(mobileTestLedger ?? ''))) {
     throw new Error('REUSABLE_RELEASE_MOBILE_CATALOGUE_TEST_EVIDENCE_REQUIRED');
@@ -1103,7 +1114,7 @@ export async function releaseReusable({
         phase = 'preflight';
         catalogueBefore = runIdvDigilockerRequiredPreflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
       }
-      if (mobileCatalogue) {
+      if (mobileCatalogue && !correction) {
         phase = 'preflight';
         catalogueBefore = readMobileCatalogueSnapshot(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'), 'before');
       }
@@ -1210,7 +1221,7 @@ export async function releaseReusable({
         ...(environment === 'FairSwapProd' ? {testLedgerStatementsSha256: validityTestLedger} : {})
       } : {}),
       ...(mobileCatalogue ? {
-        postflightScope: MOBILE_CATALOGUE_SCOPE,
+        postflightScope: correction ? 'v3-correction-integrity' : MOBILE_CATALOGUE_SCOPE,
         releaseWorkflowAttempt: context.GITHUB_RUN_ATTEMPT,
         ...(environment === 'FairSwapProd' ? {testLedgerStatementsSha256: mobileTestLedger} : {})
       } : {}),

@@ -12,6 +12,7 @@ on:
           - moderation-analytics-v1
           - moderation-azure-v1
           - moderation-switching-v1
+          - v3-provider-neutral-activation
           - moderation-google-cloud-v1
           - mobile-catalogue-india-v1
           - listing-validity-365
@@ -459,6 +460,7 @@ jobs:
     outputs:
       taxonomy_ledger_sha: ${{ steps.taxonomy_proof.outputs.ledger_sha }}
       listing_validity_ledger_sha: ${{ steps.listing_validity_proof.outputs.ledger_sha }}
+      correction_ledger_sha: ${{ steps.correction_proof.outputs.ledger_sha }}
       mobile_catalogue_ledger_sha: ${{ steps.mobile_catalogue_proof.outputs.ledger_sha }}
       idv_digilocker_ledger_sha: ${{ steps.idv_digilocker_proof.outputs.ledger_sha }}
     if: ${{ needs.test.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
@@ -553,6 +555,18 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `ledger_sha=${digest}\n`);
           NODE
 
+      - name: Verify V3 correction Test postflight receipt
+        id: correction_proof
+        if: ${{ inputs.candidate == 'v3-provider-neutral-activation' }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {appendFileSync, readFileSync} from 'node:fs';
+          import {verifyCorrectionTestReceipt} from './scripts/release/reusable-supabase-release.mjs';
+          const receipt = JSON.parse(readFileSync('test-evidence/v3-provider-neutral-activation-fairswaptest.json', 'utf8'));
+          const digest = verifyCorrectionTestReceipt(receipt, process.env);
+          appendFileSync(process.env.GITHUB_OUTPUT, `ledger_sha=${digest}\n`);
+          NODE
+
       - name: Verify IDV DigiLocker V1 Test postflight receipt
         id: idv_digilocker_proof
         if: ${{ inputs.candidate == 'idv-digilocker-v1' || inputs.candidate == 'idv-digilocker-oidc-v2' }}
@@ -587,13 +601,14 @@ jobs:
       ${{ always() && needs.verify.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
       inputs.candidate != 'v3-test-remaining-batch' && inputs.candidate != 'idv-digilocker-required-gate' &&
       ((inputs.target == 'test' && needs.verify.outputs.auto_promote == 'true' && needs.test.result == 'success' && needs.verify_test.result == 'success' &&
+      (inputs.candidate != 'v3-provider-neutral-activation' || needs.verify_test.outputs.correction_ledger_sha != '') &&
       (inputs.candidate != 'mobile-catalogue-india-v1' || needs.verify_test.outputs.mobile_catalogue_ledger_sha != '') &&
       (inputs.candidate != 'idv-digilocker-v1' || needs.verify_test.outputs.idv_digilocker_ledger_sha != '') &&
       (inputs.candidate != 'idv-digilocker-oidc-v2' || needs.verify_test.outputs.idv_digilocker_ledger_sha != '') &&
       (inputs.candidate != 'listing-validity-365' || needs.verify_test.outputs.listing_validity_ledger_sha != '') &&
       (inputs.candidate != 'taxonomy-v2-foundation' || needs.verify_test.outputs.taxonomy_ledger_sha != '') &&
       (inputs.candidate != 'taxonomy-v2-catalogue' || needs.verify_test.outputs.taxonomy_ledger_sha != '')) ||
-      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'idv-digilocker-oidc-v2' && inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue') ||
+      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'v3-provider-neutral-activation' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'idv-digilocker-oidc-v2' && inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue') ||
       (inputs.target == 'adopt' && inputs.candidate == 'accessories-v1-foundation' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped')) }}
     environment: FairSwapProd
     runs-on: ubuntu-24.04
@@ -666,6 +681,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           TAXONOMY_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.taxonomy_ledger_sha }}
           LISTING_VALIDITY_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.listing_validity_ledger_sha }}
+          V3_CORRECTION_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.correction_ledger_sha }}
           MOBILE_CATALOGUE_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.mobile_catalogue_ledger_sha }}
           IDV_DIGILOCKER_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.idv_digilocker_ledger_sha }}
           WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue' || startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-') || startsWith(inputs.candidate, 'v3-goods-batch-')) && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}

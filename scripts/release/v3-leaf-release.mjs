@@ -1,4 +1,5 @@
 import {requireHostedE2e} from './v3-hosted-e2e.mjs';
+// Provider selection stays in the shared moderation pipeline; five_check is the legacy goods contract label.
 // One-leaf operator orchestration. No migrations, switches, provider calls or automatic promotion.
 import {readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync} from 'node:fs';
 import {join, resolve} from 'node:path';
@@ -6,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {V3_GOODS, V3_BATCH_MAX_LEAVES, PROJECT_REFS, getCandidate, planDispatch, verifyCandidateSha} from './reusable-candidates.mjs';
+import {V3_ACTIVATION_CORRECTION, V3_GOODS, V3_BATCH_MAX_LEAVES, PROJECT_REFS, getCandidate, planDispatch, verifyCandidateSha} from './reusable-candidates.mjs';
 import {getJson, downloadArtifact, readZipEntries, WORKFLOW_PATH} from './accessories-v1-release.mjs';
 import {validateRootCertificate} from './fsw-sec-003-prelaunch.mjs';
 
@@ -119,6 +120,14 @@ export async function requireLeafEvidence(plan, c, fetcher = fetch) {
   }
 }
 
+// Require the reviewed correction in every activation flight. Deactivation remains
+// available even if a later migration changes these functions. Historical receipts stay pinned.
+const correctionReady = `(SELECT count(*)=4 AND coalesce(bool_and(
+  coalesce(md5(p.prosrc)=expected.digest,false) AND coalesce(p.prosecdef,false)
+  AND coalesce(p.proconfig @> ARRAY['search_path=""']::text[],false)),false)
+  FROM (VALUES ${V3_ACTIVATION_CORRECTION.functions.map(([signature,digest]) => `('${signature}','${digest}')`).join(',')}) expected(signature,digest)
+  JOIN pg_catalog.pg_proc p ON p.oid=pg_catalog.to_regprocedure(expected.signature))`;
+
 function stateExpression(slug, active, checkAvailability = true) {
   need(leaves[slug], 'SLUG_NOT_ALLOWED');
   const [id, parent] = leaves[slug];
@@ -132,7 +141,7 @@ function stateExpression(slug, active, checkAvailability = true) {
       AND NOT c.new_listing_enabled AND g.enabled=${active} AND c.is_active=${active}
       AND c.status='${active ? 'live' : 'coming_soon'}'
       ${checkAvailability ? `AND app_security.ordinary_goods_available_v3(g.category_id)=${active}` : ''}
-      ${active ? "AND g.moderation_mode='five_check' AND p.is_active AND p.status='live'" : ''})`;
+      ${active ? `AND g.moderation_mode='five_check' AND p.is_active AND p.status='live' ${checkAvailability ? `AND ${correctionReady}` : ''}` : ''})`;
 }
 
 export function leafStateSql(slug, active, checkAvailability = true) {
@@ -170,7 +179,11 @@ function fingerprintSql(slug, operation, verify = false) {
 }
 
 function operatorSql(candidateId, webSha) {
-  const {slug} = getCandidate(candidateId);
+  const candidate = getCandidate(candidateId);
+  const {slug} = candidate;
+  if (candidate.v3Operation === 'activate') {
+    need(hash(readFileSync(resolve(root,V3_ACTIVATION_CORRECTION.path))) === V3_ACTIVATION_CORRECTION.sha256, 'CORRECTION_SOURCE_DRIFT');
+  }
   const {fullPath} = verifyCandidateSha(candidateId, root);
   // Keep the reviewed operator body and every check intact, removing only its transaction envelope and psql directive.
   return readFileSync(fullPath, 'utf8').replace(/^\\set.*$/gm, '')
@@ -195,6 +208,7 @@ ${active && slug === 'v2-tables-chairs' ? `SELECT 1 FROM app_security.ordinary_g
 SELECT 1 FROM public.categories WHERE id='${leaves['v2-books'][0]}' FOR SHARE;` : ''}
 CREATE TEMP TABLE v3_leaf_preserved(name text PRIMARY KEY,value jsonb) ON COMMIT DROP;
 DO $state$ BEGIN
+  ${active ? `IF NOT ${correctionReady} THEN RAISE EXCEPTION 'V3_LEAF_CORRECTION_REQUIRED'; END IF;` : ''}
   IF NOT (${stateExpression(slug, !active, active)}) THEN RAISE EXCEPTION 'V3_LEAF_PREFLIGHT_FAILED'; END IF;
   ${active && slug === 'v2-tables-chairs' ? `IF NOT (${stateExpression('v2-books', true)}) THEN RAISE EXCEPTION 'V3_LEAF_BOOKS_REQUIRED'; END IF;` : ''}
 END $state$;
@@ -215,6 +229,7 @@ export function leafPreflightSql(candidateId, webSha) {
     .replace(' for update;', ';') + 'end $$;' : '';
   return `BEGIN READ ONLY; SET LOCAL statement_timeout='30s';
 DO $state$ BEGIN
+  ${active ? `IF NOT ${correctionReady} THEN RAISE EXCEPTION 'V3_LEAF_CORRECTION_REQUIRED'; END IF;` : ''}
   IF NOT (${stateExpression(candidate.slug, !active, active)}) THEN RAISE EXCEPTION 'V3_LEAF_PREFLIGHT_FAILED'; END IF;
   ${active && candidate.slug === 'v2-tables-chairs' ? `IF NOT (${stateExpression('v2-books', true)}) THEN RAISE EXCEPTION 'V3_LEAF_BOOKS_REQUIRED'; END IF;` : ''}
 END $state$;

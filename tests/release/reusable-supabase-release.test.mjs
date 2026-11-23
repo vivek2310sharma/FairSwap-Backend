@@ -520,7 +520,7 @@ test('unrecognized or non-strict candidates can never pass through a NO_SPECIFIC
   const src = readFileSync(join(process.cwd(), 'scripts/release/reusable-supabase-release.mjs'), 'utf8');
   assert(!/return\s*\{\s*status:\s*'NO_SPECIFIC_POSTFLIGHT'/.test(src));
   assert(src.includes('REUSABLE_RELEASE_NO_POSTFLIGHT_IMPLEMENTED'));
-  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'idv-digilocker-oidc-v2', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
+  assert.deepEqual(Object.values(CANDIDATES).filter(candidate => !candidate.unifiedPublishingV3).map(candidate => candidate.id).sort(), ['accessories-v1-activation', 'accessories-v1-foundation', 'idv-digilocker-oidc-v2', 'idv-digilocker-required-gate', 'idv-digilocker-v1', 'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'tablets-v1-activation', 'tablets-v1-foundation', 'tablets-v2-catalogue', 'taxonomy-v2-catalogue', 'taxonomy-v2-foundation', V3_IDENTITY_PREREQUISITE, 'v3-provider-neutral-activation', 'wearables-v1-activation', 'wearables-v1-foundation', 'wearables-v11-catalogue']);
 });
 
 test('moderation postflight still passes when every check is true', async () => {
@@ -3189,7 +3189,7 @@ test('Mobile Catalogue is checksum-pinned and dispatches only through Test with 
   assert.ok(yaml.indexOf('sha256sum --check --status') < yaml.indexOf('Verify Mobile Catalogue Test postflight receipt'));
   assert.ok(yaml.includes("needs.test.result == 'success' && needs.verify_test.result == 'success' &&"));
   assert.ok(yaml.includes("inputs.candidate != 'mobile-catalogue-india-v1' || needs.verify_test.outputs.mobile_catalogue_ledger_sha != ''"));
-  assert.ok(yaml.includes("inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1'"));
+  assert.ok(yaml.includes("inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'v3-provider-neutral-activation' && inputs.candidate != 'mobile-catalogue-india-v1'"));
 });
 
 const mobileContext = {...baseEnv, GITHUB_SHA: 'a'.repeat(40), GITHUB_RUN_ID: '119', GITHUB_RUN_ATTEMPT: '1', TARGET: 'test'};
@@ -3412,7 +3412,7 @@ test('IDV DigiLocker V1 is pinned to the reviewed migration and reaches Producti
   assert.ok(yaml.indexOf('sha256sum --check --status') < yaml.indexOf('Verify IDV DigiLocker V1 Test postflight receipt'));
   assert.ok(yaml.includes("inputs.candidate != 'idv-digilocker-v1' || needs.verify_test.outputs.idv_digilocker_ledger_sha != ''"));
   assert.ok(yaml.includes("inputs.candidate != 'idv-digilocker-oidc-v2' || needs.verify_test.outputs.idv_digilocker_ledger_sha != ''"));
-  assert.ok(yaml.includes("inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'idv-digilocker-oidc-v2'"));
+  assert.ok(yaml.includes("inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'v3-provider-neutral-activation' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'idv-digilocker-oidc-v2'"));
   assert.ok(yaml.includes('IDV_DIGILOCKER_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.idv_digilocker_ledger_sha }}'));
   assert.ok(yaml.includes("test-evidence/${process.env.CANDIDATE}-fairswaptest.json"));
   // Existing credentials and environments only; no feature flag, provider secret or Edge deployment in this workflow.
@@ -3546,7 +3546,7 @@ function productionJobRuns(yaml, {candidate, target, autoPromote, test = 'succes
     github: {actor: 'vivek2310sharma', triggering_actor: 'vivek2310sharma'},
     needs: {verify: {result: 'success', outputs: {auto_promote: String(autoPromote)}}, test: {result: test},
       verify_test: {result: verifyTest, outputs: {idv_digilocker_ledger_sha: '', mobile_catalogue_ledger_sha: '', listing_validity_ledger_sha: '',
-        taxonomy_ledger_sha: '', ...outputs}}}
+        taxonomy_ledger_sha: '', correction_ledger_sha: '', ...outputs}}}
   };
   const js = expr.replace(/always\(\)/g, 'true').replace(/==/g, '===').replace(/!===/g, '!==');
   assert.match(js, /^[\w\s.'()=!&|-]+$/);
@@ -3577,7 +3577,7 @@ test('IDV DigiLocker V1 and V2: Production starts only after a verified Test rec
   assert.deepEqual(Object.values(CANDIDATES).filter(c => c.testOnly && !c.unifiedPublishingV3).map(c => c.id), ['idv-digilocker-required-gate']);
   assert.deepEqual(Object.values(CANDIDATES).filter(c => c.autoPromote === true).map(c => c.id).sort(), ['idv-digilocker-oidc-v2', 'idv-digilocker-v1',
     'listing-validity-365', 'mobile-catalogue-india-v1', 'moderation-analytics-v1', 'moderation-azure-v1', 'moderation-google-cloud-v1', 'moderation-switching-v1', 'taxonomy-v2-catalogue',
-    'taxonomy-v2-foundation']);
+    'taxonomy-v2-foundation', 'v3-provider-neutral-activation']);
 });
 
 test('IDV DigiLocker fails closed before any apply on unsupported state, extra pending migrations and preflight drift, and withholds receipts on postflight drift', async () => {
@@ -4699,3 +4699,33 @@ test('workflow rejects an over-sized V3 batch and bounds the batch job timeout',
 function V3_GOODS_FOR_WORKFLOW_TEST() {
   return JSON.parse(wfRead('scripts/release/v3-goods-allowlist.json', 'utf8')).slice(0, 6).map(g => `v3-${g.slug.slice(3)}-activate`);
 }
+
+test('V3 correction delivery pins version/source, requires history and rejects failed function postflight',async()=>{
+  const {V3_ACTIVATION_CORRECTION: pin}=await import('../../scripts/release/reusable-candidates.mjs');
+  const {verifyCorrectionTestReceipt}=await import('../../scripts/release/reusable-supabase-release.mjs');
+  const c=verifyCandidateSha('v3-provider-neutral-activation').candidate;
+  assert.equal(c.version,'20261122213157'); assert.equal(c.sha256,pin.sha256);
+  assert.ok(c.autoPromote); assert.ok(!V3_PRODUCTION_SEQUENCE.includes(c.id));
+  const history=['Local | Remote | Time (UTC)',...c.requiredLedgerVersions.map(v=>`${v} | ${v} |`)];
+  assert.equal(assertLedgerOrdering(c,history.join('\n')).state,'absent');
+  for(let i=1;i<history.length;i++) assert.throws(()=>assertLedgerOrdering(c,history.filter((_,j)=>i!==j).join('\n')),/PREREQUISITE/);
+  assert.throws(()=>verifyLedgerVersion('Local | Remote | Time (UTC)\n20261122213158 | 20261122213158 |',c.version),/LEDGER/);
+  await assert.rejects(verifyRemotePostflight('FairSwapTest',c.id,'mock',{},()=> 'false'),/CORRECTION_POSTFLIGHT_FAILED/);
+  assert.deepEqual(await verifyRemotePostflight('FairSwapTest',c.id,'mock',{},(_,args)=>{
+    for(const [,digest] of pin.functions) assert.ok(args.at(-1).includes(digest));
+    assert.ok(args.at(-1).startsWith('BEGIN READ ONLY'));return 'true';
+  }),{status:'PASS'});
+  const context={GITHUB_SHA:'a'.repeat(40),GITHUB_RUN_ID:'119',GITHUB_RUN_ATTEMPT:'1'};
+  const receipt={environment:'FairSwapTest',projectRef:REFS.FairSwapTest,candidateId:c.id,migrationVersion:c.version,
+    migrationFile:c.filename,migrationSha256:c.sha256,reviewedCommit:context.GITHUB_SHA,releaseWorkflowRun:'119',
+    releaseWorkflowAttempt:'1',status:'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED',postflightVerified:true,
+    postflightScope:'v3-correction-integrity',dryRunPending:[c.filename],ledgerStatementsSha256:'b'.repeat(64)};
+  assert.equal(verifyCorrectionTestReceipt(receipt,context),'b'.repeat(64));
+  for(const change of [{migrationVersion:'20261122213158'},{postflightVerified:false},{migrationSha256:'f'.repeat(64)},{releaseWorkflowAttempt:'2'}])
+    assert.throws(()=>verifyCorrectionTestReceipt({...receipt,...change},context),/TEST_RECEIPT_INVALID/);
+  const yaml=readFileSync('.github/workflows/reusable-supabase-release.yml','utf8');
+  assert.equal(productionJobRuns(yaml,{candidate:c.id,target:'test',autoPromote:true,outputs:{correction_ledger_sha:'b'.repeat(64)}}),true);
+  assert.equal(productionJobRuns(yaml,{candidate:c.id,target:'test',autoPromote:true}),false);
+  assert.equal(productionJobRuns(yaml,{candidate:c.id,target:'test',autoPromote:true,verifyTest:'failure'}),false);
+  await assert.rejects(releaseReusable({candidateId:c.id,environment:'FairSwapProd',context:{TARGET:'production'},runner:()=>assert.fail('no tools')}),/TEST_EVIDENCE_REQUIRED/);
+});

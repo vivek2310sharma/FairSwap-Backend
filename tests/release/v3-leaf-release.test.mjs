@@ -162,7 +162,7 @@ test('V3 runner uses existing TLS/environment connection, read-only flights and 
   } finally { rmSync(dir, {recursive: true, force: true}); }
 });
 
-test('V3 disposable SQL: disabled, identity missing/off, moderation unavailable, canonical drift, Books-first, repeated activation, exact preservation and rollback',
+test('V3 disposable SQL: disabled, identity missing/optional, provider-neutral moderation unavailable, canonical drift, Books-first, repeated activation, exact preservation and rollback',
   {skip: !PGlite && !databaseRequired ? 'PGlite unavailable in this unrelated job' : false}, async () => {
   assert.ok(PGlite, 'PGlite is mandatory in Backend independent CI and release database gates');
   const db = new PGlite();
@@ -174,7 +174,7 @@ test('V3 disposable SQL: disabled, identity missing/off, moderation unavailable,
   const rejects = async (sql, re) => { await assert.rejects(db.exec(sql), re); await db.exec('rollback'); };
   const a = () => db.exec(leafTransaction(activate, sha));
   try {
-    await setupOrdinaryGoodsFixture(sql => db.exec(sql));
+    await setupOrdinaryGoodsFixture(sql => db.exec(sql), {providerNeutral: true});
     assert.equal(await state('v2-books', false), 'true');
     await rejects(leafPreflightSql(activate, sha), /GOODS_LISTING_OR_IDENTITY_GUARDS_MISSING/);
     await rejects(leafTransaction(activate, sha), /GOODS_LISTING_OR_IDENTITY_GUARDS_MISSING/);
@@ -183,10 +183,10 @@ test('V3 disposable SQL: disabled, identity missing/off, moderation unavailable,
       await db.exec(`create function app_security.trg_identity_gate_${fn}() returns trigger language plpgsql as $$begin return new; end$$;
         create trigger trg_identity_gate before insert on public.${table} for each row execute function app_security.trg_identity_gate_${fn}();`);
     }
-    await rejects(leafTransaction(activate, sha), /GOODS_SELLER_IDENTITY_ENFORCEMENT_OFF/);
-    await db.exec("insert into public.app_system_settings(setting_key,setting_value) values('identity_verification_required','true')");
-    await rejects(leafTransaction(activate, sha), /GOODS_FIVE_CHECK_MODERATION_NOT_READY/);
-    await db.exec("update public.app_system_settings set setting_value='true' where setting_key='moderation_azure_enabled'");
+    // Global identity enforcement is optional; only the shared automation switch gates activation.
+    await db.exec("update public.app_system_settings set setting_value='false' where setting_key='moderation_automation_enabled'");
+    await rejects(leafTransaction(activate, sha), /GOODS_MODERATION_NOT_READY/);
+    await db.exec("update public.app_system_settings set setting_value='true' where setting_key='moderation_automation_enabled'");
     await rejects(leafTransaction(tables, sha), /BOOKS_REQUIRED/);
     await db.exec("update app_security.ordinary_goods_contracts_v3 set revision=2 where slug='v2-books'");
     await rejects(leafTransaction(activate, sha), /PREFLIGHT_FAILED/);
@@ -331,4 +331,97 @@ test('V3 goods batch: bounded to five leaves and stops starting leaves once the 
     assert.ok(!existsSync(join(dir, 'SHA256SUMS_fairswaptest')));
     assert.ok(!existsSync(join(dir, 'v3-air-conditioners-activate-fairswaptest.json')));
   } finally { rmSync(dir, {recursive: true, force: true}); }
+});
+
+test('V3 correction preserves all other functions, RLS, grants, contracts and categories; 43 activations work in all four provider settings',
+  {skip: !PGlite && !databaseRequired ? 'PGlite unavailable in this unrelated job' : false}, async () => {
+  assert.ok(PGlite, 'database engine required');
+  const {V3_ACTIVATION_CORRECTION: correction} = await import('../../scripts/release/reusable-candidates.mjs');
+  assert.equal(createHash('sha256').update(readFileSync(correction.path)).digest('hex'),correction.sha256);
+  const db=new PGlite();
+  const scalar=async sql=>Object.values((await db.query(sql)).rows[0])[0];
+  const snapshot=()=>scalar(`select jsonb_build_object(
+    'functions',(select jsonb_agg(to_jsonb(p)-'prosrc' order by p.oid) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','app_security')),
+    'policies',(select jsonb_agg(to_jsonb(p) order by oid) from pg_policy p),
+    'tables',(select jsonb_agg(to_jsonb(c) order by c.oid) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in ('public','app_security','storage')),
+    'triggers',(select jsonb_agg(to_jsonb(t) order by oid) from pg_trigger t),
+    'contracts',(select jsonb_agg(to_jsonb(g) order by slug) from app_security.ordinary_goods_contracts_v3 g),
+    'categories',(select jsonb_agg(to_jsonb(c) order by id) from public.categories c),
+    'settings',(select jsonb_agg(to_jsonb(s) order by setting_key) from public.app_system_settings s)
+  )`);
+  try {
+    await setupOrdinaryGoodsFixture(sql=>db.exec(sql));
+    await db.exec('alter table public.app_system_settings add column updated_at timestamptz default clock_timestamp()');
+    await db.exec(readFileSync(getCandidate('moderation-google-cloud-v1').path,'utf8'));
+    const before=await snapshot();
+    const bodies=async()=> (await db.query("select p.oid::text, md5(prosrc) digest from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','app_security') order by p.oid")).rows;
+    const beforeBodies=await bodies();
+    // The operator refuses historical runtime even if the global identity switch is enabled.
+    await assert.rejects(db.exec(leafPreflightSql(activate,sha)),/CORRECTION_REQUIRED/);
+    await db.exec('rollback');
+    await db.exec(readFileSync(correction.path,'utf8'));
+    assert.deepEqual(await snapshot(),before);
+    const afterBodies=await bodies();
+    const changed=afterBodies.filter((row,i)=>row.digest!==beforeBodies[i].digest);
+    assert.deepEqual(changed.map(row=>row.digest).sort(),correction.functions.map(row=>row[1]).sort());
+    // Add only synthetic normal identity policy hooks; do not turn the global requirement on.
+    await db.exec(`create function app_security.enforce_verified_actor(uuid,boolean) returns void language plpgsql as $$begin return; end$$;`);
+    for(const [table,fn] of [['listings','listings'],['listing_media','by_listing'],['posting_upload_sessions','posting_session'],['posting_staged_media','staged_media']]) {
+      await db.exec(`create function app_security.trg_identity_gate_${fn}() returns trigger language plpgsql as $$begin return new; end$$;
+        create trigger trg_identity_gate before insert on public.${table} for each row execute function app_security.trg_identity_gate_${fn}();`);
+    }
+    for(const [azure,google] of [[false,false],[true,false],[false,true],[true,true]]) {
+      await db.query("update public.app_system_settings set setting_value=$1 where setting_key='moderation_azure_enabled'",[String(azure)]);
+      await db.query("update public.app_system_settings set setting_value=$1 where setting_key='moderation_google_cloud_enabled'",[String(google)]);
+      for(const {slug} of V3_GOODS) {
+        await db.exec(leafTransaction(`v3-${slug.slice(3)}-activate`,sha));
+        assert.equal(Object.values((await db.exec(leafStateSql(slug,true))).find(r=>r.rows?.length).rows[0])[0],'true');
+      }
+      assert.equal(await scalar('select count(*)::integer from app_security.ordinary_goods_contracts_v3 where enabled'),43);
+      // All 15 restricted contracts remain byte-identical, disabled, with their original categories.
+      const restricted=(await db.query('select * from app_security.ordinary_goods_contracts_v3 order by slug')).rows.filter(g=>!V3_GOODS.some(a=>a.slug===g.slug));
+      assert.equal(restricted.length,15);
+      assert.deepEqual(restricted,before.contracts.filter(g=>!V3_GOODS.some(a=>a.slug===g.slug)));
+      for (const [signature] of correction.functions) {
+        await db.exec('begin');
+        const definition=await scalar(`select pg_get_functiondef('${signature}'::regprocedure)`);
+        await db.exec(definition.replace('AS $function$', 'AS $function$\n-- regression: body drift\n'));
+        await assert.rejects(db.exec(leafPreflightSql(activate,sha)),/CORRECTION_REQUIRED/);
+        await db.exec('rollback');
+        await db.exec('begin');
+        await db.exec(definition.replace('AS $function$', 'AS $function$\n-- regression: body drift\n'));
+        await db.exec(leafTransaction(deactivate,sha));
+        assert.equal(await scalar("select enabled from app_security.ordinary_goods_contracts_v3 where slug='v2-books'"),false);
+        await db.exec('rollback');
+        await db.exec(definition);
+        await db.exec(leafTransaction(activate,sha));
+      }
+      // RESET ALL changes proconfig to NULL without touching prosrc. Test both
+      // the orchestration predicate and the standalone operator's independent gate.
+      for (const [signature,digest] of correction.functions) {
+        const definition=await scalar(`select pg_get_functiondef('${signature}'::regprocedure)`);
+        const reset=`alter function ${signature} reset all`;
+        const operator=readFileSync(getCandidate(activate).path,'utf8').replace(/^\\set.*$/gm,'')
+          .replaceAll(":'slug'","'v2-books'").replaceAll(":'web_commit'",`'${sha}'`).replaceAll(":'moderation_mode'","'five_check'");
+        await db.exec(reset);
+        assert.equal(Object.values((await db.exec(leafStateSql('v2-books',true))).find(r=>r.rows?.length).rows[0])[0],'false');
+        await db.exec(definition);
+        await db.exec(leafTransaction(deactivate,sha));
+        for (const sql of [leafPreflightSql(activate,sha),operator]) {
+          await db.exec(reset);
+          assert.equal(await scalar(`select proconfig is null and md5(prosrc)='${digest}' from pg_proc where oid='${signature}'::regprocedure`),true);
+          await assert.rejects(db.exec(sql),/CORRECTION_REQUIRED/);
+          await db.exec('rollback');
+          await db.exec(definition);
+        }
+        await db.exec(leafTransaction(activate,sha));
+        await db.exec(reset);
+        await db.exec(leafTransaction(deactivate,sha));
+        assert.equal(await scalar("select enabled from app_security.ordinary_goods_contracts_v3 where slug='v2-books'"),false);
+        await db.exec(definition);
+        await db.exec(leafTransaction(activate,sha));
+      }
+      for(const {slug} of [...V3_GOODS].reverse()) await db.exec(leafTransaction(`v3-${slug.slice(3)}-deactivate`,sha));
+    }
+  } finally {await db.close();}
 });
