@@ -35,6 +35,7 @@ import {
 } from './idv-digilocker-v1-release.mjs';
 
 import {verifyV3ProductionEvidence, v3ProductionState} from './v3-production-evidence.mjs';
+import {IDV_PROD_CANDIDATE, IDV_PROD_SCOPE, runIdvProdPreflight, runIdvProdPostflight} from './idv-digilocker-production-release.mjs';
 
 const productionBatch = Symbol('V3 Production batch');
 
@@ -770,6 +771,9 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
   if (candidate.id === TAXONOMY_CANDIDATE) {
     return runTaxonomyPostflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
   }
+  if (candidate.id === IDV_PROD_CANDIDATE) {
+    return runIdvProdPostflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'));
+  }
   if (candidate.id === IDV_DIGILOCKER_CANDIDATE) {
     return runIdvDigilockerPostflight(catalogueBefore, sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'), environment);
   }
@@ -905,6 +909,7 @@ export async function releaseReusable({
     throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_ACR_TEST_ONLY');
   }
   const idvRequest = candidateId === IDV_DIGILOCKER_REQUEST_CANDIDATE;
+  const idvProd = candidateId === IDV_PROD_CANDIDATE;
   if (idvRequest && (environment !== 'FairSwapTest' || context.TARGET !== 'test')) {
     throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_REQUEST_TEST_ONLY');
   }
@@ -1058,10 +1063,10 @@ export async function releaseReusable({
     // Tablets, Wearables and Mobile Catalogue pin the ledger: history is read before apply, must not change, and the installed
     // statements hash is carried Test -> Production through the receipts.
     const v3 = Boolean(candidate.unifiedPublishingV3) || v3IdentityPrerequisite || candidate.canonicalFamilyChooser === true;
-    const idv = idvDigilocker || idvDigilockerV2 || idvRequired || idvAcr || idvRequest;
+    const idv = idvDigilocker || idvDigilockerV2 || idvRequired || idvAcr || idvRequest || idvProd;
     const pinned = v3 || tablets || wearables || mobileCatalogue || listingValidity || taxonomy || catalogueUpdate || idv;
     const ordered = v3 || candidate.strict || mobileCatalogue || listingValidity || taxonomy || idv || accountSecurityEmail;
-    const label = v3 ? 'V3' : idvRequest ? 'IDV_DIGILOCKER_REQUEST' : idvAcr ? 'IDV_DIGILOCKER_ACR' : idvRequired ? 'IDV_DIGILOCKER_REQUIRED' : idvDigilockerV2 ? 'IDV_DIGILOCKER_V2' : idvDigilocker ? 'IDV_DIGILOCKER' : taxonomy ? 'TAXONOMY' : listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
+    const label = v3 ? 'V3' : idvProd ? 'IDV_DIGILOCKER_PROD' : idvRequest ? 'IDV_DIGILOCKER_REQUEST' : idvAcr ? 'IDV_DIGILOCKER_ACR' : idvRequired ? 'IDV_DIGILOCKER_REQUIRED' : idvDigilockerV2 ? 'IDV_DIGILOCKER_V2' : idvDigilocker ? 'IDV_DIGILOCKER' : taxonomy ? 'TAXONOMY' : listingValidity ? 'LISTING_VALIDITY' : mobileCatalogue ? 'MOBILE_CATALOGUE' : wearables ? 'WEARABLES' : 'TABLETS';
     const foundationVersion = wearables ? '20261104120000' : '20261102165946';
     const readLedger = () => readTabletsLedger(sql => psqlQuery(sql, psqlUrl, env, runner, 'ledger_sql'));
     let catalogueBefore;
@@ -1265,6 +1270,10 @@ export async function releaseReusable({
         phase = 'preflight';
         catalogueBefore = runIdvDigilockerRequestPreflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'));
       }
+      if (idvProd) {
+        phase = 'preflight';
+        catalogueBefore = runIdvProdPreflight(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'), environment);
+      }
       if (mobileCatalogue && !correction) {
         phase = 'preflight';
         catalogueBefore = readMobileCatalogueSnapshot(sql => psqlQuery(sql, psqlUrl, env, runner, 'preflight_sql'), 'before');
@@ -1364,7 +1373,7 @@ export async function releaseReusable({
         ...(environment === 'FairSwapProd' ? {testLedgerStatementsSha256: taxonomyTestLedger} : {})
       } : {}),
       ...(idv ? {
-        postflightScope: idvRequest ? IDV_DIGILOCKER_REQUEST_SCOPE : idvAcr ? IDV_DIGILOCKER_ACR_SCOPE : idvRequired ? IDV_DIGILOCKER_REQUIRED_SCOPE : idvDigilockerV2 ? IDV_DIGILOCKER_V2_SCOPE : idvInstalledAttestation ? IDV_DIGILOCKER_INSTALLED_SCOPE : IDV_DIGILOCKER_SCOPE,
+        postflightScope: idvProd ? IDV_PROD_SCOPE : idvRequest ? IDV_DIGILOCKER_REQUEST_SCOPE : idvAcr ? IDV_DIGILOCKER_ACR_SCOPE : idvRequired ? IDV_DIGILOCKER_REQUIRED_SCOPE : idvDigilockerV2 ? IDV_DIGILOCKER_V2_SCOPE : idvInstalledAttestation ? IDV_DIGILOCKER_INSTALLED_SCOPE : IDV_DIGILOCKER_SCOPE,
         releaseWorkflowAttempt: context.GITHUB_RUN_ATTEMPT,
         ...idvDigilockerReceiptFields(environment),
         ...(idvInstalledAttestation ? {installedBeforeThisWorkflow: true} : {}),
