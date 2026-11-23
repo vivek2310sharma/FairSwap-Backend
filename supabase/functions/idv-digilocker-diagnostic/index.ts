@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { DigiLockerError, generateState, revokeToken, sha256Hex } from "../_shared/idv/digilocker-client.ts";
 import { defaultDeps, type IdvDeps } from "../_shared/idv/digilocker-deps.ts";
+import { handleLabFlow, isLabFlowRequest } from "../_shared/idv/digilocker-lab.ts";
 import {
   DIAG_STATE_TTL_SECONDS, type DiagRaw, buildDiagAuthorizeUrl, deriveDiagNonce, evaluateIdToken, exchangeDiagCode, readDiagRuntime,
   type DiagResult,
@@ -39,6 +40,10 @@ export async function handleDigiLockerDiagnostic(
   deps: IdvDeps = defaultDeps,
   now: () => number = Date.now,
 ): Promise<Response> {
+  // Identity Lab (flow:"lab") has its own credentials, state namespace and strict contract; it never shares this
+  // diagnostic's runtime gate or response shape. Requests without flow:"lab" fall through unchanged.
+  if (await isLabFlowRequest(req)) return handleLabFlow(req, env, fetchImpl, deps, now);
+
   const rt = readDiagRuntime(env);
   if (!rt) return json(404, { error: "NOT_FOUND" }); // closed, non-Test project or misconfigured: behave as absent
   if (req.method !== "POST") return json(405, { error: "METHOD_NOT_ALLOWED" });
