@@ -186,7 +186,7 @@ describe("Lab access control and contract", () => {
     }
     expect(w.calls).toEqual(["server_idv_dl_diag_start"]); expect(p.log).toEqual([]);
   });
-  it("start: Lab credentials, exact Lab redirect, avs + acr=aadhaar + PKCE S256, Lab-domain PKCE and nonce", async () => {
+  it("start: AVS-only Lab redirect without OIDC parameters, with PKCE S256 and isolated state", async () => {
     const w = makeWorld();
     const { res, body, state } = await start(w);
     expect(res.status).toBe(200);
@@ -198,10 +198,11 @@ describe("Lab access control and contract", () => {
     expect(u.searchParams.get("redirect_uri")).toBe(LAB_REDIRECT);
     expect(u.searchParams.get("response_type")).toBe("code");
     expect(u.searchParams.get("scope")).toBe("avs");
-    expect(u.searchParams.get("acr")).toBe("aadhaar");
+    expect(u.searchParams.has("acr")).toBe(false);
+    expect(u.searchParams.has("openid")).toBe(false);
     expect(u.searchParams.get("code_challenge_method")).toBe("S256");
     expect(u.searchParams.get("code_challenge")).toBe(await pkceChallenge(await deriveLabPkceVerifier(LAB_KEY, state)));
-    expect(u.searchParams.get("nonce")).toBe(await deriveLabNonce(LAB_KEY, state));
+    expect(u.searchParams.has("nonce")).toBe(false); // AVS must not claim an OIDC nonce
     expect(u.searchParams.has("req_doctype")).toBe(false);
     // only the Lab-namespaced hash is stored; never the plain or diagnostic hash
     expect([...w.states.keys()]).toEqual([await labStateHash(state)]);

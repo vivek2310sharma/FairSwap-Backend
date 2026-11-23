@@ -125,12 +125,16 @@ export async function buildDiagAuthorizeUrl(rt: DiagRuntime, state: string): Pro
   u.searchParams.set("state", state);
   u.searchParams.set("code_challenge", await pkceChallenge(await pkceVerifierFor(rt, state)));
   u.searchParams.set("code_challenge_method", "S256");
-  // This DEV Authpartner requests AVS; the existing diagnostic still uses openid.
-  // DigiLocker rejects the Lab with invalid_scope_avs unless scope is avs or avs_parent.
-  u.searchParams.set("scope", rt.domain === "lab" ? "avs" : "openid");
-  u.searchParams.set("acr", DIAG_ACR);
+  // The DEV Authpartner requires AVS, but DigiLocker rejects AVS when combined with OpenID.
+  // Keep ACR/nonce exclusive to the existing OpenID diagnostic. AVS is a separate
+  // Test-only inspection flow: no Aadhaar assurance may be inferred from AVS alone.
+  const isAvsLab = rt.domain === "lab";
+  u.searchParams.set("scope", isAvsLab ? "avs" : "openid");
+  if (!isAvsLab) {
+    u.searchParams.set("acr", DIAG_ACR);
+    u.searchParams.set("nonce", await deriveDiagNonce(rt.stateKey, state));
+  }
   // dl_flow is documented only as "signup"; omitting it is the documented sign-in flow. Never send an undocumented value.
-  u.searchParams.set("nonce", await (rt.domain === "lab" ? deriveLabNonce(rt.stateKey, state) : deriveDiagNonce(rt.stateKey, state)));
   u.searchParams.set("purpose", DIGILOCKER_PURPOSE);
   u.searchParams.set("service_name", DIGILOCKER_SERVICE_NAME);
   return u.toString();
