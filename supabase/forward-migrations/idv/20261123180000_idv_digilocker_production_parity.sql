@@ -4,8 +4,8 @@
 -- or 20261123150000; this single reviewed version installs their final EFFECTIVE
 -- enforcement and requested-Aadhaar signed-identity rules without copying Test-only ledger history.
 -- Test already has these definitions: this replaces them with the same final definitions.
--- Does NOT activate identity_verification_required. Activate only after verified Web and Edge
--- production readiness via a separately controlled gate-setting release.
+-- Activates identity_verification_required in this same transaction, ONLY after the
+-- protected pipeline confirms deployed Web and Edge runtime readiness. Test is already ON.
 -- Historical signed/legacy identity links are NOT upgraded automatically. Fraud holds preserved.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -214,5 +214,18 @@ REVOKE ALL ON FUNCTION app_security.impl_idv_dl_complete_v2(uuid, uuid, text, te
 REVOKE ALL ON FUNCTION public.server_idv_dl_complete_v2(uuid, uuid, text, text, text[], text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION app_security.impl_idv_dl_complete_v2(uuid, uuid, text, text, text[], text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.server_idv_dl_complete_v2(uuid, uuid, text, text, text[], text) TO service_role;
+
+-- Final atomic activation: no unverified user can post, contact sellers or message.
+-- Protected release must check Web/Edge readiness BEFORE applying this migration.
+UPDATE public.app_system_settings
+   SET setting_value = 'true', updated_at = pg_catalog.clock_timestamp()
+ WHERE setting_key = 'identity_verification_required';
+DO $gate$
+BEGIN
+  IF NOT app_security.identity_gate_enabled() THEN
+    RAISE EXCEPTION 'IDV_DIGILOCKER_PRODUCTION_GATE_NOT_ACTIVATED';
+  END IF;
+END
+$gate$;
 
 COMMIT;
