@@ -66,10 +66,6 @@ jobs:
           node scripts/ci/verify-production-category-release.mjs
           node --test scripts/ci/verify-production-category-release.test.mjs
 
-      - name: Verify FairSwap branding templates and protected auth placeholders (offline)
-        timeout-minutes: 1
-        run: node scripts/verify-email-branding.mjs
-
       - name: Typecheck
         timeout-minutes: 2
         run: corepack pnpm typecheck
@@ -77,6 +73,10 @@ jobs:
       - name: Install isolated Ratings V1 PGlite dependencies
         timeout-minutes: 3
         run: npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
+
+      - name: Verify FairSwap branding templates and protected auth placeholders (offline)
+        timeout-minutes: 3
+        run: node scripts/verify-email-branding.mjs
 
       - name: Ratings V1 offline contract and PGlite regression
         timeout-minutes: 8

@@ -1,0 +1,31 @@
+{
+  "name": "account-security-email-v2",
+  "version": "2.0.0",
+  "generated_at": "2026-11-22T21:46:00Z",
+  "description": "Forward-only account-security DigiLocker email delivery V2 triggered after signup confirmation",
+  "staging": {
+    "project_ref": "wpppxlnbzqynvhpeuavd",
+    "migration_file": "supabase/forward-migrations/account-security-email/20261122213000_account_security_digilocker_email_outbox.sql",
+    "target_version": "20261122213000",
+    "cta": "https://fair-swap-git-staging-fairswap.vercel.app/account",
+    "expected_tables": [
+      "public.security_email_outbox"
+    ]
+  },
+  "production": {
+    "project_ref": "kriuhwppxgxsyyrbjsau",
+    "migration_file": "supabase/forward-migrations/account-security-email/20261122213000_account_security_digilocker_email_outbox.sql",
+    "target_version": "20261122213000",
+    "cta": "https://fairswap.in/account",
+    "expected_tables": [
+      "public.security_email_outbox"
+    ]
+  },
+  "edge_functions": [
+    "process-email-outbox"
+  ],
+  "rollback_order": [
+    "1. Run supabase/forward-migrations/account-security-email/rollback.sql to safely deactivate the signup trigger without dropping the outbox table or losing delivery records.",
+    "2. Existing auth.users and public.email_outbox listing notifications remain completely unaffected."
+  ]
+}

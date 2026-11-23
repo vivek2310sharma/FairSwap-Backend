@@ -9,10 +9,15 @@ import { z } from "zod";
 
 export interface OutboxRow {
   id: string;
-  event_type: "listing_submitted_for_review" | "listing_approved" | "listing_rejected";
+  event_type:
+    | "listing_submitted_for_review"
+    | "listing_approved"
+    | "listing_rejected"
+    | "account_security_digilocker"
+    | string;
   recipient_user_id: string;
-  listing_id: string;
-  transition_id: string;
+  listing_id?: string | null;
+  transition_id?: string | null;
   payload: Record<string, unknown>;
   status: "pending" | "processing" | "retry" | "sent" | "dead_letter";
   attempt_count: number;
@@ -27,6 +32,7 @@ export interface OutboxRow {
   sent_at: string | null;
   created_at: string;
   updated_at: string;
+  queue_type?: "listing" | "security";
 }
 
 export interface RenderedEmail {
@@ -209,6 +215,110 @@ export function brandListingEmail(innerEmailHtml: string): string {
 }
 
 /**
+ * Renders approved FairSwap Account Security HTML email.
+ */
+export function renderAccountSecurityHtml(siteUrl: string): string {
+  const normalizedSiteUrl = siteUrl.replace(/\/+$/, "");
+  const safeAccountUrl = escapeHtml(`${normalizedSiteUrl}/account`);
+  const safeDigiLockerLogoUrl = escapeHtml(`${normalizedSiteUrl}/brand/digilocker-logo.png`);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>FairSwap account security — DigiLocker verification</title>
+  <style>
+    @media only screen and (max-width: 600px) {
+      .email-content { padding:30px 24px !important; }
+      .email-header { padding:28px 24px 22px !important; }
+      .email-footer { padding:24px !important; }
+      .email-outer { padding:16px 10px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#f5f8fd;color:#111827;font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;">
+  <div style="display:none;font-size:1px;line-height:1px;color:#f5f8fd;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">For account security, please verify your identity with DigiLocker from My Account.</div>
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100%;border-collapse:collapse;background-color:#f5f8fd;">
+    <tr><td class="email-outer" align="center" style="padding:36px 16px;">
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100%;max-width:600px;border-collapse:separate;background-color:#ffffff;border:1px solid #dfe8f4;border-radius:14px;">
+        <tr><td class="email-header" style="padding:32px 40px 24px;border-bottom:1px solid #dfe8f4;">
+          <img src="https://fairswap.in/brand/FairSwap_Web_Logo_Transparent.png" width="236" height="72" alt="FairSwap" style="display:block;width:236px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;">
+          <p style="margin:5px 0 0;color:#28466d;font-size:12px;line-height:18px;font-weight:600;letter-spacing:.2px;">Give. Get. Grow Together.</p>
+        </td></tr>
+        <tr><td class="email-content" style="padding:36px 40px 40px;">
+          <p style="margin:0 0 12px;color:#0b58b6;font-size:12px;line-height:18px;font-weight:700;letter-spacing:1.2px;">FAIRSWAP ACCOUNT SECURITY</p>
+          <h1 style="margin:0 0 18px;color:#111827;font-size:27px;line-height:35px;font-weight:700;">Please verify your account</h1>
+          <p style="margin:0 0 16px;color:#374151;font-size:16px;line-height:25px;">Hello,</p>
+          <p style="margin:0 0 18px;color:#374151;font-size:16px;line-height:25px;">For security reasons, we ask FairSwap members to confirm their identity through <strong>DigiLocker</strong>. This helps us protect our community against impersonation and fraudulent accounts.</p>
+          <p style="margin:0 0 24px;color:#374151;font-size:16px;line-height:25px;">We may ask you to complete verification again from time to time.</p>
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100%;border-collapse:collapse;background-color:#f8fbff;border-left:3px solid #0b58b6;">
+            <tr><td style="padding:18px 20px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100%;margin:0 0 18px;border-collapse:collapse;">
+                <tr><td style="padding:0;">
+                  <p style="margin:0 0 9px;color:#65509d;font-size:11px;line-height:17px;font-weight:700;letter-spacing:1px;">IDENTITY VERIFICATION THROUGH</p>
+                  <img src="${safeDigiLockerLogoUrl}" width="180" height="44" alt="DigiLocker" style="display:block;width:180px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;color:#6132ee;font-size:18px;font-weight:700;">
+                </td></tr>
+              </table>
+              <p style="margin:0 0 9px;color:#111827;font-size:15px;line-height:22px;font-weight:700;">How to verify</p>
+              <p style="margin:0;color:#374151;font-size:15px;line-height:24px;">1. Sign in to FairSwap.<br>2. Open <strong>My Account</strong>.<br>3. Find <strong>Verify with DigiLocker</strong> and follow the instructions.</p>
+            </td></tr>
+          </table>
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:separate;margin-top:26px;">
+            <tr><td align="center" bgcolor="#0b58b6" style="background-color:#0b58b6;border-radius:8px;">
+              <a id="account-security-link" href="${safeAccountUrl}" style="display:inline-block;padding:15px 26px;border-radius:8px;color:#ffffff;font-size:16px;line-height:20px;font-weight:700;text-decoration:none;">Go to My Account</a>
+            </td></tr>
+          </table>
+          <p style="margin:24px 0 0;color:#374151;font-size:14px;line-height:23px;"><strong>Important:</strong> Until your account has been verified by FairSwap, access to certain FairSwap features will be limited.</p>
+          <p style="margin:18px 0 0;color:#4b5563;font-size:14px;line-height:22px;">FairSwap will never ask for your DigiLocker PIN, OTP or password by email, chat or phone.</p>
+          <p style="margin:24px 0 0;color:#374151;font-size:15px;line-height:23px;">Thank you for helping us make FairSwap safer for everyone.<br><strong>Team FairSwap</strong></p>
+        </td></tr>
+        <tr><td class="email-footer" style="padding:26px 40px;background-color:#f8fbff;border-top:1px solid #dfe8f4;border-radius:0 0 14px 14px;">
+          <p style="margin:0;color:#6b7280;font-size:13px;line-height:20px;">FairSwap.in &middot; Give. Get. Grow Together.</p>
+          <p style="margin:8px 0 0;color:#6b7280;font-size:12px;line-height:19px;">Security tip: Never share OTPs or pay an advance to verify a transaction. OTP किसी को न बताएं।</p>
+          <p style="margin:8px 0 0;color:#6b7280;font-size:12px;line-height:19px;">This is an account-security notice, not a payment request.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+/**
+ * Renders approved FairSwap Account Security plain-text email.
+ */
+export function renderAccountSecurityText(siteUrl: string): string {
+  const normalizedSiteUrl = siteUrl.replace(/\/+$/, "");
+  const accountUrl = `${normalizedSiteUrl}/account`;
+
+  return `FairSwap — Account Security
+Subject: FairSwap account security: Please verify your account
+
+Hello,
+
+For security reasons, we ask FairSwap members to confirm their identity through DigiLocker. This helps protect our community against impersonation and fraudulent accounts. We may ask you to verify again from time to time.
+
+How to verify:
+1. Sign in to FairSwap.
+2. Open My Account.
+3. Find Verify with DigiLocker and follow the instructions.
+
+Go to My Account: ${accountUrl}
+
+Important: Until your account has been verified by FairSwap, access to certain FairSwap features will be limited.
+
+FairSwap will never ask for your DigiLocker PIN, OTP or password by email, chat or phone.
+
+Thank you for helping us make FairSwap safer for everyone.
+Team FairSwap
+
+FairSwap.in — Give. Get. Grow Together.
+Security tip: Never share OTPs or pay an advance to verify a transaction.`;
+}
+
+/**
  * Renders the email subject, HTML, and text content for supported listing events.
  */
 export function renderEmailTemplate(
@@ -303,11 +413,35 @@ export function renderEmailTemplate(
       };
     }
 
+    case "account_security_digilocker": {
+      return {
+        subject: "FairSwap account security: Please verify your account",
+        html: renderAccountSecurityHtml(normalizedSiteUrl),
+        text: renderAccountSecurityText(normalizedSiteUrl),
+      };
+    }
+
     default:
       throw new Error(`Unsupported email outbox event type: ${eventType}`);
   }
   })();
+  if (eventType === "account_security_digilocker") {
+    return rendered;
+  }
   return { ...rendered, html: brandListingEmail(rendered.html) };
+}
+
+function isMissingRpcError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as { code?: string; message?: string };
+  const code = typeof err.code === "string" ? err.code : "";
+  const msg = typeof err.message === "string" ? err.message : "";
+  return (
+    code === "42883" ||
+    code === "PGRST202" ||
+    msg.includes("Could not find the function") ||
+    msg.includes("does not exist")
+  );
 }
 
 /**
@@ -327,9 +461,30 @@ export async function claimJobs(
       p_stale_timeout_seconds: staleTimeoutSeconds,
     });
     if (error) {
-      throw new Error(`Failed to claim email job by ID: ${error.message}`);
+      throw new Error(`Failed to claim email job by ID: ${sanitizeErrorMessage(error.message)}`);
     }
-    return Array.isArray(data) ? (data as OutboxRow[]) : [];
+    if (Array.isArray(data) && data.length > 0) {
+      return data as OutboxRow[];
+    }
+
+    const { data: secData, error: secError } = await supabase.rpc(
+      "claim_security_email_outbox_job_by_id",
+      {
+        p_job_id: targetJobId,
+        p_lock_token: lockToken,
+        p_stale_timeout_seconds: staleTimeoutSeconds,
+      }
+    );
+    if (secError) {
+      if (!isMissingRpcError(secError)) {
+        throw new Error(
+          `Failed to claim security email job by ID: ${sanitizeErrorMessage(secError.message)}`
+        );
+      }
+    } else if (Array.isArray(secData) && secData.length > 0) {
+      return (secData as OutboxRow[]).map((j) => ({ ...j, queue_type: "security" }));
+    }
+    return [];
   }
 
   const { data, error } = await supabase.rpc("claim_email_outbox_batch", {
@@ -338,9 +493,30 @@ export async function claimJobs(
     p_stale_timeout_seconds: staleTimeoutSeconds,
   });
   if (error) {
-    throw new Error(`Failed to claim email outbox batch: ${error.message}`);
+    throw new Error(`Failed to claim email outbox batch: ${sanitizeErrorMessage(error.message)}`);
   }
-  return Array.isArray(data) ? (data as OutboxRow[]) : [];
+  const listingRows = Array.isArray(data) ? (data as OutboxRow[]) : [];
+
+  let secRows: OutboxRow[] = [];
+  const { data: secData, error: secError } = await supabase.rpc(
+    "claim_security_email_outbox_batch",
+    {
+      p_batch_size: 10,
+      p_lock_token: lockToken,
+      p_stale_timeout_seconds: staleTimeoutSeconds,
+    }
+  );
+  if (secError) {
+    if (!isMissingRpcError(secError)) {
+      throw new Error(
+        `Failed to claim security email outbox batch: ${sanitizeErrorMessage(secError.message)}`
+      );
+    }
+  } else if (Array.isArray(secData)) {
+    secRows = (secData as OutboxRow[]).map((j) => ({ ...j, queue_type: "security" as const }));
+  }
+
+  return [...listingRows, ...secRows];
 }
 
 /**
@@ -354,6 +530,9 @@ export async function processSingleJob(
   fetchImpl: typeof fetch = fetch
 ): Promise<JobResult> {
   const maxAttempts = config.maxAttempts ?? 5;
+  const isSecurity = job.queue_type === "security" || job.event_type === "account_security_digilocker";
+  const failRpcName = isSecurity ? "fail_security_email_outbox_job" : "fail_email_outbox_job";
+  const completeRpcName = isSecurity ? "complete_security_email_outbox_job" : "complete_email_outbox_job";
 
   // 1. Resolve recipient email via Supabase Auth Admin API
   const { data: userData, error: userError } = await supabase.auth.admin.getUserById(
@@ -362,7 +541,7 @@ export async function processSingleJob(
 
   if (userError || !userData?.user?.email) {
     await assertRpcSuccess(
-      supabase.rpc("fail_email_outbox_job", {
+      supabase.rpc(failRpcName, {
         p_job_id: job.id,
         p_lock_token: job.lock_token,
         p_error_code: "RECIPIENT_NOT_FOUND",
@@ -385,7 +564,7 @@ export async function processSingleJob(
     rendered = renderEmailTemplate(job.event_type, job.payload, config.siteUrl);
   } catch (err: unknown) {
     await assertRpcSuccess(
-      supabase.rpc("fail_email_outbox_job", {
+      supabase.rpc(failRpcName, {
         p_job_id: job.id,
         p_lock_token: job.lock_token,
         p_error_code: "TEMPLATE_ERROR",
@@ -401,7 +580,9 @@ export async function processSingleJob(
   }
 
   // 3. Dispatch through Resend using immutable job ID as idempotency key
-  const idempotencyKey = `fairswap/listing-email/${job.id}`;
+  const idempotencyKey = isSecurity
+    ? `fairswap/security-email/${job.id}`
+    : `fairswap/listing-email/${job.id}`;
   const backoff = calculateBackoffSeconds(job.attempt_count);
 
   let res: Response;
@@ -423,7 +604,7 @@ export async function processSingleJob(
     });
   } catch (networkErr: unknown) {
     await assertRpcSuccess(
-      supabase.rpc("fail_email_outbox_job", {
+      supabase.rpc(failRpcName, {
         p_job_id: job.id,
         p_lock_token: job.lock_token,
         p_error_code: "NETWORK_ERROR",
@@ -443,7 +624,7 @@ export async function processSingleJob(
 
   if (res.ok && resJson && typeof resJson.id === "string") {
     await assertRpcSuccess(
-      supabase.rpc("complete_email_outbox_job", {
+      supabase.rpc(completeRpcName, {
         p_job_id: job.id,
         p_lock_token: job.lock_token,
         p_provider_message_id: resJson.id,
@@ -462,7 +643,7 @@ export async function processSingleJob(
     typeof resJson?.message === "string" ? resJson.message : `Resend returned status ${status}`;
 
   await assertRpcSuccess(
-    supabase.rpc("fail_email_outbox_job", {
+    supabase.rpc(failRpcName, {
       p_job_id: job.id,
       p_lock_token: job.lock_token,
       p_error_code: resendErrorCode,
