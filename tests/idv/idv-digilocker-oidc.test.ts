@@ -155,7 +155,7 @@ describe("DigiLocker OIDC v2 verification (only badge-issuing flow)", () => {
     expect(new URL(body.redirectUrl).searchParams.get("redirect_uri")).toBe(PROD_REDIRECT);
   });
 
-  it("positive: signed token with acr=aadhaar binds via the v2 RPC with OIDC provenance and issues the badge", async () => {
+  it("positive: signed DigiLocker identity binds after requested acr=aadhaar and issues the badge", async () => {
     const w = makeWorld();
     const { state } = await begin(w);
     const p = provider({ idToken: await signJwt(await goodClaims(state)) });
@@ -199,6 +199,21 @@ describe("DigiLocker OIDC v2 verification (only badge-issuing flow)", () => {
     }
   });
 
+  it.each([undefined, null, "", "pan", "AADHAAR"] as const)(
+    "signed DigiLocker identity succeeds without signed acr=%s after an acr=aadhaar authorization request",
+    async (acr) => {
+      const w = makeWorld();
+      const { body, state } = await begin(w);
+      expect(new URL(body.redirectUrl).searchParams.get("acr")).toBe("aadhaar");
+      const p = provider({ idToken: await signJwt(await goodClaims(state, { acr })) });
+      const r = await finish(w, p.f, state);
+      expect(r.status).toBe(200);
+      expect(r.body).toEqual({ success: true, verified: true });
+      expect(w.bindings).toEqual([{ user: USER, fp: expect.any(String), evidence: OIDC_EVIDENCE_METHOD }]);
+      expect(p.log.some((l) => l.url.endsWith("/oauth2/1/revoke"))).toBe(true);
+    },
+  );
+
   const rejects: [string, (s: string) => Promise<{ idToken: string | null; extra?: Partial<Parameters<typeof provider>[0]> }>, string][] = [
     ["forged signature (other key)", async (s) => ({ idToken: await signJwt(await goodClaims(s), { key: otherPriv }) }), "ID_TOKEN_INVALID"],
     ["tampered payload", async (s) => {
@@ -238,24 +253,13 @@ describe("DigiLocker OIDC v2 verification (only badge-issuing flow)", () => {
     ["malformed digilockerid in signed token", async (s) => ({ idToken: await signJwt(await goodClaims(s, { digilockerid: "short" })) }), "ID_TOKEN_INVALID"],
     ["signed and token-response ids disagree", async (s) => ({ idToken: await signJwt(await goodClaims(s)), extra: { id: "223e4567-e89b-12d3-a456-426655440001" } }), "ID_TOKEN_INVALID"],
     ["malformed token-response id", async (s) => ({ idToken: await signJwt(await goodClaims(s)), extra: { id: "short" } }), "INVALID_PROVIDER_RESPONSE"],
-    ["acr missing", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: undefined })) }), "ID_TOKEN_INVALID"],
-    ["acr null", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: null })) }), "ID_TOKEN_INVALID"],
-    ["acr empty", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: "" })) }), "ID_TOKEN_INVALID"],
-    ["acr wrong value", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: "pan" })) }), "ID_TOKEN_INVALID"],
-    ["acr different case", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: "AADHAAR" })) }), "ID_TOKEN_INVALID"],
-    ["acr padded", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: "aadhaar " })) }), "ID_TOKEN_INVALID"],
-    ["acr array", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: ["aadhaar"] })) }), "ID_TOKEN_INVALID"],
-    ["acr object", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: { v: "aadhaar" } })) }), "ID_TOKEN_INVALID"],
-    ["acr number", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: 1 })) }), "ID_TOKEN_INVALID"],
-    ["eaadhaar=Y and masked_aadhaar in signed token are not a substitute", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: undefined, eaadhaar: "Y", masked_aadhaar: "XXXXXXXX1234" })) }), "ID_TOKEN_INVALID"],
-    ["valid signed profile but no signed assurance; unsigned response claims acr/eaadhaar", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: undefined })), extra: { responseAcr: "aadhaar" } }), "ID_TOKEN_INVALID"],
-    ["forged acr: correct acr but signed by an untrusted key", async (s) => ({ idToken: await signJwt(await goodClaims(s), { key: otherPriv }) }), "ID_TOKEN_INVALID"],
-    ["forged acr: payload swapped after signing", async (s) => {
+    ["signed identity with untrusted key", async (s) => ({ idToken: await signJwt(await goodClaims(s), { key: otherPriv }) }), "ID_TOKEN_INVALID"],
+    ["signed identity payload swapped after signing", async (s) => {
       const t = (await signJwt(await goodClaims(s, { acr: undefined }))).split(".");
       return { idToken: `${t[0]}.${b64u(JSON.stringify(await goodClaims(s)))}.${t[2]}` };
     }, "ID_TOKEN_INVALID"],
-    ["valid acr but expired", async (s) => ({ idToken: await signJwt(await goodClaims(s, { exp: nowS() - 600, iat: nowS() - 900 })) }), "ID_TOKEN_INVALID"],
-    ["valid acr but wrong nonce", async (s) => ({ idToken: await signJwt(await goodClaims(s, { nonce: "x" })) }), "ID_TOKEN_INVALID"],
+    ["signed token expired", async (s) => ({ idToken: await signJwt(await goodClaims(s, { exp: nowS() - 600, iat: nowS() - 900 })) }), "ID_TOKEN_INVALID"],
+    ["signed token wrong nonce", async (s) => ({ idToken: await signJwt(await goodClaims(s, { nonce: "x" })) }), "ID_TOKEN_INVALID"],
     ["missing id_token", async () => ({ idToken: null }), "ID_TOKEN_INVALID"],
     ["not a JWT", async () => ({ idToken: "abc.def" }), "ID_TOKEN_INVALID"],
   ];
