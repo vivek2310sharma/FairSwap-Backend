@@ -309,10 +309,15 @@ export function enforceVerifiedActorState(environment, rows) {
 }
 
 // The receipt block an attestation of an evolved FairSwapTest V1 installation must carry (absent in the historical state).
-export const idvDigilockerEvolvedVariant = () => ({
+export const idvDigilockerEvolvedVariant = (acr = 'absent') => ({
   state: 'requiredGate',
   ledger: {...ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.ledger},
-  enforceVerifiedActorBodyMd5: ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.bodyMd5
+  enforceVerifiedActorBodyMd5: ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.bodyMd5,
+  ...(acr === 'applied' ? {aadhaarAcr: {
+    ledger: {...IDV_DIGILOCKER_ACR_LEDGER},
+    hasDigilockerBadgeBodyMd5: IDV_DIGILOCKER_ACR_BODIES.after.badge,
+    completeV2BodyMd5: IDV_DIGILOCKER_ACR_BODIES.after.complete
+  }} : {})
 });
 const isProduction = environment => environment === 'FairSwapProd';
 
@@ -361,10 +366,16 @@ export const IDV_DIGILOCKER_INSTALLED = Object.freeze(Object.fromEntries(Object.
   .filter(([key]) => key !== 'tables_empty')));
 // The attestation also binds enforce_verified_actor's body to the ledger state (enforceVerifiedActorState), so an installation
 // evolved by 20261122100000 is never attested as the historical V1 state, and vice versa.
-export const idvDigilockerInstalledChecks = (state = 'historical') =>
-  ({...IDV_DIGILOCKER_INSTALLED, enforce_verified_actor_state: enforceBody(state)});
-export const runIdvDigilockerInstalledCheck = (query, state = 'historical') => {
-  readSnapshot(query, idvDigilockerInstalledChecks(state), 'installed');
+// acr === 'applied' (FairSwapTest only, proven by the exact 20261123120000 ledger row): the live gate is ON by owner decision, so the
+// OFF assertions are replaced by ON assertions and the Aadhaar-assured function bodies and evidence constraint are pinned.
+export const idvDigilockerInstalledChecks = (state = 'historical', acr = 'absent') => {
+  const base = {...IDV_DIGILOCKER_INSTALLED, enforce_verified_actor_state: enforceBody(state)};
+  if (acr !== 'applied') return base;
+  const {gate_setting_off: _setting, gate_function_off: _function, ...rest} = base;
+  return {...rest, ...ACR_GATE_ON, acr_evidence_constraint: acrConstraint('after'), acr_bodies_exact: acrBodies('after')};
+};
+export const runIdvDigilockerInstalledCheck = (query, state = 'historical', acr = 'absent') => {
+  readSnapshot(query, idvDigilockerInstalledChecks(state, acr), 'installed');
   return {status: 'PASS', scope: IDV_DIGILOCKER_INSTALLED_SCOPE, enforceVerifiedActorState: state};
 };
 
@@ -445,13 +456,15 @@ export const idvDigilockerReceiptFields = environment => ({
 
 const RECEIPT_CONTEXT_OK = context => /^[a-f0-9]{40}$/.test(context.GITHUB_SHA ?? '') && /^[1-9]\d*$/.test(context.GITHUB_RUN_ID ?? '') &&
   /^[1-9]\d*$/.test(context.GITHUB_RUN_ATTEMPT ?? '');
-const receiptCommon = (receipt, c, context) => RECEIPT_CONTEXT_OK(context) &&
+// gateRequired: the expected identity_verification_required state recorded by the receipt (false for every release before the
+// Aadhaar ACR evidence; true only for FairSwapTest receipts of the ACR candidate / an ACR-state attestation).
+const receiptCommon = (receipt, c, context, gateRequired = false) => RECEIPT_CONTEXT_OK(context) &&
   receipt?.environment === 'FairSwapTest' && receipt.projectRef === PROJECT_REFS.FairSwapTest &&
   receipt.candidateId === c.id && receipt.migrationVersion === c.version && receipt.migrationFile === c.filename &&
   receipt.migrationSha256 === c.sha256 && receipt.reviewedCommit === context.GITHUB_SHA &&
   receipt.releaseWorkflowRun === context.GITHUB_RUN_ID && receipt.releaseWorkflowAttempt === context.GITHUB_RUN_ATTEMPT &&
   receipt.postflightVerified === true && Array.isArray(receipt.dryRunPending) &&
-  receipt.identityVerificationRequired === false && receipt.edgeFunctionsDeployedByThisWorkflow === false &&
+  receipt.identityVerificationRequired === gateRequired && receipt.edgeFunctionsDeployedByThisWorkflow === false &&
   /^[a-f0-9]{64}$/.test(receipt.ledgerStatementsSha256 ?? '');
 
 // Validates the FairSwapTest receipt of either IDV candidate and returns the ledger digest Production must reproduce.
@@ -462,7 +475,9 @@ export function verifyIdvDigilockerTestReceipt(receipt, context) {
   if (!isIdvDigilockerCandidate(candidateId) || (context.CANDIDATE && context.CANDIDATE !== candidateId)) fail('TEST_RECEIPT_INVALID');
   const c = getCandidate(candidateId);
   const prerequisite = IDV_FOUNDATION_LEDGER.FairSwapTest;
-  if (!receiptCommon(receipt, c, context) ||
+  const acrVariant = candidateId === IDV_DIGILOCKER_CANDIDATE && receipt.status === 'ALREADY_INSTALLED_VERIFIED' &&
+    receipt.installedStateVariant?.aadhaarAcr !== undefined;
+  if (!receiptCommon(receipt, c, context, acrVariant) ||
       receipt.prerequisiteLedger?.version !== prerequisite.version || receipt.prerequisiteLedger?.name !== prerequisite.name) {
     fail('TEST_RECEIPT_INVALID');
   }
@@ -478,7 +493,7 @@ export function verifyIdvDigilockerTestReceipt(receipt, context) {
         receipt.outOfOrderInstall !== undefined || receipt.installedBeforeThisWorkflow !== true ||
         // Historical state: no variant. Evolved state: exactly the ledger-bound required-gate variant.
         (receipt.installedStateVariant !== undefined &&
-          JSON.stringify(receipt.installedStateVariant) !== JSON.stringify(idvDigilockerEvolvedVariant()))) {
+          JSON.stringify(receipt.installedStateVariant) !== JSON.stringify(idvDigilockerEvolvedVariant(acrVariant ? 'applied' : 'absent')))) {
       fail('TEST_RECEIPT_INVALID');
     }
     return receipt.ledgerStatementsSha256;
@@ -579,6 +594,149 @@ export function verifyIdvDigilockerRequiredTestReceipt(receipt, context) {
       receipt.testLedgerStatementsSha256 !== undefined ||
       Object.keys(expected).some(key => JSON.stringify(receipt[key]) !== JSON.stringify(expected[key]))) {
     fail('REQUIRED_TEST_RECEIPT_INVALID');
+  }
+  return receipt.ledgerStatementsSha256;
+}
+
+// ---------- Aadhaar ACR evidence (20261123120000): FairSwapTest ONLY, never promoted ----------
+// Replaces exactly two function bodies (has_digilocker_badge, impl_idv_dl_complete_v2) and widens the evidence CHECK constraint.
+// FairSwapTest already runs with identity_verification_required = 'true' (owner decision): this release requires 'true' before
+// AND after, never writes the setting, and rejects a 'false'/missing/duplicated switch at preflight. Production can never reach it.
+export const IDV_DIGILOCKER_ACR_CANDIDATE = 'idv-digilocker-aadhaar-acr';
+export const IDV_DIGILOCKER_ACR_SCOPE = 'idv-digilocker-aadhaar-acr-integrity';
+// CLI split of the SHA-pinned source (statement count and digest recorded in the hosted ledger).
+export const IDV_DIGILOCKER_ACR_LEDGER = Object.freeze({
+  version: '20261123120000', name: 'idv_digilocker_aadhaar_acr', statementCount: 15,
+  statementsSha256: '76fd817535682397f1a6f8446663d872ba1f5fe4af114996b23dbcc54f35ed3b'
+});
+// md5(prosrc) before (20261119200000) and after (20261123120000); the public wrapper is unchanged.
+export const IDV_DIGILOCKER_ACR_BODIES = Object.freeze({
+  before: Object.freeze({badge: '7c3f9bd29fdfdfa4ae2943a557712485', complete: 'b82c810a399c11e91d11a2c8fa35ee86'}),
+  after: Object.freeze({badge: 'd7dfd9d48588b6903fc6c2a1fa6ecf09', complete: '271fe8f3895ba6c9b3ddd35ef8072811'}),
+  wrapper: '22d1c47edd7f8383f7f17adc53f47964'
+});
+const ACR_BADGE = 'app_security.has_digilocker_badge(uuid)';
+const ACR_COMPLETE = 'app_security.impl_idv_dl_complete_v2(uuid,uuid,text,text,text[],text)';
+const ACR_WRAPPER = 'public.server_idv_dl_complete_v2(uuid,uuid,text,text,text[],text)';
+const ACR_FUNCTION_NAMES = ['has_digilocker_badge', 'impl_idv_dl_complete_v2', 'server_idv_dl_complete_v2'];
+const ACR_EVIDENCE = 'oidc_v2_signed_aadhaar_acr';
+
+// Owner, language, SECURITY DEFINER, volatility, return type, empty search_path and body digest of the three functions, with
+// exactly one overload of each name.
+const acrBodies = state => allOf([
+  v3Function([ACR_BADGE, 'sql', true, 's', 'boolean', IDV_DIGILOCKER_ACR_BODIES[state].badge]),
+  v3Function([ACR_COMPLETE, 'plpgsql', true, 'v', 'jsonb', IDV_DIGILOCKER_ACR_BODIES[state].complete]),
+  v3Function([ACR_WRAPPER, 'sql', true, 'v', 'jsonb', IDV_DIGILOCKER_ACR_BODIES.wrapper]),
+  `(SELECT count(*) = ${ACR_FUNCTION_NAMES.length} FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname IN ('public','app_security') AND p.proname = ANY(${arr(ACR_FUNCTION_NAMES)}))`
+]);
+// before: the Aadhaar label is not yet allowed; after: allowed next to both historical labels. Always present and validated.
+const acrConstraint = state => `EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = to_regclass('${BINDINGS}')::oid
+  AND c.conname = 'chk_idv_dl_evidence_method' AND c.contype = 'c' AND c.convalidated
+  AND position('legacy_account_link' in pg_get_constraintdef(c.oid)) > 0
+  AND position('oidc_v2_signed_id_token' in pg_get_constraintdef(c.oid)) > 0
+  AND (position('${ACR_EVIDENCE}' in pg_get_constraintdef(c.oid)) > 0) = ${state === 'after'})`;
+// Live FairSwapTest gate is ON. Both the stored switch and the function that reads it must say so, exactly one switch row.
+const ACR_GATE_ON = Object.freeze({
+  gate_setting_on: `(SELECT count(*) = 1 AND bool_and(setting_value = 'true') FROM public.app_system_settings
+    WHERE setting_key = 'identity_verification_required')`,
+  gate_function_on: `app_security.identity_gate_enabled() IS TRUE`
+});
+
+// Strict ledger state of the ACR migration: absent, or applied as exactly the pinned row (FairSwapTest only, and only on top of
+// the exact required-gate row). Anything partial or in Production fails closed.
+export function idvAcrLedgerState(environment, rows) {
+  if (!IDV_FOUNDATION_LEDGER[environment] || !Array.isArray(rows)) fail('ACR_STATE_ENVIRONMENT_INVALID');
+  const pin = IDV_DIGILOCKER_ACR_LEDGER;
+  const recorded = rows.filter(row => row.version === pin.version || row.name === pin.name);
+  if (recorded.length === 0) return 'absent';
+  if (environment !== 'FairSwapTest') fail('ACR_PRODUCTION_FORBIDDEN');
+  const [row] = recorded;
+  if (recorded.length !== 1 || row.version !== pin.version || row.name !== pin.name || row.hasStatements !== true ||
+      row.statementCount !== pin.statementCount || row.statementsSha256 !== pin.statementsSha256 ||
+      enforceVerifiedActorState(environment, rows) !== 'requiredGate') {
+    fail('ACR_LEDGER_MISMATCH');
+  }
+  return 'applied';
+}
+
+// Runs on readTabletsLedger rows before any dry run. Historical V1, V2 and required-gate receipts must all be present as pinned.
+export function assertIdvDigilockerAcrLedger(environment, rows) {
+  if (environment !== 'FairSwapTest' || !Array.isArray(rows)) fail('ACR_TEST_ONLY');
+  const own = IDV_FOUNDATION_LEDGER.FairSwapTest;
+  const foundation = rows.filter(row => row.name === own.name);
+  if (foundation.length !== 1 || foundation[0].version !== own.version || foundation[0].hasStatements !== true) {
+    fail('FOUNDATION_PREREQUISITE_MISMATCH');
+  }
+  if (rows.some(row => row.version === IDV_FOUNDATION_SOURCE_VERSION)) fail('FOUNDATION_HISTORY_MISMATCH');
+  const gatePin = ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.ledger;
+  for (const pin of [...IDV_DIGILOCKER_REQUIRED_PREREQUISITES, {...gatePin, statementsSha256: gatePin.statementsSha256}]) {
+    const found = rows.filter(row => row.version === pin.version || row.name === pin.name);
+    if (found.length !== 1 || found[0].version !== pin.version || found[0].name !== pin.name || found[0].hasStatements !== true ||
+        !(found[0].statementCount > 0) ||
+        (pin.statementsSha256 !== undefined && (found[0].statementCount !== pin.statementCount || found[0].statementsSha256 !== pin.statementsSha256))) {
+      fail('ACR_PREREQUISITE_LEDGER_MISMATCH');
+    }
+  }
+  if (idvAcrLedgerState(environment, rows) !== 'absent') fail('ACR_ALREADY_RECORDED');
+  return {includeAll: false, ahead: []};
+}
+
+const {gate_setting_off: _acrSettingOff, gate_function_off: _acrFunctionOff, ...ACR_V2_STRUCTURE} = IDV_DIGILOCKER_V2_POSTFLIGHT;
+const acrChecks = state => Object.freeze({
+  v1_structure: [IDV_DIGILOCKER_INSTALLED.functions_exact, IDV_DIGILOCKER_INSTALLED.tables_rls_forced,
+    IDV_DIGILOCKER_INSTALLED.gate_triggers, IDV_DIGILOCKER_INSTALLED.binding_triggers].join(' AND '),
+  ...ACR_V2_STRUCTURE,
+  // enforce_verified_actor stays exactly the required-gate body in both states (this release never touches it).
+  enforce_state_exact: enforceBody('requiredGate'),
+  enforce_single_overload: `(SELECT count(*) = 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname IN ('public','app_security') AND p.proname = 'enforce_verified_actor')`,
+  enforce_server_only: enforceServerOnly,
+  ...ACR_GATE_ON,
+  acr_evidence_constraint: acrConstraint(state),
+  acr_bodies_exact: acrBodies(state)
+});
+export const IDV_DIGILOCKER_ACR_PREFLIGHT = acrChecks('before');
+export const IDV_DIGILOCKER_ACR_POSTFLIGHT = acrChecks('after');
+// Every other table, policy, function (owner, ACL, attributes, body) and trigger in public/app_security must be unchanged.
+const ACR_PRESERVED = preservedSql([], ACR_FUNCTION_NAMES.filter(name => name !== 'server_idv_dl_complete_v2'), false);
+export const idvDigilockerAcrSnapshotSql = (checks, label) => snapshotSql(checks, label, ACR_PRESERVED);
+
+export const runIdvDigilockerAcrPreflight = query =>
+  readSnapshot(query, IDV_DIGILOCKER_ACR_PREFLIGHT, 'acr-preflight', ACR_PRESERVED);
+export function runIdvDigilockerAcrPostflight(before, query) {
+  if (!before?.preserved) fail('BASELINE_REQUIRED');
+  const after = readSnapshot(query, IDV_DIGILOCKER_ACR_POSTFLIGHT, 'acr-postflight', ACR_PRESERVED);
+  if (after.preserved !== before.preserved) fail('EXISTING_OBJECTS_CHANGED');
+  return {status: 'PASS', scope: IDV_DIGILOCKER_ACR_SCOPE};
+}
+
+// Receipt block shared by the writer and the Test-receipt validator. identityVerificationRequired is TRUE: the live Test gate.
+export const idvDigilockerAcrReceiptFields = () => ({
+  testOnly: true,
+  autoPromote: false,
+  identityVerificationRequired: true,
+  requiredLedger: [...IDV_DIGILOCKER_REQUIRED_PREREQUISITES.map(({version, name}) => ({version, name})),
+    {version: ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.ledger.version, name: ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.ledger.name}],
+  bodyTransition: {
+    hasDigilockerBadge: {from: IDV_DIGILOCKER_ACR_BODIES.before.badge, to: IDV_DIGILOCKER_ACR_BODIES.after.badge},
+    completeV2: {from: IDV_DIGILOCKER_ACR_BODIES.before.complete, to: IDV_DIGILOCKER_ACR_BODIES.after.complete}
+  }
+});
+
+// Validates the FairSwapTest receipt of the ACR release. Never Production evidence: testOnly/autoPromote are carried explicitly.
+export function verifyIdvDigilockerAcrTestReceipt(receipt, context) {
+  const c = getCandidate(IDV_DIGILOCKER_ACR_CANDIDATE);
+  const expected = idvDigilockerAcrReceiptFields();
+  const prerequisite = IDV_FOUNDATION_LEDGER.FairSwapTest;
+  if ((context.CANDIDATE && context.CANDIDATE !== c.id) || !receiptCommon(receipt, c, context, true) ||
+      receipt.prerequisiteLedger?.version !== prerequisite.version || receipt.prerequisiteLedger?.name !== prerequisite.name ||
+      receipt.status !== 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED' || receipt.postflightScope !== IDV_DIGILOCKER_ACR_SCOPE ||
+      receipt.dryRunPending.length !== 1 || receipt.dryRunPending[0] !== c.filename || receipt.outOfOrderInstall !== undefined ||
+      receipt.ledgerStatementsSha256 !== IDV_DIGILOCKER_ACR_LEDGER.statementsSha256 ||
+      receipt.testLedgerStatementsSha256 !== undefined ||
+      Object.keys(expected).some(key => JSON.stringify(receipt[key]) !== JSON.stringify(expected[key]))) {
+    fail('ACR_TEST_RECEIPT_INVALID');
   }
   return receipt.ledgerStatementsSha256;
 }

@@ -141,6 +141,20 @@ export const CANDIDATES = Object.freeze({
     testOnly: true,
     autoPromote: false
   }),
+  // Aadhaar ACR evidence: has_digilocker_badge and impl_idv_dl_complete_v2 require signed acr=aadhaar provenance. FairSwapTest ONLY
+  // (testOnly, bound to the FairSwapTest project ref, never auto-promoted). FairSwapTest already runs with the identity gate ON; the
+  // runner requires 'true' before and after and never writes the setting. Production parity is a separate owner-authorized process.
+  'idv-digilocker-aadhaar-acr': Object.freeze({
+    id: 'idv-digilocker-aadhaar-acr', version: '20261123120000',
+    filename: '20261123120000_idv_digilocker_aadhaar_acr.sql',
+    path: 'supabase/forward-migrations/idv/20261123120000_idv_digilocker_aadhaar_acr.sql',
+    sha256: '4e2b5ed60d4e799a69114e5ba445e27e7bb37ab9eace268608f414718649d79d',
+    description: 'IDV DigiLocker badge requires signed Aadhaar ACR evidence; FairSwapTest only, identity gate stays ON',
+    requiredLedgerVersions: Object.freeze(['20261117090000', '20261119200000', '20261122100000']),
+    allowedProjectRef: 'wpppxlnbzqynvhpeuavd',
+    testOnly: true,
+    autoPromote: false
+  }),
   'taxonomy-v2-catalogue': Object.freeze({
     id: 'taxonomy-v2-catalogue', version: '20261118092010',
     filename: '20261118092010_taxonomy_v2_catalogue.sql',
