@@ -1,6 +1,6 @@
 -- Minimal stand-ins for tables/functions the DigiLocker-direct migration touches (disposable PG17 only).
 create table if not exists public.app_system_settings (
-  setting_key text primary key, setting_value text not null, description text
+  setting_key text primary key, setting_value text not null, description text, updated_at timestamptz not null default now()
 );
 create type public.listing_status_enum as enum ('draft','pending_review','active','reserved','sold','rejected','paused','expired','removed');
 create table public.listings (
