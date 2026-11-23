@@ -382,6 +382,20 @@ test('V3 correction preserves all other functions, RLS, grants, contracts and ca
       const restricted=(await db.query('select * from app_security.ordinary_goods_contracts_v3 order by slug')).rows.filter(g=>!V3_GOODS.some(a=>a.slug===g.slug));
       assert.equal(restricted.length,15);
       assert.deepEqual(restricted,before.contracts.filter(g=>!V3_GOODS.some(a=>a.slug===g.slug)));
+      for (const [signature] of correction.functions) {
+        await db.exec('begin');
+        const definition=await scalar(`select pg_get_functiondef('${signature}'::regprocedure)`);
+        await db.exec(definition.replace('AS $function$', 'AS $function$\n-- regression: body drift\n'));
+        await assert.rejects(db.exec(leafPreflightSql(activate,sha)),/CORRECTION_REQUIRED/);
+        await db.exec('rollback');
+        await db.exec('begin');
+        await db.exec(definition.replace('AS $function$', 'AS $function$\n-- regression: body drift\n'));
+        await db.exec(leafTransaction(deactivate,sha));
+        assert.equal(await scalar("select enabled from app_security.ordinary_goods_contracts_v3 where slug='v2-books'"),false);
+        await db.exec('rollback');
+        await db.exec(definition);
+        await db.exec(leafTransaction(activate,sha));
+      }
       for(const {slug} of [...V3_GOODS].reverse()) await db.exec(leafTransaction(`v3-${slug.slice(3)}-deactivate`,sha));
     }
   } finally {await db.close();}

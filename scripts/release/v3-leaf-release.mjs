@@ -140,7 +140,7 @@ function stateExpression(slug, active, checkAvailability = true) {
       AND NOT c.new_listing_enabled AND g.enabled=${active} AND c.is_active=${active}
       AND c.status='${active ? 'live' : 'coming_soon'}'
       ${checkAvailability ? `AND app_security.ordinary_goods_available_v3(g.category_id)=${active}` : ''}
-      ${active ? `AND g.moderation_mode='five_check' AND p.is_active AND p.status='live' AND ${correctionReady}` : ''})`;
+      ${active ? `AND g.moderation_mode='five_check' AND p.is_active AND p.status='live' ${checkAvailability ? `AND ${correctionReady}` : ''}` : ''})`;
 }
 
 export function leafStateSql(slug, active, checkAvailability = true) {

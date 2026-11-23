@@ -76,6 +76,13 @@ const V3_BATCHES = Object.freeze(Object.fromEntries(['activate','deactivate'].ma
 })));
 
 export const CANDIDATES = Object.freeze({
+  'v3-provider-neutral-activation': Object.freeze({
+    id: 'v3-provider-neutral-activation', version: V3_ACTIVATION_CORRECTION.version,
+    filename: '20261122213157_v3_provider_neutral_activation.sql',
+    path: V3_ACTIVATION_CORRECTION.path, sha256: V3_ACTIVATION_CORRECTION.sha256,
+    requiredLedgerVersions: Object.freeze(['20261118092010', ...v3Candidates.map(row=>row[0]), '20261120000000']),
+    autoPromote: true
+  }),
   [V3_IDENTITY_PREREQUISITE]: Object.freeze({
     id: V3_IDENTITY_PREREQUISITE, version: '20261119090000',
     filename: '20261119090000_v3_production_identity_prerequisite.sql',
