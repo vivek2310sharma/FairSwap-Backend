@@ -5247,3 +5247,58 @@ test('canonical family receipt recovery guards pinned Test and Production histor
  assert.match(source,/canonicalFamilyChooser \? familyTestLedger/);
  assert.match(source,/receipts\.test_catalogue_run_id\?\.ledgerStatementsSha256/);
 });
+
+test('IDV request-only ACR: signed identity remains mandatory, requested acr stays fixed, Test-only release is pinned', async () => {
+  const {
+    IDV_DIGILOCKER_REQUEST_CANDIDATE, IDV_DIGILOCKER_REQUEST_SCOPE,
+    IDV_DIGILOCKER_REQUEST_PREFLIGHT, IDV_DIGILOCKER_REQUEST_POSTFLIGHT,
+    assertIdvDigilockerRequestLedger, idvDigilockerRequestReceiptFields,
+    verifyIdvDigilockerRequestTestReceipt
+  } = await import('../../scripts/release/idv-digilocker-v1-release.mjs');
+  const {candidate, sha256} = verifyCandidateSha(IDV_DIGILOCKER_REQUEST_CANDIDATE);
+  assert.deepEqual([candidate.version, candidate.filename, sha256],
+    ['20261123150000', '20261123150000_idv_digilocker_acr_request_only.sql',
+      '6bc3877a9e6a6d9491960a3437390ab1672122682442326fa739e1d22589db3c']);
+  assert.equal(candidate.testOnly, true);
+  assert.equal(candidate.autoPromote, false);
+  assert.equal(candidate.allowedProjectRef, REFS.FairSwapTest);
+  assert.equal(planDispatch({candidateId: candidate.id, target: 'test'}).target, 'test');
+  for(const target of ['production', 'adopt'])
+    assert.throws(() => planDispatch({candidateId:candidate.id,target}), /TEST_ONLY_CANDIDATE/);
+  assert.deepEqual(assertIdvDigilockerRequestLedger('FairSwapTest', acrLedger({extra:[acrRow()]})),
+    {includeAll:false,ahead:[]});
+  assert.throws(() => assertIdvDigilockerRequestLedger('FairSwapProd', acrLedger({extra:[acrRow()]})), /REQUEST_TEST_ONLY/);
+  assert.throws(() => assertIdvDigilockerRequestLedger('FairSwapTest', acrLedger()), /REQUEST_ACR_PREREQUISITE_MISSING/);
+  assert.throws(() => assertIdvDigilockerRequestLedger('FairSwapTest',
+    acrLedger({extra:[acrRow(),{version:candidate.version,name:candidate.filename.slice(15,-4)}]})), /REQUEST_ALREADY_RECORDED/);
+  const oidc = readFileSync('supabase/functions/_shared/idv/digilocker-oidc.ts','utf8');
+  assert.match(oidc, /u\.searchParams\.set\("acr", OIDC_ACR\)/);
+  assert.match(oidc, /OIDC_ACR = "aadhaar"/);
+  assert.doesNotMatch(oidc, /if \(claims\["acr"\]/);
+  assert.match(oidc, /OIDC_EVIDENCE_METHOD = "oidc_v2_signed_id_requested_aadhaar"/);
+  const sql = readFileSync(candidate.path,'utf8');
+  assert.match(sql, /oidc_v2_signed_id_requested_aadhaar/);
+  assert.match(sql, /oidc_v2_signed_aadhaar_acr/);
+  assert.doesNotMatch(sql, /update public\.app_system_settings/i);
+  const wf=readFileSync('.github/workflows/reusable-supabase-release.yml','utf8');
+  assert.match(wf, /- idv-digilocker-acr-request-only/);
+  assert.match(wf, /inputs\.candidate != 'idv-digilocker-acr-request-only'/);
+  assert.ok(Object.keys(IDV_DIGILOCKER_REQUEST_PREFLIGHT).includes('acr_bodies_exact'));
+  assert.ok(IDV_DIGILOCKER_REQUEST_POSTFLIGHT.acr_bodies_exact.includes('oidc_v2_signed_id_requested_aadhaar'));
+  assert.ok(IDV_DIGILOCKER_REQUEST_POSTFLIGHT.acr_evidence_constraint.includes('oidc_v2_signed_aadhaar_acr'));
+  const context={GITHUB_SHA:'a'.repeat(40),GITHUB_RUN_ID:'135',GITHUB_RUN_ATTEMPT:'1',CANDIDATE:candidate.id};
+  const receipt={
+    environment:'FairSwapTest',projectRef:REFS.FairSwapTest,candidateId:candidate.id,
+    migrationVersion:candidate.version,migrationFile:candidate.filename,migrationSha256:candidate.sha256,
+    reviewedCommit:context.GITHUB_SHA,releaseWorkflowRun:context.GITHUB_RUN_ID,
+    releaseWorkflowAttempt:context.GITHUB_RUN_ATTEMPT,postflightVerified:true,
+    status:'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED',dryRunPending:[candidate.filename],
+    ledgerStatementsSha256:'f'.repeat(64),postflightScope:IDV_DIGILOCKER_REQUEST_SCOPE,
+    prerequisiteLedger:IDV_FOUNDATION_LEDGER.FairSwapTest,
+    edgeFunctionsDeployedByThisWorkflow:false, ...idvDigilockerRequestReceiptFields()
+  };
+  assert.equal(verifyIdvDigilockerRequestTestReceipt(receipt,context),receipt.ledgerStatementsSha256);
+  for(const overrides of [{identityVerificationRequired:false},{autoPromote:true},{postflightScope:'incorrect'},
+    {status:'ALREADY_APPLIED_VERIFIED'},{acrRequested:'no'},{projectRef:REFS.FairSwapProd}])
+    assert.throws(()=>verifyIdvDigilockerRequestTestReceipt({...receipt,...overrides},context),/REQUEST_TEST_RECEIPT_INVALID/);
+});
