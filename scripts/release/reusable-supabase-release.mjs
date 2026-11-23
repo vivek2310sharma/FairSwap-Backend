@@ -792,6 +792,27 @@ function psqlQuery(query, psqlUrl, env, runner, phase) {
   return res.stdout;
 }
 
+// The email migration predates the already-applied V3 provider-neutral correction in both hosted projects.
+// Permit precisely this independently observed, hash-pinned tail; never reorder or repair migration history.
+const ACCOUNT_SECURITY_EMAIL_AHEAD = Object.freeze({
+  version: '20261122213157',
+  name: 'v3_provider_neutral_activation',
+  statementCount: 9,
+  statementsSha256: '0d9b556c102a7a5ce57c72d7009a73bfa3fb510c3185d40a3a2b18dcea2a8853'
+});
+export function assertAccountSecurityEmailTail(candidate, ledger, remoteVersions) {
+  const ahead = ledger.filter(row => row.version >= candidate.version);
+  const [row] = ahead;
+  if (ledger.length !== remoteVersions.size || ledger.some(item => !remoteVersions.has(item.version)) ||
+      ahead.length !== 1 || row.version !== ACCOUNT_SECURITY_EMAIL_AHEAD.version ||
+      row.name !== ACCOUNT_SECURITY_EMAIL_AHEAD.name || !row.hasStatements ||
+      row.statementCount !== ACCOUNT_SECURITY_EMAIL_AHEAD.statementCount ||
+      row.statementsSha256 !== ACCOUNT_SECURITY_EMAIL_AHEAD.statementsSha256) {
+    throw new Error('ACCOUNT_SECURITY_EMAIL_UNEXPECTED_LEDGER_TAIL');
+  }
+  return {includeAll: true, ahead: [row.version]};
+}
+
 export async function releaseReusable({
   environment,
   candidateId,
@@ -1080,6 +1101,13 @@ export async function releaseReusable({
         !beforeRemote.has(row.version) || (row.version >= candidate.version && !outOfOrder.ahead.includes(row.version)))) {
         throw new Error(`REUSABLE_RELEASE_${label}_LEDGER_MISMATCH`);
       }
+    }
+
+    if (accountSecurityEmail && !isAlreadyApplied) {
+      // `supabase db push --include-all` is allowed only for the exact reviewed newer
+      // migration row already present in BOTH Test and Production.
+      ledgerBefore = readLedger();
+      outOfOrder = assertAccountSecurityEmailTail(candidate, ledgerBefore, beforeRemote);
     }
 
     if (v3Production) {
