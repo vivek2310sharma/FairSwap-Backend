@@ -7,7 +7,7 @@
 //      exactly one eligible key verifies), with exact issuer, audience (+azp), exp, iat, sub and our state-bound nonce;
 //   2. the authorize request includes fixed acr=aadhaar; we rely on provider enforcement of this request,
 //      not on an acr claim in the signed ID token. OAuth completion alone does not independently prove Aadhaar status.
-//      closed. `eaadhaar`, masked Aadhaar and unsigned response fields are never read or accepted as a substitute;
+//      `eaadhaar`, masked Aadhaar and unsigned response fields are not accepted as substitutes;
 //   3. the signature-verified ID token carries a well-formed `digilockerid`. If the authenticated token response also
 //      returns `digilockerid`, both must be equal. The id is only ever HMAC-fingerprinted by the caller;
 //   4. the caller (idv-digilocker-complete) binds that fingerprint atomically to exactly one FairSwap account.
