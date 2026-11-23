@@ -176,7 +176,7 @@ const triOf = (ok: boolean): z.infer<typeof tri> => (ok ? "verified" : "failed")
 
 /** Pure: builds the summary and optional signed-response inspection; never treats login as Aadhaar assurance. */
 export function buildLabResult(
-  ex: { response: { httpStatus: number; json: unknown }; idToken: string | null; failure: string | null; oversize?: true },
+  ex: { response: { httpStatus: number; json: unknown; contentType?: string | null; text?: string | null }; idToken: string | null; failure: string | null; oversize?: true },
   verdict: Awaited<ReturnType<typeof evaluateIdToken>> | null,
 ): LabResult {
   const status = ex.response.httpStatus;
@@ -200,7 +200,9 @@ export function buildLabResult(
     outcome,
     errorCode: failed ? FAILURE_CODE[ex.failure ?? verdict?.code ?? ""] ?? "TOKEN_EXCHANGE_FAILED" : null,
     httpStatusBucket: bucket(status),
-    ...(exposeValues ? { raw: { tokenResponse: ex.response } } : {}),
+    ...(exposeValues ? { raw: { tokenResponse: {
+      httpStatus: status, contentType: ex.response.contentType ?? null, json: ex.response.json, text: ex.response.text ?? null,
+    } } } : {}),
     tokenResponseFields: names(tokenJson),
     idTokenClaims: names(claims),
     checks,
