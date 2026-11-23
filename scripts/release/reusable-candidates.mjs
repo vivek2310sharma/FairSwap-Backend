@@ -76,6 +76,16 @@ const V3_BATCHES = Object.freeze(Object.fromEntries(['activate','deactivate'].ma
 })));
 
 export const CANDIDATES = Object.freeze({
+  'account-security-email-v2': Object.freeze({
+    id: 'account-security-email-v2',
+    version: '20261122213000',
+    filename: '20261122213000_account_security_digilocker_email_outbox.sql',
+    path: 'supabase/forward-migrations/account-security-email/20261122213000_account_security_digilocker_email_outbox.sql',
+    sha256: 'fd22fbe3ee453b70dc99436a4cabe984705141001cfe927ece2e682a0e752bd6',
+    description: 'One-time signup security email; RLS-only queue and confirmed-email trigger',
+    accountSecurityEmail: true,
+    autoPromote: true
+  }),
   'v3-provider-neutral-activation': Object.freeze({
     id: 'v3-provider-neutral-activation', version: V3_ACTIVATION_CORRECTION.version,
     filename: '20261122213157_v3_provider_neutral_activation.sql',
@@ -487,6 +497,10 @@ function need(ok, code) {
 export function planDispatch({candidateId, target = 'test', inputs = {}, context = {}}) {
   const candidate = getCandidate(candidateId);
   need(target === 'test' || target === 'production' || target === 'adopt', 'INVALID_TARGET');
+  if (candidate.accountSecurityEmail) {
+    need(target !== 'adopt', 'ACCOUNT_SECURITY_EMAIL_ADOPTION_FORBIDDEN');
+    return {candidate, target, priorRuns: [], webStagingSha: null, webProductionSha: null};
+  }
   if (candidate.v3Batch) {
     need(target !== 'adopt', 'V3_INVALID_TARGET');
     let entries;

@@ -22,6 +22,7 @@ on:
           - idv-digilocker-oidc-v2
           # FairSwapTest only: testOnly, never promoted; Production is refused by the registry, the runner and the production job.
           - idv-digilocker-required-gate
+          - account-security-email-v2
           - accessories-v1-foundation
           - accessories-v1-activation
           - tablets-v1-foundation
@@ -495,6 +496,31 @@ jobs:
             printf '%s  %s-fairswaptest.json\n' "$EXPECTED_SHA" "$CANDIDATE" | sha256sum --check --status
           fi
 
+      - name: Verify account-security email Test receipt (before any Production promotion)
+        if: ${{ inputs.candidate == 'account-security-email-v2' }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {readFileSync} from 'node:fs';
+          const receipt = JSON.parse(readFileSync('test-evidence/account-security-email-v2-fairswaptest.json','utf8'));
+          const expected = {
+            environment:'FairSwapTest', projectRef:'wpppxlnbzqynvhpeuavd',
+            candidateId:'account-security-email-v2',
+            migrationVersion:'20261122213000',
+            migrationFile:'20261122213000_account_security_digilocker_email_outbox.sql',
+            migrationSha256:'fd22fbe3ee453b70dc99436a4cabe984705141001cfe927ece2e682a0e752bd6',
+            reviewedCommit:process.env.GITHUB_SHA,
+            releaseWorkflowRun:process.env.GITHUB_RUN_ID,
+            status:'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED',
+            postflightScope:'confirmed-signup-security-email-rls-and-queue'
+          };
+          for(const [key,value] of Object.entries(expected))
+            if(receipt[key]!==value) throw new Error('ACCOUNT_SECURITY_EMAIL_TEST_RECEIPT_INVALID_'+key);
+          if(receipt.postflightVerified!==true ||
+            JSON.stringify(receipt.dryRunPending)!==JSON.stringify([expected.migrationFile]) ||
+            !Number.isFinite(Date.parse(receipt.timestamp)))
+            throw new Error('ACCOUNT_SECURITY_EMAIL_TEST_POSTFLIGHT_NOT_VERIFIED');
+          NODE
+
       - name: Verify all four V3 batch receipts
         if: ${{ inputs.candidate == 'v3-test-remaining-batch' }}
         run: |
@@ -668,6 +694,21 @@ jobs:
           const e2e = await verifyE2eEvidence(plan, e);
           if (plan.e2eWaiver) console.log(JSON.stringify({e2eWaiver: e2e}));
           await verifyTabletsV2Web(plan, e);
+          NODE
+
+      - name: Verify Production DigiLocker email destinations (account-security candidate)
+        if: ${{ inputs.candidate == 'account-security-email-v2' }}
+        timeout-minutes: 1
+        run: |
+          node --input-type=module - <<'NODE'
+          import {createHash} from 'node:crypto';
+          const logo = await fetch('https://fairswap.in/brand/digilocker-logo.png', {signal: AbortSignal.timeout(12000)});
+          if (!logo.ok) throw new Error('ACCOUNT_SECURITY_EMAIL_PROD_LOGO_NOT_LIVE');
+          const bytes = Buffer.from(await logo.arrayBuffer());
+          if (createHash('sha256').update(bytes).digest('hex') !== '507411d00d3620d2ae7c3990441d2eee774829cab7d26ef78440bdacf418e90c')
+            throw new Error('ACCOUNT_SECURITY_EMAIL_PROD_LOGO_MISMATCH');
+          const account = await fetch('https://fairswap.in/account', {signal: AbortSignal.timeout(12000)});
+          if (!account.ok) throw new Error('ACCOUNT_SECURITY_EMAIL_PROD_ACCOUNT_NOT_LIVE');
           NODE
 
       - name: Install psql client
