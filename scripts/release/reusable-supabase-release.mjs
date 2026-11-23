@@ -843,6 +843,27 @@ export function assertAccountSecurityEmailTail(candidate, ledger, remoteVersions
   return {includeAll: true, ahead: [row.version]};
 }
 
+// The canonical-family-chooser migration predates the already-applied Test DigiLocker request-only migration.
+// Permit --include-all only for this exact, independently verified Test ledger row.
+const FAMILY_CHOOSER_AHEAD = Object.freeze({
+  version: '20261123150000',
+  name: 'idv_digilocker_acr_request_only',
+  statementCount: 15,
+  statementsSha256: 'b0f20fde43e46690707cf18a1d706fb6a4518d159da8f94a71774bf8758bbc87'
+});
+export function assertFamilyChooserLedger(environment, candidate, ledger) {
+  const ahead = ledger.filter(row => row.version >= candidate.version);
+  if (ahead.length === 0) return {includeAll: false, ahead: []};
+  const [row] = ahead;
+  if (environment !== 'FairSwapTest' || ahead.length !== 1 || row.version !== FAMILY_CHOOSER_AHEAD.version ||
+      row.name !== FAMILY_CHOOSER_AHEAD.name || !row.hasStatements ||
+      row.statementCount !== FAMILY_CHOOSER_AHEAD.statementCount ||
+      row.statementsSha256 !== FAMILY_CHOOSER_AHEAD.statementsSha256) {
+    throw new Error('FAMILY_CHOOSER_UNEXPECTED_LEDGER_TAIL');
+  }
+  return {includeAll: true, ahead: [row.version]};
+}
+
 export async function releaseReusable({
   environment,
   candidateId,
@@ -1136,6 +1157,7 @@ export async function releaseReusable({
           outOfOrder = {includeAll: true, ahead: [diagnostic.version]};
         }
       }
+      if (candidate.canonicalFamilyChooser) outOfOrder = assertFamilyChooserLedger(environment, candidate, ledgerBefore);
       for (const version of candidate.requiredLedgerVersions ?? []) {
         const prerequisite = Object.values(CANDIDATES).find(entry => entry.version === version);
         const row = ledgerBefore.find(entry => entry.version === version);
