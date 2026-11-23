@@ -26,6 +26,8 @@ on:
           - idv-digilocker-aadhaar-acr
           # FairSwapTest only: fixed ACR request, signed DigiLocker ID; no signed response ACR required.
           - idv-digilocker-acr-request-only
+          # Test→Production protected signed DigiLocker parity, mandatory identity gate ON.
+          - idv-digilocker-prod-parity
           - account-security-email-v2
           - accessories-v1-foundation
           - accessories-v1-activation
@@ -468,7 +470,7 @@ jobs:
       listing_validity_ledger_sha: ${{ steps.listing_validity_proof.outputs.ledger_sha }}
       correction_ledger_sha: ${{ steps.correction_proof.outputs.ledger_sha }}
       mobile_catalogue_ledger_sha: ${{ steps.mobile_catalogue_proof.outputs.ledger_sha }}
-      idv_digilocker_ledger_sha: ${{ steps.idv_digilocker_proof.outputs.ledger_sha }}
+      idv_digilocker_ledger_sha: ${{ steps.idv_digilocker_proof.outputs.ledger_sha || steps.idv_prod_proof.outputs.ledger_sha }}
     if: ${{ needs.test.result == 'success' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -645,6 +647,18 @@ jobs:
           verifyIdvDigilockerRequestTestReceipt(JSON.parse(readFileSync('test-evidence/idv-digilocker-acr-request-only-fairswaptest.json', 'utf8')), process.env);
           NODE
 
+      - name: Verify DigiLocker Production-parity Test receipt
+        id: idv_prod_proof
+        if: ${{ inputs.candidate == 'idv-digilocker-prod-parity' }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {readFileSync,appendFileSync} from 'node:fs';
+          import {verifyIdvProdTestReceipt} from './scripts/release/idv-digilocker-production-release.mjs';
+          const r=JSON.parse(readFileSync('test-evidence/idv-digilocker-prod-parity-fairswaptest.json','utf8'));
+          const digest=verifyIdvProdTestReceipt(r,process.env);
+          appendFileSync(process.env.GITHUB_OUTPUT,`ledger_sha=${digest}\n`);
+          NODE
+
   production:
     # Moderation, Mobile Catalogue, Listing Validity and Taxonomy: automatic after verified Test. Accessories and Tablets: only a dedicated target=production
     # dispatch, whose Web and earlier-stage Test/Production evidence was already enforced by the verify job.
@@ -743,6 +757,38 @@ jobs:
 
       - name: Install pinned Supabase CLI
         run: bash scripts/release/install-inbox-cli.sh
+
+      - name: Verify DigiLocker Production Web and provider secret names before gate activation
+        if: ${{ inputs.candidate == 'idv-digilocker-prod-parity' }}
+        env:
+          WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
+          WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import {verifyIdvProductionWeb} from './scripts/release/idv-digilocker-production-release.mjs';
+          await verifyIdvProductionWeb(process.env);
+          NODE
+          supabase secrets list --project-ref kriuhwppxgxsyyrbjsau --output json > "$RUNNER_TEMP/idv-secret-names.json"
+          node --input-type=module - <<'NODE'
+          import {readFileSync} from 'node:fs';
+          import {verifyIdvProviderSecretNames} from './scripts/release/idv-digilocker-production-release.mjs';
+          verifyIdvProviderSecretNames(JSON.parse(readFileSync(process.env.RUNNER_TEMP+'/idv-secret-names.json','utf8')));
+          NODE
+
+      - name: Deploy signed DigiLocker Production Edge Functions before gate activation
+        if: ${{ inputs.candidate == 'idv-digilocker-prod-parity' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase functions deploy idv-digilocker-start --project-ref kriuhwppxgxsyyrbjsau
+          supabase functions deploy idv-digilocker-complete --project-ref kriuhwppxgxsyyrbjsau
+          supabase functions list --project-ref kriuhwppxgxsyyrbjsau --output json > "$RUNNER_TEMP/idv-prod-functions.json"
+          node --input-type=module - <<'NODE'
+          import {readFileSync} from 'node:fs';
+          import {verifyIdvDeployedFunctions} from './scripts/release/idv-digilocker-production-release.mjs';
+          verifyIdvDeployedFunctions(JSON.parse(readFileSync(process.env.RUNNER_TEMP+'/idv-prod-functions.json','utf8')));
+          NODE
 
       - name: Execute Production release and automated read-only verification
         env:
