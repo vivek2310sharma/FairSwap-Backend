@@ -47,7 +47,7 @@ async function signJwt(claims: Record<string, unknown>, o: { key?: CryptoKey; he
 const nowS = () => Math.floor(Date.now() / 1000);
 const goodClaims = async (state: string, over: Record<string, unknown> = {}) => ({
   iss: OIDC_ISSUER, aud: CLIENT, sub: "subject", exp: nowS() + 300, iat: nowS() - 5,
-  nonce: await deriveOidcNonce(KEY, state), digilockerid: DLID, ...over,
+  nonce: await deriveOidcNonce(KEY, state), digilockerid: DLID, acr: "aadhaar", ...over,
 });
 
 function makeWorld() {
@@ -69,7 +69,7 @@ function makeWorld() {
     if (name === "server_idv_dl_fail_attempt") return { data: { success: true }, error: null };
     if (name === "server_idv_dl_complete") return { data: { success: false, error: "LEGACY_LINK_DISABLED" }, error: null };
     if (name === "server_idv_dl_complete_v2") {
-      if (a.p_evidence_method !== "oidc_v2_signed_id_token") return { data: { success: false, error: "INVALID_IDENTITY_EVIDENCE" }, error: null };
+      if (a.p_evidence_method !== OIDC_EVIDENCE_METHOD) return { data: { success: false, error: "INVALID_IDENTITY_EVIDENCE" }, error: null };
       if (blocked.has(a.p_id_fingerprint)) return { data: { success: false, error: "VERIFICATION_UNAVAILABLE" }, error: null };
       const b = bindings.find((x) => x.fp === a.p_id_fingerprint);
       if (b && b.user !== a.p_user_id) return { data: { success: false, error: "IDENTITY_ALREADY_LINKED" }, error: null };
@@ -84,7 +84,7 @@ function makeWorld() {
   return { deps, calls, verified, bindings, blocked };
 }
 
-function provider(o: { idToken?: string | null; id?: string | null; tokenStatus?: number; jwks?: unknown; timeout?: boolean } = {}) {
+function provider(o: { responseAcr?: string; idToken?: string | null; id?: string | null; tokenStatus?: number; jwks?: unknown; timeout?: boolean } = {}) {
   const log: { url: string; body?: string }[] = [];
   const f = vi.fn(async (url: string, init?: RequestInit) => {
     log.push({ url, body: init?.body as string });
@@ -93,6 +93,7 @@ function provider(o: { idToken?: string | null; id?: string | null; tokenStatus?
       const body: Record<string, unknown> = { access_token: "tok-secret", token_type: "Bearer" };
       if (o.id !== null) body.digilockerid = o.id ?? DLID;
       if (o.idToken !== null) body.id_token = o.idToken;
+      if (o.responseAcr !== undefined) { body.acr = o.responseAcr; body.eaadhaar = "Y"; body.masked_aadhaar = "XXXXXXXX1234"; }
       return new Response(JSON.stringify(body), { status: o.tokenStatus ?? 200 });
     }
     if (url === OIDC_JWKS_URL) return new Response(JSON.stringify(o.jwks ?? { keys: [{ ...pubJwk, kid: "k1", use: "sig" }] }), { status: 200 });
@@ -133,12 +134,13 @@ describe("DigiLocker OIDC v2 verification (only badge-issuing flow)", () => {
     expect(Object.keys(readDigiLockerRuntime(env())!).sort()).toEqual(["client", "currentFpKey", "environment", "legacyFpKeys", "stateKey"]);
   });
 
-  it("start requests openid, nonce and PKCE S256 on the registered redirect, and no acr", async () => {
+  it("start requests openid, nonce and PKCE S256 on the registered redirect, and the fixed acr=aadhaar", async () => {
     const w = makeWorld();
     const { body, state } = await begin(w);
     const u = new URL(body.redirectUrl);
     expect(u.origin + u.pathname).toBe(`${DIGILOCKER_HOST}/public/oauth2/1/authorize`);
-    expect(u.searchParams.has("acr")).toBe(false);
+    expect(u.searchParams.getAll("acr")).toEqual(["aadhaar"]);
+    expect(u.searchParams.get("response_type")).toBe("code");
     expect(u.searchParams.get("scope")).toBe("openid");
     expect(u.searchParams.get("nonce")).toBe(await deriveOidcNonce(KEY, state));
     expect(u.searchParams.get("code_challenge")).toBe(await pkceChallenge(await derivePkceVerifier(KEY, state)));
@@ -153,7 +155,7 @@ describe("DigiLocker OIDC v2 verification (only badge-issuing flow)", () => {
     expect(new URL(body.redirectUrl).searchParams.get("redirect_uri")).toBe(PROD_REDIRECT);
   });
 
-  it("positive: signed token without any acr binds via the v2 RPC with OIDC provenance and issues the badge", async () => {
+  it("positive: signed token with acr=aadhaar binds via the v2 RPC with OIDC provenance and issues the badge", async () => {
     const w = makeWorld();
     const { state } = await begin(w);
     const p = provider({ idToken: await signJwt(await goodClaims(state)) });
@@ -236,6 +238,24 @@ describe("DigiLocker OIDC v2 verification (only badge-issuing flow)", () => {
     ["malformed digilockerid in signed token", async (s) => ({ idToken: await signJwt(await goodClaims(s, { digilockerid: "short" })) }), "ID_TOKEN_INVALID"],
     ["signed and token-response ids disagree", async (s) => ({ idToken: await signJwt(await goodClaims(s)), extra: { id: "223e4567-e89b-12d3-a456-426655440001" } }), "ID_TOKEN_INVALID"],
     ["malformed token-response id", async (s) => ({ idToken: await signJwt(await goodClaims(s)), extra: { id: "short" } }), "INVALID_PROVIDER_RESPONSE"],
+    ["acr missing", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: undefined })) }), "ID_TOKEN_INVALID"],
+    ["acr null", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: null })) }), "ID_TOKEN_INVALID"],
+    ["acr empty", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: "" })) }), "ID_TOKEN_INVALID"],
+    ["acr wrong value", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: "pan" })) }), "ID_TOKEN_INVALID"],
+    ["acr different case", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: "AADHAAR" })) }), "ID_TOKEN_INVALID"],
+    ["acr padded", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: "aadhaar " })) }), "ID_TOKEN_INVALID"],
+    ["acr array", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: ["aadhaar"] })) }), "ID_TOKEN_INVALID"],
+    ["acr object", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: { v: "aadhaar" } })) }), "ID_TOKEN_INVALID"],
+    ["acr number", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: 1 })) }), "ID_TOKEN_INVALID"],
+    ["eaadhaar=Y and masked_aadhaar in signed token are not a substitute", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: undefined, eaadhaar: "Y", masked_aadhaar: "XXXXXXXX1234" })) }), "ID_TOKEN_INVALID"],
+    ["valid signed profile but no signed assurance; unsigned response claims acr/eaadhaar", async (s) => ({ idToken: await signJwt(await goodClaims(s, { acr: undefined })), extra: { responseAcr: "aadhaar" } }), "ID_TOKEN_INVALID"],
+    ["forged acr: correct acr but signed by an untrusted key", async (s) => ({ idToken: await signJwt(await goodClaims(s), { key: otherPriv }) }), "ID_TOKEN_INVALID"],
+    ["forged acr: payload swapped after signing", async (s) => {
+      const t = (await signJwt(await goodClaims(s, { acr: undefined }))).split(".");
+      return { idToken: `${t[0]}.${b64u(JSON.stringify(await goodClaims(s)))}.${t[2]}` };
+    }, "ID_TOKEN_INVALID"],
+    ["valid acr but expired", async (s) => ({ idToken: await signJwt(await goodClaims(s, { exp: nowS() - 600, iat: nowS() - 900 })) }), "ID_TOKEN_INVALID"],
+    ["valid acr but wrong nonce", async (s) => ({ idToken: await signJwt(await goodClaims(s, { nonce: "x" })) }), "ID_TOKEN_INVALID"],
     ["missing id_token", async () => ({ idToken: null }), "ID_TOKEN_INVALID"],
     ["not a JWT", async () => ({ idToken: "abc.def" }), "ID_TOKEN_INVALID"],
   ];

@@ -42,7 +42,7 @@ const b64u = (b: Uint8Array | string) => Buffer.from(typeof b === "string" ? Buf
 let currentState = "";
 async function idTokenFor(id: string | undefined, state = currentState) {
   const now = Math.floor(Date.now() / 1000);
-  const claims: Record<string, unknown> = { iss: OIDC_ISSUER, aud: "stage-client", sub: "s", iat: now - 5, exp: now + 300, nonce: await deriveOidcNonce(KEY, state) };
+  const claims: Record<string, unknown> = { iss: OIDC_ISSUER, aud: "stage-client", sub: "s", iat: now - 5, exp: now + 300, nonce: await deriveOidcNonce(KEY, state), acr: "aadhaar" };
   if (id !== undefined) claims.digilockerid = id;
   const h = b64u(JSON.stringify({ alg: "RS256", kid: "k1" })); const p = b64u(JSON.stringify(claims));
   return `${h}.${p}.${b64u(new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", priv, Buffer.from(`${h}.${p}`))))}`;
@@ -129,7 +129,7 @@ const complete = (w: ReturnType<typeof makeWorld>, f: typeof fetch, state: strin
 };
 
 describe("DigiLocker direct verification", () => {
-  it("first-time verification: PKCE S256, exact redirect, openid + nonce only (no acr/document scopes), then verified", async () => {
+  it("first-time verification: PKCE S256, exact redirect, openid + nonce + fixed acr=aadhaar (no document scopes), then verified", async () => {
     const w = makeWorld();
     const { res, body, state } = await startFlow(w);
     expect(res.status).toBe(200);
@@ -141,7 +141,8 @@ describe("DigiLocker direct verification", () => {
     expect(u.searchParams.get("code_challenge")).toBe(await pkceChallenge(await derivePkceVerifier(KEY, state)));
     expect(u.searchParams.get("scope")).toBe("openid");
     expect(u.searchParams.get("nonce")).toBe(await deriveOidcNonce(KEY, state));
-    for (const p of ["acr", "req_doctype", "amr", "dl_flow"]) expect(u.searchParams.has(p)).toBe(false);
+    expect(u.searchParams.getAll("acr")).toEqual(["aadhaar"]);
+    for (const p of ["req_doctype", "amr", "dl_flow"]) expect(u.searchParams.has(p)).toBe(false);
     expect(state).toMatch(/^[0-9a-f]{64}$/);
 
     const p = providerFetch();
@@ -157,12 +158,13 @@ describe("DigiLocker direct verification", () => {
     expect(p.log.some((l) => l.url.endsWith("/oauth2/1/user") || l.url.endsWith("/oauth2/1/token"))).toBe(false);
   });
 
-  it("obsolete legacy knobs cannot re-enable unsigned linking or add ACR/AMR", async () => {
+  it("obsolete legacy knobs cannot re-enable unsigned linking, change ACR or add AMR", async () => {
     const w = makeWorld();
     const on = await startFlow(w, "user-1", stageEnv({ DIGILOCKER_REQUEST_OPENID_SCOPE: "false", DIGILOCKER_USERDETAILS_APPROVED: "true" }));
     const u = new URL(on.body.redirectUrl);
     expect(u.searchParams.get("scope")).toBe("openid");
-    expect(u.searchParams.has("acr") || u.searchParams.has("amr")).toBe(false);
+    expect(u.searchParams.getAll("acr")).toEqual(["aadhaar"]);
+    expect(u.searchParams.has("amr")).toBe(false);
   });
 
   it("already verified: returns status without redirecting to DigiLocker", async () => {
@@ -440,6 +442,47 @@ describe("migration 20261122100000 (mandatory gate requires signed DigiLocker) s
     const runner = readFileSync("tests/idv-pg17/run-disposable.mjs", "utf8");
     const order = ["assertions-digilocker-v2.sql", "20261122100000_idv_digilocker_required_gate.sql", "assertions-digilocker-required.sql"]
       .map(f => runner.indexOf(f));
+    expect(order.every(i => i > 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+});
+
+describe("migration 20261123120000 (Aadhaar ACR evidence) static guarantees", () => {
+  const f = "supabase/forward-migrations/idv/20261123120000_idv_digilocker_aadhaar_acr.sql";
+  const sql = readFileSync(f, "utf8");
+  const v2 = readFileSync("supabase/forward-migrations/idv/20261119200000_idv_digilocker_oidc_v2_badge.sql", "utf8");
+  const fnBody = (t: string, name: string) => t.match(new RegExp(`CREATE OR REPLACE FUNCTION ${name.replace(".", "\\.")}\\([\\s\\S]*?\n\\$\\$;`))![0];
+  it("is forward-only, additive in effect, bounded, and never touches the gate switch or stores claims", () => {
+    expect(sql.startsWith("-- Migration: 20261123120000_idv_digilocker_aadhaar_acr.sql")).toBe(true);
+    expect(sql).toMatch(/begin;\s*set local lock_timeout = '5s';\s*set local statement_timeout = '30s';/);
+    expect(sql).not.toMatch(/DROP TABLE|DROP COLUMN|TRUNCATE|DROP FUNCTION|DELETE FROM app_security\.idv_digilocker_bindings\s+WHERE\s+evidence/i);
+    expect(sql).not.toMatch(/SET setting_value|identity_verification_required'\s*,\s*'true'|app_system_settings/i);
+    expect(sql).not.toMatch(/UPDATE app_security\.idv_digilocker_bindings\s+SET evidence_method/i); // old rows are never upgraded
+    expect(sql).not.toMatch(/\b(acr|aadhaar)\s+(text|varchar)|masked_aadhaar|eaadhaar/i);
+    expect(sql).toMatch(/RAISE EXCEPTION 'IDV_DIGILOCKER_ACR_PREREQUISITE_MISSING'/);
+  });
+  it("badge predicate and completion accept only the Aadhaar-assured evidence label", () => {
+    expect(fnBody(sql, "app_security.has_digilocker_badge")).toMatch(/b\.evidence_method = 'oidc_v2_signed_aadhaar_acr'/);
+    expect(fnBody(sql, "app_security.has_digilocker_badge")).not.toMatch(/oidc_v2_signed_id_token|legacy_account_link/);
+    const c = fnBody(sql, "app_security.impl_idv_dl_complete_v2");
+    expect(c).toMatch(/IF p_evidence_method IS DISTINCT FROM 'oidc_v2_signed_aadhaar_acr' THEN/);
+    expect(c).not.toMatch(/oidc_v2_signed_id_token/);
+    // Only the evidence literal differs from the previous body: all binding/fraud/revocation/audit logic is unchanged.
+    expect(c).toBe(fnBody(v2, "app_security.impl_idv_dl_complete_v2").split("'oidc_v2_signed_id_token'").join("'oidc_v2_signed_aadhaar_acr'"));
+    expect(fnBody(sql, "app_security.has_digilocker_badge")).toBe(fnBody(v2, "app_security.has_digilocker_badge").split("'oidc_v2_signed_id_token'").join("'oidc_v2_signed_aadhaar_acr'"));
+  });
+  it("keeps historical evidence values valid in the constraint and hardens every function", () => {
+    expect(sql).toMatch(/evidence_method IN \('legacy_account_link', 'oidc_v2_signed_id_token', 'oidc_v2_signed_aadhaar_acr'\)/);
+    const fns = sql.match(/CREATE OR REPLACE FUNCTION[\s\S]*?AS \$\$/g) ?? [];
+    expect(fns.length).toBe(2);
+    for (const fn of fns) { expect(fn).toMatch(/SECURITY DEFINER/); expect(fn).toMatch(/SET search_path = ''/); }
+    expect(sql).toMatch(/REVOKE ALL ON FUNCTION app_security\.has_digilocker_badge\(uuid\) FROM PUBLIC, anon, authenticated;/);
+    expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.server_idv_dl_complete_v2\([^)]*\) FROM PUBLIC, anon, authenticated;/);
+    expect(sql).not.toMatch(/GRANT [^;]* TO [^;]*(anon|authenticated|PUBLIC)/i);
+  });
+  it("is wired into the disposable PG17 suite after the required-gate assertions", () => {
+    const runner = readFileSync("tests/idv-pg17/run-disposable.mjs", "utf8");
+    const order = ["assertions-digilocker-required.sql", "20261123120000_idv_digilocker_aadhaar_acr.sql", "assertions-digilocker-aadhaar-acr.sql"].map(x => runner.indexOf(x));
     expect(order.every(i => i > 0)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
