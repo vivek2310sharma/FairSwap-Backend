@@ -5231,8 +5231,16 @@ test('canonical chooser Test receipt records its stage, ledger digest and empty 
   assert.throws(()=>validateReceipt(p,c,files({...receipt,...override})),/RECEIPT_CONTENT_INVALID/);
 });
 
-test('canonical chooser positively verifies the real existing Test lifecycle without Production authorization',async()=>{
- assert(PGlite,'Existing pinned PGlite test dependency is required');
+test('canonical chooser positively verifies the real existing Test lifecycle without Production authorization',
+ {skip:PGlite?false:'Pinned PGlite unavailable in auxiliary CI job'},async()=>{
  const {verifyExistingTestLifecycle}=await import('../canonical-family-chooser/test-lifecycle.mjs');
  await verifyExistingTestLifecycle(PGlite,getCandidate('canonical-family-chooser-v1').path);
+});
+
+test('canonical family receipt recovery guards pinned Test and Production history',()=>{
+ const source=readFileSync('scripts/release/reusable-supabase-release.mjs','utf8');
+ assert.match(source,/FAMILY_CHOOSER_RECORDED_LEDGER_MISMATCH/);
+ assert.match(source,/FAMILY_CHOOSER_TEST_LEDGER_MISMATCH/);
+ assert.match(source,/canonicalFamilyChooser \? familyTestLedger/);
+ assert.match(source,/receipts\.test_catalogue_run_id\?\.ledgerStatementsSha256/);
 });

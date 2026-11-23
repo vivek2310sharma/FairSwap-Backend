@@ -907,8 +907,12 @@ export async function releaseReusable({
     target: environment === 'FairSwapProd' ? 'production' : 'test',
     inputs: {test_catalogue_run_id: context.TEST_CATALOGUE_RUN_ID}, context,
   }) : assertStageInputs(candidate, environment, context);
-  if (candidate.canonicalFamilyChooser && environment === 'FairSwapProd')
-    await requireStageEvidence(stagePlan.priorRuns, context, fetcher);
+  let familyTestLedger;
+  if (candidate.canonicalFamilyChooser && environment === 'FairSwapProd') {
+    const receipts = await requireStageEvidence(stagePlan.priorRuns, context, fetcher);
+    familyTestLedger = receipts.test_catalogue_run_id?.ledgerStatementsSha256;
+    if (!SHA256.test(familyTestLedger ?? '')) throw new Error('FAMILY_CHOOSER_TEST_LEDGER_EVIDENCE_REQUIRED');
+  }
 
   let catalogueWebEvidence;
   if (['tablets-v2-catalogue','wearables-v11-catalogue'].includes(candidate.id) && environment === 'FairSwapProd') {
@@ -1074,8 +1078,20 @@ export async function releaseReusable({
       idvInstalledAttestation = true;
     } else if (pinned) {
       // A pre-existing entry has no trusted receipt tying it to the reviewed source bytes.
-      if (isAlreadyApplied) throw new Error(`REUSABLE_RELEASE_${label}_ALREADY_RECORDED`);
+      if (isAlreadyApplied && !candidate.canonicalFamilyChooser) throw new Error(`REUSABLE_RELEASE_${label}_ALREADY_RECORDED`);
       ledgerBefore = readLedger();
+      if (isAlreadyApplied) {
+        // Receipt recovery is read-only: insist on the pinned CLI ledger row and
+        // independently verified Test-to-Production statements digest.
+        const installed = ledgerBefore.find(row => row.version === candidate.version);
+        if (!installed?.hasStatements || installed.name !== candidate.filename.slice(15, -4) ||
+            !SHA256.test(installed.statementsSha256 ?? '') || ledgerBefore.length !== beforeRemote.size ||
+            ledgerBefore.some(row => !beforeRemote.has(row.version)))
+          throw new Error('FAMILY_CHOOSER_RECORDED_LEDGER_MISMATCH');
+        ledgerStatementsSha256 = installed.statementsSha256;
+        if (environment === 'FairSwapProd' && ledgerStatementsSha256 !== familyTestLedger)
+          throw new Error('FAMILY_CHOOSER_TEST_LEDGER_MISMATCH');
+      } else {
       if (wearables || mobileCatalogue) assertMobilePhonesProvenance(environment, ledgerBefore);
       if (wearables) {
         outOfOrder = assertLedgerTail(candidate, ledgerBefore, environment);
@@ -1137,6 +1153,7 @@ export async function releaseReusable({
       if (ledgerBefore.length !== beforeRemote.size || ledgerBefore.some(row =>
         !beforeRemote.has(row.version) || (row.version >= candidate.version && !outOfOrder.ahead.includes(row.version)))) {
         throw new Error(`REUSABLE_RELEASE_${label}_LEDGER_MISMATCH`);
+      }
       }
     }
 
@@ -1261,7 +1278,7 @@ export async function releaseReusable({
         if (idvAcr && ledgerStatementsSha256 !== IDV_DIGILOCKER_ACR_LEDGER.statementsSha256) {
           throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_ACR_LEDGER_MISMATCH');
         }
-        const testLedger = idv ? idvTestLedger : taxonomy ? taxonomyTestLedger : listingValidity ? validityTestLedger : mobileCatalogue ? mobileTestLedger : context.TABLETS_CANDIDATE_LEDGER_SHA;
+        const testLedger = candidate.canonicalFamilyChooser ? familyTestLedger : idv ? idvTestLedger : taxonomy ? taxonomyTestLedger : listingValidity ? validityTestLedger : mobileCatalogue ? mobileTestLedger : context.TABLETS_CANDIDATE_LEDGER_SHA;
         if (environment === 'FairSwapProd' && !v3IdentityPrerequisite && ledgerStatementsSha256 !== (v3Production ? testV3Ledger : testLedger)) {
           throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_MISMATCH`);
         }
