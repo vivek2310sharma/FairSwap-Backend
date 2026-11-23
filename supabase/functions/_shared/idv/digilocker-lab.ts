@@ -1,9 +1,10 @@
 // FairSwap DigiLocker IDENTITY LAB (flow:"lab"). STAGE-ONLY, FairSwapTest only. Not identity verification.
 // A SECOND, separate Authpartner: its own client id/secret/redirect URI, state key, state namespace, PKCE verifier and
-// nonce. It tells an allowlisted tester which token fields/claims the provider sends and whether signed acr=aadhaar is
-// proven. It never links an identity, issues a badge, persists a token or claim, or returns any value: the response
-// is a fixed, strict, value-free schema (names, types, verdict enums). Tokens and personal data are removed HERE,
-// before anything reaches the Web app. Reuses the diagnostic's token exchange and ID-token validation (no new crypto).
+// nonce. Only the FairSwapTest allowlisted tester can inspect a one-time, signed-OIDC
+// provider response. This Lab never links an identity, issues a badge or persists data.
+// Signed, valid responses may include a short-lived raw inspection payload; Web seals it
+// to the tester's user/session, deletes it on first read and hides it until reveal.
+// Reuses the diagnostic's token exchange and ID-token validation (no new crypto).
 import { z } from "zod";
 import { DIGILOCKER_ID_PATTERN, DigiLockerError, generateState, revokeToken, sha256Hex } from "./digilocker-client.ts";
 import { defaultDeps, type IdvDeps } from "./digilocker-deps.ts";
@@ -51,6 +52,16 @@ export const labResultSchema = z.object({
   presence: z.object({
     digilockerid: presence, eaadhaar: presence, masked_aadhaar: presence, name: presence, dob: presence, gender: presence,
   }).strict(),
+  // Only for a signature-valid Test-only round trip, never on errors or failed identity checks.
+  // Response is bounded by exchangeDiagCode's 64 KiB cap; Web enforces a smaller encrypted-cookie budget.
+  raw: z.object({
+    tokenResponse: z.object({
+      httpStatus: z.number().int().min(200).max(299),
+      contentType: z.string().max(200).nullable(),
+      json: z.unknown(),
+      text: z.string().max(4000).nullable(),
+    }).strict(),
+  }).strict().optional(),
 }).strict();
 export type LabResult = z.infer<typeof labResultSchema>;
 
@@ -109,7 +120,7 @@ export function readLabRuntime(env: Record<string, string | undefined>): LabStat
   };
 }
 
-// ---------------- Sanitizing (values never leave this function's inputs) ----------------
+// ---------------- Value-free summary plus guarded Test-only inspection ----------------
 const NAME = /^[a-z][a-z0-9_]{0,39}$/;
 type ValueType = z.infer<typeof valueType>;
 const typeOf = (v: unknown): ValueType =>
@@ -163,9 +174,9 @@ const FAILURE_CODE: Record<string, LabErrorCode> = {
 };
 const triOf = (ok: boolean): z.infer<typeof tri> => (ok ? "verified" : "failed");
 
-/** Pure: builds the value-free result from the exchange and the (already evaluated) ID token. Exported for tests. */
+/** Pure: builds the summary and optional signed-response inspection; never treats login as Aadhaar assurance. */
 export function buildLabResult(
-  ex: { response: { httpStatus: number; json: unknown }; idToken: string | null; failure: string | null; oversize?: true },
+  ex: { response: { httpStatus: number; json: unknown; contentType?: string | null; text?: string | null }; idToken: string | null; failure: string | null; oversize?: true },
   verdict: Awaited<ReturnType<typeof evaluateIdToken>> | null,
 ): LabResult {
   const status = ex.response.httpStatus;
@@ -180,10 +191,18 @@ export function buildLabResult(
   };
   const outcome = ex.failure || status < 200 || status >= 300 ? "FAILED" : verdict ? verdict.outcome : "FAILED";
   const failed = outcome === "FAILED";
+  // Authorize raw inspection only after cryptographic, audience, freshness, subject and nonce checks.
+  // ACR may be absent; that remains UNCONFIRMED, never an identity-verification badge.
+  const exposeValues = !ex.failure && status >= 200 && status < 300 && !!dc &&
+    dc.signature === "verified" && dc.issuer === "verified" && dc.audience &&
+    dc.expiry && dc.issuedAt && dc.subject && dc.nonce === "match";
   return {
     outcome,
     errorCode: failed ? FAILURE_CODE[ex.failure ?? verdict?.code ?? ""] ?? "TOKEN_EXCHANGE_FAILED" : null,
     httpStatusBucket: bucket(status),
+    ...(exposeValues ? { raw: { tokenResponse: {
+      httpStatus: status, contentType: ex.response.contentType ?? null, json: ex.response.json, text: ex.response.text ?? null,
+    } } } : {}),
     tokenResponseFields: names(tokenJson),
     idTokenClaims: names(claims),
     checks,
