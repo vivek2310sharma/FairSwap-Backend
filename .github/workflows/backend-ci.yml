@@ -70,6 +70,12 @@ jobs:
         timeout-minutes: 2
         run: corepack pnpm typecheck
 
+      - name: DigiLocker OIDC and Lab security regressions
+        timeout-minutes: 4
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" CI=true TMPDIR="$RUNNER_TEMP" \
+            corepack pnpm test:idv
+
       - name: Install isolated Ratings V1 PGlite dependencies
         timeout-minutes: 3
         run: npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund

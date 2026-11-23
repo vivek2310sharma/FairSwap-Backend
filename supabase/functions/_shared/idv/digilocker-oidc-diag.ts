@@ -46,6 +46,9 @@ export interface DiagRuntime {
   /** Owner attests, from provider documentation, that acr=aadhaar in the ID token means Aadhaar-verified assurance.
    *  Default false: an otherwise valid acr=aadhaar token is UNCONFIRMED, never VERIFIED. */
   acrSemanticsConfirmed: boolean;
+  /** Derivation domain for PKCE verifier and nonce. Omitted = "diag" (unchanged). The Lab uses "lab", so the two flows can
+   *  never derive each other's verifier or nonce even if a state were replayed across them. */
+  domain?: "diag" | "lab";
 }
 
 function onDigiLockerHost(value: string): boolean {
@@ -108,6 +111,11 @@ async function hmacB64(key: string, message: string): Promise<string> {
 /** Domain-separated from v1 (fs:dl:pkce:v1), so a v1 state can never derive a diagnostic verifier or vice versa. */
 export const deriveDiagPkceVerifier = (key: string, state: string) => hmacB64(key, `fs:dl:diag:pkce:v1:${state}`);
 export const deriveDiagNonce = (key: string, state: string) => hmacB64(key, `fs:dl:diag:nonce:v1:${state}`);
+/** Same derivations under the Lab domain (fs:dl:lab:*), separate from both v1 and the diagnostic. */
+export const deriveLabPkceVerifier = (key: string, state: string) => hmacB64(key, `fs:dl:lab:pkce:v1:${state}`);
+export const deriveLabNonce = (key: string, state: string) => hmacB64(key, `fs:dl:lab:nonce:v1:${state}`);
+const pkceVerifierFor = (rt: DiagRuntime, state: string) =>
+  rt.domain === "lab" ? deriveLabPkceVerifier(rt.stateKey, state) : deriveDiagPkceVerifier(rt.stateKey, state);
 
 export async function buildDiagAuthorizeUrl(rt: DiagRuntime, state: string): Promise<string> {
   const u = new URL(`${DIGILOCKER_HOST}/public/oauth2/${rt.authorizeVersion}/authorize`);
@@ -115,12 +123,12 @@ export async function buildDiagAuthorizeUrl(rt: DiagRuntime, state: string): Pro
   u.searchParams.set("client_id", rt.clientId);
   u.searchParams.set("redirect_uri", rt.redirectUri);
   u.searchParams.set("state", state);
-  u.searchParams.set("code_challenge", await pkceChallenge(await deriveDiagPkceVerifier(rt.stateKey, state)));
+  u.searchParams.set("code_challenge", await pkceChallenge(await pkceVerifierFor(rt, state)));
   u.searchParams.set("code_challenge_method", "S256");
   u.searchParams.set("scope", "openid");
   u.searchParams.set("acr", DIAG_ACR);
   // dl_flow is documented only as "signup"; omitting it is the documented sign-in flow. Never send an undocumented value.
-  u.searchParams.set("nonce", await deriveDiagNonce(rt.stateKey, state));
+  u.searchParams.set("nonce", await (rt.domain === "lab" ? deriveLabNonce(rt.stateKey, state) : deriveDiagNonce(rt.stateKey, state)));
   u.searchParams.set("purpose", DIGILOCKER_PURPOSE);
   u.searchParams.set("service_name", DIGILOCKER_SERVICE_NAME);
   return u.toString();
@@ -154,6 +162,8 @@ export interface DiagExchange {
   response: DiagTokenResponse;
   idToken: string | null;
   accessToken: string | null;
+  /** True only when the provider body exceeded the size cap (key absent otherwise). The Lab reports it as RESPONSE_TOO_LARGE. */
+  oversize?: true;
   /** Set when the exchange did not yield a usable ID token. */
   failure: "PROVIDER_UNAVAILABLE" | "PROVIDER_REJECTED" | "INVALID_PROVIDER_RESPONSE" | null;
 }
@@ -167,7 +177,7 @@ export async function exchangeDiagCode(rt: DiagRuntime, code: string, state: str
     client_id: rt.clientId,
     client_secret: rt.clientSecret,
     redirect_uri: rt.redirectUri,
-    code_verifier: await deriveDiagPkceVerifier(rt.stateKey, state),
+    code_verifier: await pkceVerifierFor(rt, state),
   });
   const res = await call(fetchImpl, `${DIGILOCKER_HOST}${DIAG_TOKEN_PATH}`, {
     method: "POST",
@@ -175,7 +185,12 @@ export async function exchangeDiagCode(rt: DiagRuntime, code: string, state: str
     body: body.toString(),
   });
   let text = "";
-  try { text = (await res.text()).slice(0, MAX_TOKEN_BODY_CHARS); } catch { /* empty body */ }
+  let oversize = false;
+  try {
+    const full = await res.text();
+    oversize = full.length > MAX_TOKEN_BODY_CHARS;
+    text = full.slice(0, MAX_TOKEN_BODY_CHARS);
+  } catch { /* empty body */ }
   let json: unknown = null;
   let parsed = false;
   try { json = JSON.parse(text); parsed = true; } catch { /* not JSON */ }
@@ -191,7 +206,7 @@ export async function exchangeDiagCode(rt: DiagRuntime, code: string, state: str
   const accessToken = typeof at === "string" && at.length > 0 ? at : null;
   const usable = typeof idToken === "string" && idToken.length > 0 && idToken.length <= 16384;
   const failure = res.status >= 500 ? "PROVIDER_UNAVAILABLE" : !res.ok ? "PROVIDER_REJECTED" : !obj || !usable ? "INVALID_PROVIDER_RESPONSE" : null;
-  return { response, idToken: usable ? (idToken as string) : null, accessToken, failure };
+  return { response, idToken: usable ? (idToken as string) : null, accessToken, ...(oversize ? { oversize: true as const } : {}), failure };
 }
 
 // ---- ID token validation. Every output is a fixed enum/boolean; no claim value other than these is ever returned. ----
