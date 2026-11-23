@@ -87,8 +87,9 @@ export function readLabRuntime(env: Record<string, string | undefined>): LabStat
   const testers = (env["DIGILOCKER_LAB_TESTER_IDS"] ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   if (testers.length === 0 || testers.length > MAX_TESTERS || !testers.every((t) => UUID.test(t))) return bad;
 
-  const av = (env["DIGILOCKER_LAB_AUTHORIZE_VERSION"] ?? "1").trim();
-  if (av !== "1" && av !== "2") return bad;
+  // The DEV Lab always uses the documented Stage OIDC authorization endpoint.
+  // Ignore the earlier v2-override experiment: /oauth2/2/authorize is not the
+  // endpoint published for the OpenID authorization-code flow.
 
   // Independence from the primary Authpartner and the existing diagnostic: nothing may be shared.
   const same = (name: string, v: string) => (env[name] ?? "").trim() === v && v !== "";
@@ -100,7 +101,7 @@ export function readLabRuntime(env: Record<string, string | undefined>): LabStat
     kind: "ready",
     lab: {
       rt: {
-        clientId, clientSecret, redirectUri, stateKey, authorizeVersion: av, domain: "lab",
+        clientId, clientSecret, redirectUri, stateKey, authorizeVersion: "1", domain: "lab",
         testerIds: new Set(testers), jwksUrl: DIGILOCKER_OIDC_JWKS_URL, expectedIssuer: DIGILOCKER_OIDC_ISSUER,
         acrSemanticsConfirmed: (env["DIGILOCKER_LAB_ACR_SEMANTICS_CONFIRMED"] ?? "false").toLowerCase() === "true",
       },
