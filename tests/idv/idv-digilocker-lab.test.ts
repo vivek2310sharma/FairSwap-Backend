@@ -186,7 +186,7 @@ describe("Lab access control and contract", () => {
     }
     expect(w.calls).toEqual(["server_idv_dl_diag_start"]); expect(p.log).toEqual([]);
   });
-  it("start: Lab credentials, exact Lab redirect, openid + acr=aadhaar + PKCE S256, Lab-domain PKCE and nonce", async () => {
+  it("start: Lab credentials, exact Lab redirect, avs + acr=aadhaar + PKCE S256, Lab-domain PKCE and nonce", async () => {
     const w = makeWorld();
     const { res, body, state } = await start(w);
     expect(res.status).toBe(200);
@@ -197,7 +197,7 @@ describe("Lab access control and contract", () => {
     expect(u.searchParams.get("client_id")).toBe(CLIENT);
     expect(u.searchParams.get("redirect_uri")).toBe(LAB_REDIRECT);
     expect(u.searchParams.get("response_type")).toBe("code");
-    expect(u.searchParams.get("scope")).toBe("openid");
+    expect(u.searchParams.get("scope")).toBe("avs");
     expect(u.searchParams.get("acr")).toBe("aadhaar");
     expect(u.searchParams.get("code_challenge_method")).toBe("S256");
     expect(u.searchParams.get("code_challenge")).toBe(await pkceChallenge(await deriveLabPkceVerifier(LAB_KEY, state)));

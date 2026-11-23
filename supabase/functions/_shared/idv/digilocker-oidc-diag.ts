@@ -125,7 +125,9 @@ export async function buildDiagAuthorizeUrl(rt: DiagRuntime, state: string): Pro
   u.searchParams.set("state", state);
   u.searchParams.set("code_challenge", await pkceChallenge(await pkceVerifierFor(rt, state)));
   u.searchParams.set("code_challenge_method", "S256");
-  u.searchParams.set("scope", "openid");
+  // This DEV Authpartner requests AVS; the existing diagnostic still uses openid.
+  // DigiLocker rejects the Lab with invalid_scope_avs unless scope is avs or avs_parent.
+  u.searchParams.set("scope", rt.domain === "lab" ? "avs" : "openid");
   u.searchParams.set("acr", DIAG_ACR);
   // dl_flow is documented only as "signup"; omitting it is the documented sign-in flow. Never send an undocumented value.
   u.searchParams.set("nonce", await (rt.domain === "lab" ? deriveLabNonce(rt.stateKey, state) : deriveDiagNonce(rt.stateKey, state)));
