@@ -3482,6 +3482,7 @@ test('IDV DigiLocker V1 is pinned to the reviewed migration and reaches Producti
   assert.ok(yaml.indexOf('sha256sum --check --status') < yaml.indexOf('Verify IDV DigiLocker V1 Test postflight receipt'));
   assert.ok(yaml.includes("inputs.candidate != 'idv-digilocker-v1' || needs.verify_test.outputs.idv_digilocker_ledger_sha != ''"));
   assert.ok(yaml.includes("inputs.candidate != 'idv-digilocker-oidc-v2' || needs.verify_test.outputs.idv_digilocker_ledger_sha != ''"));
+  assert.ok(yaml.includes("inputs.candidate != 'idv-digilocker-prod-parity' || needs.verify_test.outputs.idv_digilocker_ledger_sha != ''"));
   assert.ok(yaml.includes("inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'v3-provider-neutral-activation' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'idv-digilocker-oidc-v2'"));
   assert.ok(yaml.includes('IDV_DIGILOCKER_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.idv_digilocker_ledger_sha }}'));
   assert.ok(yaml.includes("test-evidence/${process.env.CANDIDATE}-fairswaptest.json"));
@@ -3639,6 +3640,10 @@ test('IDV DigiLocker V1 and V2: Production starts only after a verified Test rec
     assert.equal(productionJobRuns(yaml, {candidate: id, target: 'production', autoPromote: true, test: 'skipped', verifyTest: 'skipped'}), false);
     assert.equal(productionJobRuns(yaml, {candidate: id, target: 'adopt', autoPromote: true, test: 'skipped', verifyTest: 'skipped'}), false);
   }
+  // Production parity cannot be manually dispatched; the same-run Test receipt digest is mandatory.
+  assert.equal(productionJobRuns(yaml,{candidate:'idv-digilocker-prod-parity',target:'test',autoPromote:true,outputs:digest}),true);
+  assert.equal(productionJobRuns(yaml,{candidate:'idv-digilocker-prod-parity',target:'test',autoPromote:true}),false);
+  assert.equal(productionJobRuns(yaml,{candidate:'idv-digilocker-prod-parity',target:'production',autoPromote:true,test:'skipped',verifyTest:'skipped'}),false);
   // Other candidates keep their existing behaviour under the same evaluator.
   assert.equal(productionJobRuns(yaml, {candidate: 'mobile-catalogue-india-v1', target: 'test', autoPromote: true, outputs: {mobile_catalogue_ledger_sha: 'b'.repeat(64)}}), true);
   assert.equal(productionJobRuns(yaml, {candidate: 'moderation-analytics-v1', target: 'test', autoPromote: true}), true);

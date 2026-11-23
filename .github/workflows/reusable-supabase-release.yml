@@ -672,10 +672,11 @@ jobs:
       (inputs.candidate != 'mobile-catalogue-india-v1' || needs.verify_test.outputs.mobile_catalogue_ledger_sha != '') &&
       (inputs.candidate != 'idv-digilocker-v1' || needs.verify_test.outputs.idv_digilocker_ledger_sha != '') &&
       (inputs.candidate != 'idv-digilocker-oidc-v2' || needs.verify_test.outputs.idv_digilocker_ledger_sha != '') &&
+      (inputs.candidate != 'idv-digilocker-prod-parity' || needs.verify_test.outputs.idv_digilocker_ledger_sha != '') &&
       (inputs.candidate != 'listing-validity-365' || needs.verify_test.outputs.listing_validity_ledger_sha != '') &&
       (inputs.candidate != 'taxonomy-v2-foundation' || needs.verify_test.outputs.taxonomy_ledger_sha != '') &&
       (inputs.candidate != 'taxonomy-v2-catalogue' || needs.verify_test.outputs.taxonomy_ledger_sha != '')) ||
-      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'v3-provider-neutral-activation' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'idv-digilocker-oidc-v2' && inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue') ||
+      (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'v3-provider-neutral-activation' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'idv-digilocker-oidc-v2' && inputs.candidate != 'idv-digilocker-prod-parity' && inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue') ||
       (inputs.target == 'adopt' && inputs.candidate == 'accessories-v1-foundation' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped')) }}
     environment: FairSwapProd
     runs-on: ubuntu-24.04

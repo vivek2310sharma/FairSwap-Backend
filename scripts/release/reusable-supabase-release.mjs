@@ -927,8 +927,8 @@ export async function releaseReusable({
   const idvDigilocker = candidateId === IDV_DIGILOCKER_CANDIDATE;
   const idvDigilockerV2 = candidateId === IDV_DIGILOCKER_V2_CANDIDATE;
   const idvTestLedger = context.IDV_DIGILOCKER_TEST_LEDGER_SHA;
-  // Both IDV candidates reach Production only by automatic promotion after a verified Test receipt of the same run.
-  if ((idvDigilocker || idvDigilockerV2) && environment === 'FairSwapProd' && (context.TARGET !== 'test' || !SHA256.test(idvTestLedger ?? ''))) {
+  // All signed IDV candidates reach Production only after a verified Test receipt in the same run.
+  if ((idvDigilocker || idvDigilockerV2 || idvProd) && environment === 'FairSwapProd' && (context.TARGET !== 'test' || !SHA256.test(idvTestLedger ?? ''))) {
     throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_TEST_EVIDENCE_REQUIRED');
   }
   const correction = candidateId === 'v3-provider-neutral-activation';
