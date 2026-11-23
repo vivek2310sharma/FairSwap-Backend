@@ -598,70 +598,6 @@ export function verifyIdvDigilockerRequiredTestReceipt(receipt, context) {
   return receipt.ledgerStatementsSha256;
 }
 
-// ---------- Request-only Aadhaar ACR (20261123150000): FairSwapTest ONLY ----------
-// Owner-authorized: the OAuth request still contains acr=aadhaar, but a signed token need not repeat it.
-// The binding label is deliberately different from the historical signed-ACR evidence.
-export const IDV_DIGILOCKER_REQUEST_CANDIDATE = 'idv-digilocker-acr-request-only';
-export const IDV_DIGILOCKER_REQUEST_SCOPE = 'idv-digilocker-acr-request-only-integrity';
-const REQUEST_EVIDENCE = 'oidc_v2_signed_id_requested_aadhaar';
-export function assertIdvDigilockerRequestLedger(environment, rows) {
-  if (environment !== 'FairSwapTest' || !Array.isArray(rows)) fail('REQUEST_TEST_ONLY');
-  if (idvAcrLedgerState(environment, rows) !== 'applied') fail('REQUEST_ACR_PREREQUISITE_MISSING');
-  const c = getCandidate(IDV_DIGILOCKER_REQUEST_CANDIDATE);
-  if (rows.some(row => row.version === c.version || row.name === c.filename.slice(15, -4))) {
-    fail('REQUEST_ALREADY_RECORDED');
-  }
-  return {includeAll: false, ahead: []};
-}
-const requestConstraint = `EXISTS (SELECT 1 FROM pg_constraint c WHERE
-  c.conrelid = to_regclass('${BINDINGS}')::oid AND c.conname = 'chk_idv_dl_evidence_method'
-  AND c.contype = 'c' AND c.convalidated
-  AND position('legacy_account_link' in pg_get_constraintdef(c.oid)) > 0
-  AND position('oidc_v2_signed_id_token' in pg_get_constraintdef(c.oid)) > 0
-  AND position('${ACR_EVIDENCE}' in pg_get_constraintdef(c.oid)) > 0
-  AND position('${REQUEST_EVIDENCE}' in pg_get_constraintdef(c.oid)) > 0)`;
-const requestBodies = `EXISTS (SELECT 1 FROM pg_proc p WHERE
-  p.oid = to_regprocedure('${ACR_BADGE}')::oid
-  AND position('oidc_v2_signed_id_requested_aadhaar' in p.prosrc) > 0
-  AND position('oidc_v2_signed_aadhaar_acr' in p.prosrc) > 0)
-  AND EXISTS (SELECT 1 FROM pg_proc p WHERE
-  p.oid = to_regprocedure('${ACR_COMPLETE}')::oid
-  AND position('p_evidence_method IS DISTINCT FROM ''${REQUEST_EVIDENCE}''' in p.prosrc) > 0
-  AND position('''${REQUEST_EVIDENCE}''' in p.prosrc) > 0)`;
-export const IDV_DIGILOCKER_REQUEST_PREFLIGHT = IDV_DIGILOCKER_ACR_POSTFLIGHT;
-export const IDV_DIGILOCKER_REQUEST_POSTFLIGHT = Object.freeze({
-  ...IDV_DIGILOCKER_ACR_POSTFLIGHT,
-  acr_evidence_constraint: requestConstraint,
-  acr_bodies_exact: requestBodies
-});
-export const runIdvDigilockerRequestPreflight = query =>
-  readSnapshot(query, IDV_DIGILOCKER_REQUEST_PREFLIGHT, 'request-preflight', ACR_PRESERVED);
-export function runIdvDigilockerRequestPostflight(before, query) {
-  if (!before?.preserved) fail('REQUEST_BASELINE_REQUIRED');
-  const after = readSnapshot(query, IDV_DIGILOCKER_REQUEST_POSTFLIGHT, 'request-postflight', ACR_PRESERVED);
-  if (after.preserved !== before.preserved) fail('REQUEST_EXISTING_OBJECTS_CHANGED');
-  return {status: 'PASS', scope: IDV_DIGILOCKER_REQUEST_SCOPE};
-}
-export const idvDigilockerRequestReceiptFields = () => ({
-  testOnly: true, autoPromote: false, identityVerificationRequired: true,
-  acrRequested: 'aadhaar'
-});
-export function verifyIdvDigilockerRequestTestReceipt(receipt, context) {
-  const c = getCandidate(IDV_DIGILOCKER_REQUEST_CANDIDATE);
-  const expected = idvDigilockerRequestReceiptFields();
-  if ((context.CANDIDATE && context.CANDIDATE !== c.id) || !receiptCommon(receipt, c, context, true) ||
-      receipt.prerequisiteLedger?.version !== IDV_FOUNDATION_LEDGER.FairSwapTest.version ||
-      receipt.prerequisiteLedger?.name !== IDV_FOUNDATION_LEDGER.FairSwapTest.name ||
-      receipt.status !== 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED' ||
-      receipt.postflightScope !== IDV_DIGILOCKER_REQUEST_SCOPE ||
-      receipt.dryRunPending.length !== 1 || receipt.dryRunPending[0] !== c.filename ||
-      receipt.outOfOrderInstall !== undefined || receipt.testLedgerStatementsSha256 !== undefined ||
-      Object.keys(expected).some(key => JSON.stringify(receipt[key]) !== JSON.stringify(expected[key]))) {
-    fail('REQUEST_TEST_RECEIPT_INVALID');
-  }
-  return receipt.ledgerStatementsSha256;
-}
-
 // ---------- Aadhaar ACR evidence (20261123120000): FairSwapTest ONLY, never promoted ----------
 // Replaces exactly two function bodies (has_digilocker_badge, impl_idv_dl_complete_v2) and widens the evidence CHECK constraint.
 // FairSwapTest already runs with identity_verification_required = 'true' (owner decision): this release requires 'true' before
@@ -804,3 +740,68 @@ export function verifyIdvDigilockerAcrTestReceipt(receipt, context) {
   }
   return receipt.ledgerStatementsSha256;
 }
+
+// ---------- Request-only Aadhaar ACR (20261123150000): FairSwapTest ONLY ----------
+// Owner-authorized: the OAuth request still contains acr=aadhaar, but a signed token need not repeat it.
+// The binding label is deliberately different from the historical signed-ACR evidence.
+export const IDV_DIGILOCKER_REQUEST_CANDIDATE = 'idv-digilocker-acr-request-only';
+export const IDV_DIGILOCKER_REQUEST_SCOPE = 'idv-digilocker-acr-request-only-integrity';
+const REQUEST_EVIDENCE = 'oidc_v2_signed_id_requested_aadhaar';
+export function assertIdvDigilockerRequestLedger(environment, rows) {
+  if (environment !== 'FairSwapTest' || !Array.isArray(rows)) fail('REQUEST_TEST_ONLY');
+  if (idvAcrLedgerState(environment, rows) !== 'applied') fail('REQUEST_ACR_PREREQUISITE_MISSING');
+  const c = getCandidate(IDV_DIGILOCKER_REQUEST_CANDIDATE);
+  if (rows.some(row => row.version === c.version || row.name === c.filename.slice(15, -4))) {
+    fail('REQUEST_ALREADY_RECORDED');
+  }
+  return {includeAll: false, ahead: []};
+}
+const requestConstraint = `EXISTS (SELECT 1 FROM pg_constraint c WHERE
+  c.conrelid = to_regclass('${BINDINGS}')::oid AND c.conname = 'chk_idv_dl_evidence_method'
+  AND c.contype = 'c' AND c.convalidated
+  AND position('legacy_account_link' in pg_get_constraintdef(c.oid)) > 0
+  AND position('oidc_v2_signed_id_token' in pg_get_constraintdef(c.oid)) > 0
+  AND position('${ACR_EVIDENCE}' in pg_get_constraintdef(c.oid)) > 0
+  AND position('${REQUEST_EVIDENCE}' in pg_get_constraintdef(c.oid)) > 0)`;
+const requestBodies = `EXISTS (SELECT 1 FROM pg_proc p WHERE
+  p.oid = to_regprocedure('${ACR_BADGE}')::oid
+  AND position('oidc_v2_signed_id_requested_aadhaar' in p.prosrc) > 0
+  AND position('oidc_v2_signed_aadhaar_acr' in p.prosrc) > 0)
+  AND EXISTS (SELECT 1 FROM pg_proc p WHERE
+  p.oid = to_regprocedure('${ACR_COMPLETE}')::oid
+  AND position('p_evidence_method IS DISTINCT FROM ''${REQUEST_EVIDENCE}''' in p.prosrc) > 0
+  AND position('''${REQUEST_EVIDENCE}''' in p.prosrc) > 0)`;
+export const IDV_DIGILOCKER_REQUEST_PREFLIGHT = IDV_DIGILOCKER_ACR_POSTFLIGHT;
+export const IDV_DIGILOCKER_REQUEST_POSTFLIGHT = Object.freeze({
+  ...IDV_DIGILOCKER_ACR_POSTFLIGHT,
+  acr_evidence_constraint: requestConstraint,
+  acr_bodies_exact: requestBodies
+});
+export const runIdvDigilockerRequestPreflight = query =>
+  readSnapshot(query, IDV_DIGILOCKER_REQUEST_PREFLIGHT, 'request-preflight', ACR_PRESERVED);
+export function runIdvDigilockerRequestPostflight(before, query) {
+  if (!before?.preserved) fail('REQUEST_BASELINE_REQUIRED');
+  const after = readSnapshot(query, IDV_DIGILOCKER_REQUEST_POSTFLIGHT, 'request-postflight', ACR_PRESERVED);
+  if (after.preserved !== before.preserved) fail('REQUEST_EXISTING_OBJECTS_CHANGED');
+  return {status: 'PASS', scope: IDV_DIGILOCKER_REQUEST_SCOPE};
+}
+export const idvDigilockerRequestReceiptFields = () => ({
+  testOnly: true, autoPromote: false, identityVerificationRequired: true,
+  acrRequested: 'aadhaar'
+});
+export function verifyIdvDigilockerRequestTestReceipt(receipt, context) {
+  const c = getCandidate(IDV_DIGILOCKER_REQUEST_CANDIDATE);
+  const expected = idvDigilockerRequestReceiptFields();
+  if ((context.CANDIDATE && context.CANDIDATE !== c.id) || !receiptCommon(receipt, c, context, true) ||
+      receipt.prerequisiteLedger?.version !== IDV_FOUNDATION_LEDGER.FairSwapTest.version ||
+      receipt.prerequisiteLedger?.name !== IDV_FOUNDATION_LEDGER.FairSwapTest.name ||
+      receipt.status !== 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED' ||
+      receipt.postflightScope !== IDV_DIGILOCKER_REQUEST_SCOPE ||
+      receipt.dryRunPending.length !== 1 || receipt.dryRunPending[0] !== c.filename ||
+      receipt.outOfOrderInstall !== undefined || receipt.testLedgerStatementsSha256 !== undefined ||
+      Object.keys(expected).some(key => JSON.stringify(receipt[key]) !== JSON.stringify(expected[key]))) {
+    fail('REQUEST_TEST_RECEIPT_INVALID');
+  }
+  return receipt.ledgerStatementsSha256;
+}
+
