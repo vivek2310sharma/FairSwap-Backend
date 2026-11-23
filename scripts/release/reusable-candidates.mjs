@@ -61,7 +61,7 @@ export const V3_LEAF_OPERATIONS = Object.freeze(Object.fromEntries(V3_GOODS.flat
     const id = `v3-${slug.slice(3)}-${operation}`;
     return [id, Object.freeze({id, slug, v3Operation: operation,
       path: `supabase/forward-migrations/unified-publishing-v3/${operation}-one.operator.sql`,
-      sha256: operation === 'activate' ? 'ea3fcd1e6007161a915336423af78a330a5a60fc04bbeacca47213c1bbb930ee'
+      sha256: operation === 'activate' ? '8554f479a57e5a442cdf3c6b5823b813032c94b2ceffc0589b7ac139c298d0e8'
         : 'b7671b9452cabc7a86c0d14f995b9c1078b5574eb2aaf22032fe0282975c572f', autoPromote: false})];
   }))));
 

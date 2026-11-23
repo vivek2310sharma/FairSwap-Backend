@@ -396,6 +396,31 @@ test('V3 correction preserves all other functions, RLS, grants, contracts and ca
         await db.exec(definition);
         await db.exec(leafTransaction(activate,sha));
       }
+      // RESET ALL changes proconfig to NULL without touching prosrc. Test both
+      // the orchestration predicate and the standalone operator's independent gate.
+      for (const [signature,digest] of correction.functions) {
+        const definition=await scalar(`select pg_get_functiondef('${signature}'::regprocedure)`);
+        const reset=`alter function ${signature} reset all`;
+        const operator=readFileSync(getCandidate(activate).path,'utf8').replace(/^\\set.*$/gm,'')
+          .replaceAll(":'slug'","'v2-books'").replaceAll(":'web_commit'",`'${sha}'`).replaceAll(":'moderation_mode'","'five_check'");
+        await db.exec(reset);
+        assert.equal(Object.values((await db.exec(leafStateSql('v2-books',true))).find(r=>r.rows?.length).rows[0])[0],'false');
+        await db.exec(definition);
+        await db.exec(leafTransaction(deactivate,sha));
+        for (const sql of [leafPreflightSql(activate,sha),operator]) {
+          await db.exec(reset);
+          assert.equal(await scalar(`select proconfig is null and md5(prosrc)='${digest}' from pg_proc where oid='${signature}'::regprocedure`),true);
+          await assert.rejects(db.exec(sql),/CORRECTION_REQUIRED/);
+          await db.exec('rollback');
+          await db.exec(definition);
+        }
+        await db.exec(leafTransaction(activate,sha));
+        await db.exec(reset);
+        await db.exec(leafTransaction(deactivate,sha));
+        assert.equal(await scalar("select enabled from app_security.ordinary_goods_contracts_v3 where slug='v2-books'"),false);
+        await db.exec(definition);
+        await db.exec(leafTransaction(activate,sha));
+      }
       for(const {slug} of [...V3_GOODS].reverse()) await db.exec(leafTransaction(`v3-${slug.slice(3)}-deactivate`,sha));
     }
   } finally {await db.close();}

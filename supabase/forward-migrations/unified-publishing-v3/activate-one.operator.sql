@@ -17,8 +17,8 @@ begin
   select * into strict g from app_security.ordinary_goods_contracts_v3
   where slug=current_setting('app.goods_v3_slug',true) for update;
   if g.macro_category='goods' and g.slug not in ('v2-baby-gear-car-seats','v2-other-items') and not (
-    select count(*)=4 and coalesce(bool_and(md5(p.prosrc)=expected.digest and p.prosecdef
-      and p.proconfig @> array['search_path=""']::text[]),false)
+    select count(*)=4 and coalesce(bool_and(coalesce(md5(p.prosrc)=expected.digest,false)
+      and coalesce(p.prosecdef,false) and coalesce(p.proconfig @> array['search_path=""']::text[],false)),false)
     from (values
       ('app_security.ordinary_goods_available_v3(uuid)','bc2d6685b2e4ea1a379ea00b781bf9fa'),
       ('app_security.ordinary_goods_actor_v3()','0485add4be8b2bd682f9bc8c99e02ab0'),

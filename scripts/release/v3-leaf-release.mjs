@@ -123,7 +123,8 @@ export async function requireLeafEvidence(plan, c, fetcher = fetch) {
 // Require the reviewed correction in every activation flight. Deactivation remains
 // available even if a later migration changes these functions. Historical receipts stay pinned.
 const correctionReady = `(SELECT count(*)=4 AND coalesce(bool_and(
-  md5(p.prosrc)=expected.digest AND p.prosecdef AND p.proconfig @> ARRAY['search_path=""']::text[]),false)
+  coalesce(md5(p.prosrc)=expected.digest,false) AND coalesce(p.prosecdef,false)
+  AND coalesce(p.proconfig @> ARRAY['search_path=""']::text[],false)),false)
   FROM (VALUES ${V3_ACTIVATION_CORRECTION.functions.map(([signature,digest]) => `('${signature}','${digest}')`).join(',')}) expected(signature,digest)
   JOIN pg_catalog.pg_proc p ON p.oid=pg_catalog.to_regprocedure(expected.signature))`;
 
