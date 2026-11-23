@@ -165,6 +165,19 @@ export const CANDIDATES = Object.freeze({
     testOnly: true,
     autoPromote: false
   }),
+  // Owner-approved Test-only DigiLocker adjustment: keep acr=aadhaar in authorize, do not require it in signed ID token.
+  // Evidence is signed DigiLocker identity plus the fixed provider ACR request, NOT signed Aadhaar assurance.
+  'idv-digilocker-acr-request-only': Object.freeze({
+    id: 'idv-digilocker-acr-request-only', version: '20261123150000',
+    filename: '20261123150000_idv_digilocker_acr_request_only.sql',
+    path: 'supabase/forward-migrations/idv/20261123150000_idv_digilocker_acr_request_only.sql',
+    sha256: '6bc3877a9e6a6d9491960a3437390ab1672122682442326fa739e1d22589db3c',
+    description: 'IDV DigiLocker signed identity + requested Aadhaar ACR, without signed response ACR; Test only, identity gate ON',
+    requiredLedgerVersions: Object.freeze(['20261117090000', '20261119200000', '20261122100000', '20261123120000']),
+    allowedProjectRef: 'wpppxlnbzqynvhpeuavd',
+    testOnly: true,
+    autoPromote: false
+  }),
   'taxonomy-v2-catalogue': Object.freeze({
     id: 'taxonomy-v2-catalogue', version: '20261118092010',
     filename: '20261118092010_taxonomy_v2_catalogue.sql',
