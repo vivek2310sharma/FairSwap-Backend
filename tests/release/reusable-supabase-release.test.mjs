@@ -5341,7 +5341,7 @@ test('remaining categories launch candidate pins additive SQL and requires Test 
   const id = 'remaining-categories-launch-v1', candidate = verifyCandidateSha(id).candidate;
   assert.equal(candidate.autoPromote, false);
   assert.equal(candidate.remainingCategoriesLaunch, true);
-  assert.equal(candidate.statementsSha256, '244075f843ec04bf2c1488c96963c2e32624f8131c6c64a1107a3d1c44a64f9d');
+  assert.equal(candidate.statementsSha256, '768c1e66cb3843365c93fbc033568c0df86f549184e3da7432c5bc074d1fb394');
   assert.equal(planDispatch({candidateId: id, target: 'test'}).priorRuns.length, 0);
   assert.throws(() => planDispatch({candidateId: id, target: 'production'}), /REMAINING_CATEGORIES_TEST_EVIDENCE_REQUIRED/);
   assert.throws(() => planDispatch({candidateId: id, target: 'adopt'}), /REMAINING_CATEGORIES_INVALID_TARGET/);
@@ -5391,8 +5391,8 @@ test('remaining categories releaseReusable tests actual Test apply and Productio
 
   const historyVersions = [...baseHistory, ...candidate.requiredLedgerVersions];
 
-  const makeTestRunner = () => {
-    let isApplied = false;
+  const makeTestRunner = ({alreadyApplied = false, installedDigest = candidate.statementsSha256} = {}) => {
+    let isApplied = alreadyApplied;
     return (cmd, args) => {
       if (cmd === 'supabase' && args.includes('--version')) return '2.117.0\n';
       if (cmd === 'supabase' && args.includes('link')) {
@@ -5405,12 +5405,15 @@ test('remaining categories releaseReusable tests actual Test apply and Productio
         const ws = args[args.indexOf('--workdir') + 1];
         mkdirSync(join(ws, 'supabase/migrations'), {recursive: true});
         historyVersions.forEach(v => writeFileSync(join(ws, 'supabase/migrations', `${v}_t.sql`), '-- t'));
+        if (alreadyApplied) writeFileSync(join(ws, 'supabase/migrations', candidate.filename), '-- recorded');
         return '';
       }
       if (cmd === 'supabase' && args.includes('--dry-run')) {
+        assert.equal(alreadyApplied, false, 'receipt recovery must not dry-run');
         return `Applying migration ${candidate.filename}...`;
       }
       if (cmd === 'supabase' && args.includes('db') && args.includes('push')) {
+        assert.equal(alreadyApplied, false, 'receipt recovery must not reapply');
         isApplied = true;
         return '';
       }
@@ -5437,7 +5440,7 @@ test('remaining categories releaseReusable tests actual Test apply and Productio
               version: candidate.version,
               name: candidate.filename.slice(15, -4),
               statementCount: 17,
-              statementsSha256: candidate.statementsSha256,
+              statementsSha256: installedDigest,
               hasStatements: true
             });
           }
@@ -5468,6 +5471,16 @@ test('remaining categories releaseReusable tests actual Test apply and Productio
   assert.equal(testReceipt.candidateId, candidate.id);
   assert.equal(testReceipt.status, 'APPLIED_CLI_LEDGER_POSTFLIGHT_VERIFIED');
   assert.equal(testReceipt.ledgerStatementsSha256, candidate.statementsSha256);
+
+  // Recovery of the already recorded migration must be read-only and exact-pin guarded.
+  const recovered = await releaseReusable({candidateId: candidate.id, environment: 'FairSwapTest',
+    context: testContext, runner: makeTestRunner({alreadyApplied: true})});
+  assert.equal(recovered.status, 'ALREADY_APPLIED_VERIFIED');
+  assert.deepEqual(recovered.dryRunPending, []);
+  assert.equal(recovered.ledgerStatementsSha256, candidate.statementsSha256);
+  await assert.rejects(releaseReusable({candidateId: candidate.id, environment: 'FairSwapTest',
+    context: testContext, runner: makeTestRunner({alreadyApplied: true, installedDigest: '0'.repeat(64)})}),
+    /REMAINING_CATEGORIES_RECORDED_LEDGER_MISMATCH/);
 
   // 2. FairSwapProd requires Test evidence
   await assert.rejects(
