@@ -387,6 +387,20 @@ export async function verifyRemotePostflight(environment, candidateId, psqlUrl, 
       throw new Error('REUSABLE_RELEASE_FAMILY_CHOOSER_POSTFLIGHT_FAILED');
     return result;
   }
+  if (candidate.remainingCategoriesLaunch) {
+    const result = JSON.parse(psqlQuery(`begin read only;
+      select jsonb_build_object(
+        'catalogue_leaf_count',(select count(*) from jsonb_array_elements(public.get_category_catalogue_v2()->'nodes') n where (n->>'posting_enabled')::boolean),
+        'dogs_rehoming',exists(select 1 from app_security.ordinary_goods_contracts_v3 where slug='v2-dogs' and posting_flow='adoption_rehoming' and enabled and not draft_only),
+        'other_pets_rehoming',exists(select 1 from app_security.ordinary_goods_contracts_v3 where slug='v2-other-pets' and posting_flow='adoption_rehoming' and enabled and not draft_only),
+        'staff_intake_guard',exists(select 1 from pg_proc where proname='bounded_goods_staff_intake_guard_v3' and prosecdef)
+      );
+      commit;`, psqlUrl, env, runner, 'postflight_sql').trim());
+    if (result.catalogue_leaf_count !== 63 || !result.dogs_rehoming || !result.other_pets_rehoming || !result.staff_intake_guard) {
+      throw new Error('REUSABLE_RELEASE_REMAINING_CATEGORIES_POSTFLIGHT_FAILED');
+    }
+    return {status: 'PASS', catalogue_leaf_count: result.catalogue_leaf_count};
+  }
   if (candidate.unifiedPublishingV3) {
     return verifyDisabledV3(candidate.unifiedPublishingV3.count,
       sql => psqlQuery(sql, psqlUrl, env, runner, 'postflight_sql'), environment === 'FairSwapProd');
@@ -868,6 +882,12 @@ export function assertFamilyChooserLedger(environment, candidate, ledger) {
   return {includeAll: true, ahead: [row.version]};
 }
 
+export function assertRemainingCategoriesLedger(environment, candidate, ledger) {
+  const ahead = ledger.filter(row => row.version >= candidate.version);
+  if (ahead.length === 0) return {includeAll: false, ahead: []};
+  throw new Error('REMAINING_CATEGORIES_UNEXPECTED_LEDGER_TAIL');
+}
+
 export async function releaseReusable({
   environment,
   candidateId,
@@ -939,15 +959,15 @@ export async function releaseReusable({
     throw new Error('REUSABLE_RELEASE_MOBILE_CATALOGUE_TEST_EVIDENCE_REQUIRED');
   }
   // Accessories evidence (Web SHAs, earlier stages) is re-derived here; no-op for non-strict candidates.
-  const stagePlan = candidate.canonicalFamilyChooser ? planDispatch({candidateId,
+  const stagePlan = (candidate.canonicalFamilyChooser || candidate.remainingCategoriesLaunch) ? planDispatch({candidateId,
     target: environment === 'FairSwapProd' ? 'production' : 'test',
     inputs: {test_catalogue_run_id: context.TEST_CATALOGUE_RUN_ID}, context,
   }) : assertStageInputs(candidate, environment, context);
   let familyTestLedger;
-  if (candidate.canonicalFamilyChooser && environment === 'FairSwapProd') {
+  if ((candidate.canonicalFamilyChooser || candidate.remainingCategoriesLaunch) && environment === 'FairSwapProd') {
     const receipts = await requireStageEvidence(stagePlan.priorRuns, context, fetcher);
     familyTestLedger = receipts.test_catalogue_run_id?.ledgerStatementsSha256;
-    if (!SHA256.test(familyTestLedger ?? '')) throw new Error('FAMILY_CHOOSER_TEST_LEDGER_EVIDENCE_REQUIRED');
+    if (!SHA256.test(familyTestLedger ?? '')) throw new Error(candidate.canonicalFamilyChooser ? 'FAMILY_CHOOSER_TEST_LEDGER_EVIDENCE_REQUIRED' : 'REMAINING_CATEGORIES_TEST_LEDGER_EVIDENCE_REQUIRED');
   }
 
   let catalogueWebEvidence;
@@ -1062,7 +1082,7 @@ export async function releaseReusable({
     const wearables = candidate.id.startsWith('wearables-v1-');
     // Tablets, Wearables and Mobile Catalogue pin the ledger: history is read before apply, must not change, and the installed
     // statements hash is carried Test -> Production through the receipts.
-    const v3 = Boolean(candidate.unifiedPublishingV3) || v3IdentityPrerequisite || candidate.canonicalFamilyChooser === true;
+    const v3 = Boolean(candidate.unifiedPublishingV3) || v3IdentityPrerequisite || candidate.canonicalFamilyChooser === true || candidate.remainingCategoriesLaunch === true;
     const idv = idvDigilocker || idvDigilockerV2 || idvRequired || idvAcr || idvRequest || idvProd;
     const pinned = v3 || tablets || wearables || mobileCatalogue || listingValidity || taxonomy || catalogueUpdate || idv;
     const ordered = v3 || candidate.strict || mobileCatalogue || listingValidity || taxonomy || idv || accountSecurityEmail;
@@ -1114,7 +1134,7 @@ export async function releaseReusable({
       idvInstalledAttestation = true;
     } else if (pinned) {
       // A pre-existing entry has no trusted receipt tying it to the reviewed source bytes.
-      if (isAlreadyApplied && !candidate.canonicalFamilyChooser) throw new Error(`REUSABLE_RELEASE_${label}_ALREADY_RECORDED`);
+      if (isAlreadyApplied && !candidate.canonicalFamilyChooser && !candidate.remainingCategoriesLaunch) throw new Error(`REUSABLE_RELEASE_${label}_ALREADY_RECORDED`);
       ledgerBefore = readLedger();
       if (isAlreadyApplied) {
         // Receipt recovery is read-only: insist on the pinned CLI ledger row and
@@ -1123,10 +1143,10 @@ export async function releaseReusable({
         if (!installed?.hasStatements || installed.name !== candidate.filename.slice(15, -4) ||
             installed.statementsSha256 !== candidate.statementsSha256 || ledgerBefore.length !== beforeRemote.size ||
             ledgerBefore.some(row => !beforeRemote.has(row.version)))
-          throw new Error('FAMILY_CHOOSER_RECORDED_LEDGER_MISMATCH');
+          throw new Error(candidate.remainingCategoriesLaunch ? 'REMAINING_CATEGORIES_RECORDED_LEDGER_MISMATCH' : 'FAMILY_CHOOSER_RECORDED_LEDGER_MISMATCH');
         ledgerStatementsSha256 = installed.statementsSha256;
         if (environment === 'FairSwapProd' && ledgerStatementsSha256 !== familyTestLedger)
-          throw new Error('FAMILY_CHOOSER_TEST_LEDGER_MISMATCH');
+          throw new Error(candidate.remainingCategoriesLaunch ? 'REMAINING_CATEGORIES_TEST_LEDGER_MISMATCH' : 'FAMILY_CHOOSER_TEST_LEDGER_MISMATCH');
       } else {
       if (wearables || mobileCatalogue) assertMobilePhonesProvenance(environment, ledgerBefore);
       if (wearables) {
@@ -1163,6 +1183,7 @@ export async function releaseReusable({
         }
       }
       if (candidate.canonicalFamilyChooser) outOfOrder = assertFamilyChooserLedger(environment, candidate, ledgerBefore);
+      if (candidate.remainingCategoriesLaunch) outOfOrder = assertRemainingCategoriesLedger(environment, candidate, ledgerBefore);
       for (const version of candidate.requiredLedgerVersions ?? []) {
         const prerequisite = Object.values(CANDIDATES).find(entry => entry.version === version);
         const row = ledgerBefore.find(entry => entry.version === version);
@@ -1185,7 +1206,7 @@ export async function releaseReusable({
           ledgerBefore.find(row => row.version === foundationVersion)?.statementsSha256 !== context.TABLETS_FOUNDATION_LEDGER_SHA) {
         throw new Error(`REUSABLE_RELEASE_${label}_FOUNDATION_EVIDENCE_MISMATCH`);
       }
-      if (!v3Production && !mobileCatalogue && !listingValidity && !taxonomy && !idv && !accountSecurityEmail && environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
+      if (!v3Production && !mobileCatalogue && !listingValidity && !taxonomy && !idv && !accountSecurityEmail && !candidate.canonicalFamilyChooser && !candidate.remainingCategoriesLaunch && environment === 'FairSwapProd' && !/^[a-f0-9]{64}$/.test(context.TABLETS_CANDIDATE_LEDGER_SHA ?? '')) {
         throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_EVIDENCE_REQUIRED`);
       }
       if (ledgerBefore.length !== beforeRemote.size || ledgerBefore.some(row =>
@@ -1225,7 +1246,7 @@ export async function releaseReusable({
     if (idvInstalledAttestation) {
       status = 'ALREADY_INSTALLED_VERIFIED';
       dryRunPending = [];
-    } else if ((environment === 'FairSwapTest' || candidate.strict || accountSecurityEmail || candidate.canonicalFamilyChooser) && isAlreadyApplied) {
+    } else if ((environment === 'FairSwapTest' || candidate.strict || accountSecurityEmail || candidate.canonicalFamilyChooser || candidate.remainingCategoriesLaunch) && isAlreadyApplied) {
       // Support resumption for FairSwapTest if already applied: verify ledger, exact SQL hash, and postflight
       phase = 'postflight';
       const postflightResult = await verifyRemotePostflight(environment, candidateId, psqlUrl, env, runner, catalogueBefore);
@@ -1319,6 +1340,8 @@ export async function releaseReusable({
         ledgerStatementsSha256 = verifyTabletsLedger(ledgerBefore, readLedger(), candidate);
         if (candidate.canonicalFamilyChooser && ledgerStatementsSha256 !== candidate.statementsSha256)
           throw new Error('FAMILY_CHOOSER_SOURCE_LEDGER_MISMATCH');
+        if (candidate.remainingCategoriesLaunch && candidate.statementsSha256 && ledgerStatementsSha256 !== candidate.statementsSha256)
+          throw new Error('REMAINING_CATEGORIES_SOURCE_LEDGER_MISMATCH');
         // The recorded row must be exactly the pinned CLI split, i.e. the ledger-bound requiredGate state.
         if (idvRequired && ledgerStatementsSha256 !== ENFORCE_VERIFIED_ACTOR_STATES.requiredGate.ledger.statementsSha256) {
           throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_REQUIRED_LEDGER_MISMATCH');
@@ -1326,9 +1349,9 @@ export async function releaseReusable({
         if (idvAcr && ledgerStatementsSha256 !== IDV_DIGILOCKER_ACR_LEDGER.statementsSha256) {
           throw new Error('REUSABLE_RELEASE_IDV_DIGILOCKER_ACR_LEDGER_MISMATCH');
         }
-        const testLedger = candidate.canonicalFamilyChooser ? familyTestLedger : idv ? idvTestLedger : taxonomy ? taxonomyTestLedger : listingValidity ? validityTestLedger : mobileCatalogue ? mobileTestLedger : context.TABLETS_CANDIDATE_LEDGER_SHA;
+        const testLedger = candidate.canonicalFamilyChooser ? familyTestLedger : candidate.remainingCategoriesLaunch ? familyTestLedger : idv ? idvTestLedger : taxonomy ? taxonomyTestLedger : listingValidity ? validityTestLedger : mobileCatalogue ? mobileTestLedger : context.TABLETS_CANDIDATE_LEDGER_SHA;
         if (environment === 'FairSwapProd' && !v3IdentityPrerequisite && ledgerStatementsSha256 !== (v3Production ? testV3Ledger : testLedger)) {
-          throw new Error(`REUSABLE_RELEASE_${label}_TEST_LEDGER_MISMATCH`);
+          throw new Error(candidate.remainingCategoriesLaunch ? 'REMAINING_CATEGORIES_TEST_LEDGER_MISMATCH' : `REUSABLE_RELEASE_${label}_TEST_LEDGER_MISMATCH`);
         }
       }
 
@@ -1405,7 +1428,7 @@ export async function releaseReusable({
         ...(stagePlan.e2eRunId ? {e2eRunId: stagePlan.e2eRunId} : {}),
         ...(stagePlan.e2eWaiver ? {e2eWaiver: stagePlan.e2eWaiver} : {})
       } : {}),
-      ...(candidate.strict || candidate.canonicalFamilyChooser ? {
+      ...(candidate.strict || candidate.canonicalFamilyChooser || candidate.remainingCategoriesLaunch ? {
         stage: candidate.stage,
         webStagingSha: stagePlan.webStagingSha,
         webProductionSha: stagePlan.webProductionSha,

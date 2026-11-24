@@ -1,6 +1,6 @@
 // Disposable PGlite, no Supabase credentials or network.
 import assert from "node:assert/strict";
-import {createHash} from "node:crypto";
+import {createHash, randomUUID} from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -430,7 +430,135 @@ try {
   assert.equal(quadModePublications,43*4);
   console.log("PASS all 43 approved categories publish in all four modes (172), with kill-switch and incomplete-receipt rejection");
   console.log("PASS 58 disabled defaults, 52 end-to-end SQL fixture submissions and four protected draft-only journeys, two forced gates and negative boundaries");
+
+  // Verify remaining categories launch migration
+  await migrate(base+"unified-publishing-v3/supabase/migrations/20261123190000_remaining_categories_launch_v1.sql");
+  const postLaunchDefs = (await db.query("select * from app_security.ordinary_goods_contracts_v3 order by slug")).rows;
+  assert.equal(postLaunchDefs.length, 60);
+  const remainingDraft = postLaunchDefs.filter(x => x.draft_only).map(x => x.slug).sort();
+  assert.deepEqual(remainingDraft, ["v2-cars", "v2-motorcycles-scooters"]);
+
+  // Test dog adoption constraints
+  const dogDef = postLaunchDefs.find(x => x.slug === "v2-dogs");
+  assert.ok(dogDef);
+  assert.equal(dogDef.posting_flow, "adoption_rehoming");
+  assert.equal(dogDef.enabled, true);
+
+  const petSession = "00000000-0000-4000-8000-000000000999";
+  const petMedia = "00000000-0000-4000-8000-000000000998";
+  await role("authenticated", owner);
+  const petCreated = await scalar("select public.ordinary_goods_session_v3('v2-dogs',$1,'create')",[petSession]);
+  const petListing = petCreated.session.listing_id;
+  const petReserved = await scalar("select public.ordinary_goods_session_v3('v2-dogs',$1,'reserve',$2)",[petSession, petMedia]);
+  await role("service_role");
+  await scalar("select public.posting_v2_media_ready($1,$2,$3,400,20,20)",[petSession, petMedia, petReserved.media[0].attempt]);
+  await role("authenticated", owner);
+
+  const validPetPayload = {
+    slug: "v2-dogs", category_id: dogDef.category_id, revision: 1, session_id: petSession, media_ids: [petMedia],
+    title: "Loving dog looking for a home", description: "Friendly 2-year-old rescued dog looking for a caring home.",
+    condition: "good", price_type: "free", price_paise: 0, pin_code: "560001", city_id: city, locality_id: locality,
+    answers: {
+      safety_confirmed: true, power_safe: true, defects: "",
+      pet_type: "Dog adoption", breed: "Indian Pariah Dog", age: "2 years",
+      health_status: "Fully vaccinated and dewormed", rehoming_reason: "Relocating abroad",
+      adoption_terms: "Free adoption to a caring home"
+    }
+  };
+
+  // Paid transfer rejected
+  await assert.rejects(scalar("select public.ordinary_goods_prepare_v3($1::jsonb)",[JSON.stringify({...validPetPayload, price_paise: 5000})]), /PET_REHOMING_FREE_ONLY/);
+  // Commercial sale keyword rejected
+  await assert.rejects(scalar("select public.ordinary_goods_prepare_v3($1::jsonb)",[JSON.stringify({...validPetPayload, description: "Puppies for sale at best price."})]), /PET_REHOMING_COMMERCIAL_FORBIDDEN/);
+  // Prohibited species rejected
+  await assert.rejects(scalar("select public.ordinary_goods_prepare_v3($1::jsonb)",[JSON.stringify({...validPetPayload, description: "Exotic monkey and parrot available."})]), /PET_REHOMING_SPECIES_FORBIDDEN/);
+
+  // Valid prepare and submit succeeds
+  const petPrep = await scalar("select public.ordinary_goods_prepare_v3($1::jsonb)",[JSON.stringify(validPetPayload)]);
+  assert.equal(petPrep.session.state, "finalizing");
+
+  await db.exec("reset role");
+  for (const name of ["original","thumb","medium","large"]) {
+    await db.query("insert into storage.objects values ($1,$2)",[name==="original"?"listing-originals":"listing-derivatives",`${petListing}/${petMedia}/${name}.webp`]);
+  }
+  await role("authenticated", owner);
+  assert.deepEqual(await scalar("select public.ordinary_goods_submit_v3($1::jsonb)",[JSON.stringify(validPetPayload)]), {success: true, listing_id: petListing});
+  await db.exec("reset role");
+
+  // Negative regression tests for clean scan enforcement & staff-intake authorization:
+  // 1. Staff cannot activate pet listing without clean scan receipt
+  await role("authenticated", other);
+  await db.exec("select set_config('request.fixture_aal2','yes',false)");
+  await assert.rejects(
+    scalar("select public.moderate_listing_reviewed($1,'approve',null,1,'pending_review')",[petListing]),
+    /ORDINARY_GOODS_CURRENT_CLEAN_SCAN_REQUIRED/
+  );
+  await db.exec("reset role");
+
+  // Set up clean scan receipt and finalize moderation with routed_to_admin
+  const petReq = (await db.query("select id,generation_id,listing_revision from public.listing_moderation_requests where listing_id=$1 and status='pending'",[petListing])).rows[0];
+  const petToken = randomUUID();
+  const petChecks = ["check_india_fraud_rules","check_openai_moderation","check_vision_nsfw","check_vision_category","check_ocr_qr"];
+  await db.query("update public.listing_moderation_requests set status='claimed',claim_token=$2,claim_expires_at=now()+interval '5 minutes',claimed_at=clock_timestamp() where id=$1",[petReq.id,petToken]);
+  const petHash = "b".repeat(64);
+  const petPath = `${petListing}/${petMedia}/original.webp`;
+  const petDigest = createHash("sha256").update(`${petMedia}:${petPath}:${petHash}`).digest("hex");
+  await db.query(`insert into app_security.listing_media_verified_hashes(media_id,listing_id,original_storage_path,content_sha256,generation_id)
+    values($1,$2,$3,$4,$5)`,[petMedia,petListing,petPath,petHash,petReq.generation_id]);
+  await db.query(`insert into app_security.listing_moderation_scan_receipts(request_id,listing_id,listing_revision,generation_id,
+    media_digest,verdict,ruleset_version,scope,completed_checks,manifest,scanned_media_count)
+    values($1,$2,$3,$4,$5,'APPROVE','india_v1.0.0','multimodal_five_check',$6::text[],$7::jsonb,1)`,
+    [petReq.id,petListing,petReq.listing_revision,petReq.generation_id,petDigest,petChecks,JSON.stringify([{id:petMedia,path:petPath,sha256:petHash}])]);
+  const petFinalize = await scalar(`select app_security.impl_finalize_moderation_result(
+    $1,$2,'no_review_flags','india_v1.0.0','multimodal_five_check',$3::text[],array[]::text[],'[]','[]')`,[petReq.id,petToken,petChecks]);
+  assert.equal(petFinalize.decision, "routed_to_admin");
+  assert.equal(await scalar("select status from public.listings where id=$1",[petListing]), "pending_review");
+
+  // 2. Non-staff update to active is rejected
+  await role("authenticated", owner);
+  await assert.rejects(
+    scalar("select public.moderate_listing_reviewed($1,'approve',null,1,'pending_review')",[petListing]),
+    /Listing unavailable|permission denied|GOODS_STAFF_INTAKE_PUBLICATION_DISABLED/
+  );
+  await db.exec("reset role");
+
+  // 3. Staff approval with tampered/incomplete scan receipt is rejected
+  await db.query("update app_security.listing_moderation_scan_receipts set failed_checks=array['check_ocr_qr'] where request_id=$1",[petReq.id]);
+  await role("authenticated", other);
+  await db.exec("select set_config('request.fixture_aal2','yes',false)");
+  await assert.rejects(
+    scalar("select public.moderate_listing_reviewed($1,'approve',null,1,'pending_review')",[petListing]),
+    /ORDINARY_GOODS_CURRENT_CLEAN_SCAN_REQUIRED/
+  );
+  await db.exec("reset role");
+  // Restore clean checks
+  await db.query("update app_security.listing_moderation_scan_receipts set failed_checks=array[]::text[] where request_id=$1",[petReq.id]);
+
+  // 4. Staff cannot bypass clean scan when receipt is missing
+  await db.query("delete from app_security.listing_moderation_scan_receipts where listing_id=$1",[petListing]);
+  await role("authenticated", other);
+  await db.exec("select set_config('request.fixture_aal2','yes',false)");
+  await assert.rejects(
+    scalar("select public.moderate_listing_reviewed($1,'approve',null,1,'pending_review')",[petListing]),
+    /ORDINARY_GOODS_CURRENT_CLEAN_SCAN_REQUIRED/
+  );
+  await db.exec("reset role");
+
+  // Restore clean scan receipt for positive publication
+  await db.query(`insert into app_security.listing_moderation_scan_receipts(request_id,listing_id,listing_revision,generation_id,
+    media_digest,verdict,ruleset_version,scope,completed_checks,manifest,scanned_media_count,consumed)
+    values($1,$2,$3,$4,$5,'APPROVE','india_v1.0.0','multimodal_five_check',$6::text[],$7::jsonb,1,true)`,
+    [petReq.id,petListing,petReq.listing_revision,petReq.generation_id,petDigest,petChecks,JSON.stringify([{id:petMedia,path:petPath,sha256:petHash}])]);
+
+  // Positive test: staff moderator with AAL2 approves petListing after clean scan
+  await role("authenticated", other);
+  await db.exec("select set_config('request.fixture_aal2','yes',false)");
+  const petStaffApprove = await scalar("select public.moderate_listing_reviewed($1,'approve',null,1,'pending_review')",[petListing]);
+  assert.ok(petStaffApprove);
+  await db.exec("reset role");
+  assert.equal(await scalar("select status from public.listings where id=$1",[petListing]), "active");
+  console.log("PASS remaining categories launch verified: pet rehoming constraints, free adoption, clean-scan requirement and staff intake publication");
 } catch (error) {
-  console.error(error.message, error.cause?.message ?? "", error.where ?? "");
+  console.error(error.stack || error.message);
   process.exitCode=1;
 } finally { await db.close(); }

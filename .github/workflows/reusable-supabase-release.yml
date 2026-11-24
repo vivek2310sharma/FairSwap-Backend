@@ -46,6 +46,7 @@ on:
           - specialist-vehicle-draft-binding-v3
           - v3-require-active-seller-identity
           - canonical-family-chooser-v1
+          - remaining-categories-launch-v1
           - v3-test-remaining-batch
           - v3-production-disabled-batch
           - v3-books-activate
