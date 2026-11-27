@@ -143,7 +143,15 @@ test('the required native PG17 PR job runs the read-only audit suite without fil
  assert(/^  pull_request:\s*$/m.test(workflow));assert(/^  chat-inbox-native-pg17:\s*$/m.test(workflow));
  assert(workflow.includes('- run: node --test tests/chat-v2-inbox-only/protected-release.test.mjs tests/chat-v2-inbox-only/readonly-audit.test.mjs'));
  assert(workflow.includes('- run: bash scripts/ci/run-chat-inbox-pg17.sh'));
- assert(!/^\s*(?:if|paths|paths-ignore):/m.test(workflow));assert(!/continue-on-error:|secrets\./.test(workflow));
+ const [native,contracts]=workflow.split('\n  inbox-only-contracts:\n');
+ assert(!/^\s*(?:if|paths|paths-ignore):/m.test(native));assert(!/continue-on-error:|secrets\./.test(workflow));
+ assert.match(native,/^      inbox-contracts: \$\{\{ steps\.inbox-contracts\.outcome \}\}$/m);
+ assert.match(native,/PASS 34 independent Chat V2 inbox-only PostgreSQL checks/);
+ assert.match(native,/^        id: inbox-contracts\n[\s\S]+renderer\.test\.mjs/m);
+ assert.match(contracts,/^    needs: chat-inbox-native-pg17\n    if: \$\{\{ always\(\) \}\}$/m);
+ assert(contracts.includes('NATIVE_RESULT: ${{ needs.chat-inbox-native-pg17.result }}'));
+ assert(contracts.includes('INBOX_OUTCOME: ${{ needs.chat-inbox-native-pg17.outputs.inbox-contracts }}'));
+ assert.deepEqual(contracts.match(/^        run: .+$/gm),['        run: \'[[ "$NATIVE_RESULT" == success && "$INBOX_OUTCOME" == success ]]\'']);
  assert(workflow.includes('contents: read'));assert(workflow.includes('persist-credentials: false'));
 });
 

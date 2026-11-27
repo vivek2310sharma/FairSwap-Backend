@@ -5,12 +5,24 @@ import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 const here=fileURLToPath(new URL('.',import.meta.url)),root=resolve(here,'../../..');
 const json=p=>JSON.parse(read(resolve(here,p),'utf8'));
-export function validateCi(source){
+export function validateCi(source,{historical=false}={}){
  const job=source.match(/^  ratings-hosted-readiness-pg17:\n([\s\S]*?)(?=^  [\w-]+:|$(?![\s\S]))/m)?.[1];assert(job,'Mandatory PG17 readiness job missing');
- assert(!/continue-on-error|^    if:|secrets:|environment:|pull_request_target/.test(job));
- assert(job.includes('bash tests/ratings/build-native-pg17.sh'));
- assert(job.includes('node --test releases/candidates/ratings-v1-final-release/ci-contract.test.mjs'));
- assert(job.includes('run-pg17.sh'));assert(job.includes('env -i PATH='));
+ const suite=historical?job:source.match(/^  ratings-native-pg17:\n([\s\S]*?)(?=^  [\w-]+:)/m)?.[1];
+ assert(suite,'Native PostgreSQL job missing');
+ assert.doesNotMatch(suite,/continue-on-error|^\s+if:|secrets:|environment:|pull_request_target/m);
+ assert(suite.includes('bash tests/ratings/build-native-pg17.sh'));
+ assert(suite.includes('node --test releases/candidates/ratings-v1-final-release/ci-contract.test.mjs'));
+ assert(suite.includes('bash -n releases/candidates/ratings-v1-final-release/run-pg17.sh'));
+ assert.match(suite,/env -i PATH=.*\n\s+bash releases\/candidates\/ratings-v1-final-release\/run-pg17\.sh/);
+ if(!historical){
+  assert.match(suite,/^      ratings-readiness: \$\{\{ steps\.ratings-readiness\.outcome \}\}$/m);
+  assert.match(suite,/^        id: ratings-readiness\n\s+timeout-minutes: \d+\n\s+run: \|\n\s+env -i PATH=.*\n\s+bash releases\/candidates\/ratings-v1-final-release\/run-pg17\.sh/m);
+  assert.match(job,/^    needs: ratings-native-pg17\n    if: \$\{\{ always\(\) \}\}$/m);
+  assert.doesNotMatch(job,/continue-on-error|^ +if:(?! \$\{\{ always\(\) \}\}$)|secrets:|environment:/m);
+  assert(job.includes('NATIVE_RESULT: ${{ needs.ratings-native-pg17.result }}'));
+  assert(job.includes('READINESS_OUTCOME: ${{ needs.ratings-native-pg17.outputs.ratings-readiness }}'));
+  assert.deepEqual(job.match(/^        run: .+$/gm),['        run: \'[[ "$NATIVE_RESULT" == success && "$READINESS_OUTCOME" == success ]]\'']);
+ }
  const gate=source.slice(source.indexOf('  backend-ci-success:'));
  const needs=gate.match(/^    needs: \[([^\]]+)\]/m)?.[1].split(',').map(x=>x.trim());
  const jobs=[...source.slice(source.indexOf('\njobs:\n')).matchAll(/^  ([\w-]+):$/gm)].map(x=>x[1]).filter(x=>x!=='backend-ci-success');
@@ -21,13 +33,21 @@ export function validateCi(source){
 }
 test('hosted PG17 runs on every existing CI trigger and is mandatory in aggregate',()=>validateCi(read(resolve(root,'.github/workflows/backend-ci.yml'),'utf8').replaceAll('\r\n','\n')));
 test('reviewed PR CI integration retains every original job, step and aggregate result check',()=>{
- const before=read(resolve(here,'ci-reviewed-head.before.yml'),'utf8'),after=read(resolve(here,'ci-reviewed-head.after.yml'),'utf8');validateCi(after);
+ const before=read(resolve(here,'ci-reviewed-head.before.yml'),'utf8'),after=read(resolve(here,'ci-reviewed-head.after.yml'),'utf8');validateCi(after,{historical:true});
  const stripped=after.replace(/^  ratings-hosted-readiness-pg17:\n[\s\S]*?(?=^  backend-ci-success:)/m,'').replace(', ratings-hosted-readiness-pg17]',']').replace(/^          RATINGS_READINESS_RESULT:.*\n/m,'').replace(' && "$RATINGS_READINESS_RESULT" == success','');
  assert.equal(stripped,before);
 });
 test('missing job, omitted dependency or ignored readiness failure cannot satisfy CI contract',()=>{
  const source=read(resolve(root,'.github/workflows/backend-ci.yml'),'utf8').replaceAll('\r\n','\n');
- for(const altered of [source.replace('ratings-hosted-readiness-pg17:','removed-readiness:'),source.replace(', ratings-hosted-readiness-pg17]',']'),source.replace('&& "$RATINGS_READINESS_RESULT" == success',''),source.replace('  ratings-hosted-readiness-pg17:\n','  ratings-hosted-readiness-pg17:\n    continue-on-error: true\n')])assert.throws(()=>validateCi(altered));
+ for(const altered of [
+  source.replace('  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17','  ratings-hosted-readiness-pg17:\n    needs: database-pg15'),
+  source.replace('steps.ratings-readiness.outcome','steps.unrelated.outcome'),
+  source.replace(' && "$READINESS_OUTCOME" == success',''),
+  source.replace('ratings-hosted-readiness-pg17:','removed-readiness:'),
+  source.replace(', ratings-hosted-readiness-pg17]',']'),
+  source.replace('&& "$RATINGS_READINESS_RESULT" == success',''),
+  source.replace('  ratings-hosted-readiness-pg17:\n','  ratings-hosted-readiness-pg17:\n    continue-on-error: true\n'),
+ ])assert.throws(()=>validateCi(altered));
 });
 test('waiver is release-specific in both records and waives no other gate',()=>{
  for(const env of ['test','production'])for(const file of ['manifest.json','release-record.json','receipt.template.json']){

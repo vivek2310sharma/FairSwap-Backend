@@ -4,7 +4,7 @@ import {readFileSync, mkdtempSync, rmSync, existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {createHash} from 'node:crypto';
+import {createHash, X509Certificate} from 'node:crypto';
 import {releaseReusable} from '../../scripts/release/reusable-supabase-release.mjs';
 import {rootCertificates} from 'node:tls';
 import {getCandidate, planDispatch, verifyCandidateSha} from '../../scripts/release/reusable-candidates.mjs';
@@ -15,6 +15,13 @@ import {setupOrdinaryGoodsFixture} from '../ordinary-goods/fixture.mjs';
 const pglitePath = process.env.FSW_PGLITE_MODULE ?? 'tests/ratings/node_modules/@electric-sql/pglite/dist/index.js';
 const PGlite = existsSync(resolve(pglitePath)) ? (await import(pathToFileURL(resolve(pglitePath)).href)).PGlite : null;
 const databaseRequired = process.env.REQUIRE_REAL_PG === '1' || process.env.GITHUB_WORKFLOW === 'Backend independent CI' || Boolean(process.env.FSW_PGLITE_MODULE);
+
+const now = Date.now();
+const fixtureRootCertificate = [...rootCertificates].sort().find(pem => {
+  const certificate = new X509Certificate(pem);
+  return certificate.ca && Date.parse(certificate.validFrom) <= now && now < Date.parse(certificate.validTo);
+});
+assert.ok(fixtureRootCertificate, 'Node must supply a currently valid root CA for the release fixtures');
 
 const sha = 'a'.repeat(40);
 const context = {TARGET: 'test', WEB_STAGING_SHA: sha, WEB_PRODUCTION_SHA: sha, GITHUB_SHA: sha};
@@ -131,7 +138,7 @@ test('V3 runner uses existing TLS/environment connection, read-only flights and 
   const c = {...context, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
     GITHUB_REPOSITORY: 'vivek2310sharma/FairSwap-Backend', GITHUB_WORKFLOW_REF: 'vivek2310sharma/FairSwap-Backend/.github/workflows/reusable-supabase-release.yml@refs/heads/main',
     GITHUB_ACTOR: 'vivek2310sharma', GITHUB_TRIGGERING_ACTOR: 'vivek2310sharma', GITHUB_RUN_ID: '14',
-    CHAT_DB_SSL_ROOT_CERT_PEM: rootCertificates[0], CHAT_DATABASE_PASSWORD: 'mock', CHAT_DB_POOLER_HOST: 'aws-0-eu-west-1.pooler.supabase.com'};
+    CHAT_DB_SSL_ROOT_CERT_PEM: fixtureRootCertificate, CHAT_DATABASE_PASSWORD: 'mock', CHAT_DB_POOLER_HOST: 'aws-0-eu-west-1.pooler.supabase.com'};
   const calls = [];
   const runner = (cmd, args, env, sql) => { calls.push(sql); assert.equal(cmd, 'psql'); assert.ok(args.includes('ON_ERROR_STOP=1'));
     assert.ok(args.join(' ').includes('postgres.wpppxlnbzqynvhpeuavd@')); assert.equal(env.PGSSLMODE, 'verify-full'); return 'true'; };
@@ -265,7 +272,7 @@ test('V3 goods batch: validation, candidate restrictions, partial failure and re
   const c = {...context, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
     GITHUB_REPOSITORY: 'vivek2310sharma/FairSwap-Backend', GITHUB_WORKFLOW_REF: 'vivek2310sharma/FairSwap-Backend/.github/workflows/reusable-supabase-release.yml@refs/heads/main',
     GITHUB_ACTOR: 'vivek2310sharma', GITHUB_TRIGGERING_ACTOR: 'vivek2310sharma', GITHUB_RUN_ID: '14',
-    CHAT_DB_SSL_ROOT_CERT_PEM: rootCertificates[0], CHAT_DATABASE_PASSWORD: 'mock', CHAT_DB_POOLER_HOST: 'aws-0-eu-west-1.pooler.supabase.com',
+    CHAT_DB_SSL_ROOT_CERT_PEM: fixtureRootCertificate, CHAT_DATABASE_PASSWORD: 'mock', CHAT_DB_POOLER_HOST: 'aws-0-eu-west-1.pooler.supabase.com',
     WEB_EVIDENCE_TOKEN: 'mock', V3_BATCH_JSON: JSON.stringify(validBatch)};
 
   try {
@@ -317,7 +324,7 @@ test('V3 goods batch: bounded to five leaves and stops starting leaves once the 
   const c = {...context, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
     GITHUB_REPOSITORY: 'vivek2310sharma/FairSwap-Backend', GITHUB_WORKFLOW_REF: 'vivek2310sharma/FairSwap-Backend/.github/workflows/reusable-supabase-release.yml@refs/heads/main',
     GITHUB_ACTOR: 'vivek2310sharma', GITHUB_TRIGGERING_ACTOR: 'vivek2310sharma', GITHUB_RUN_ID: '15',
-    CHAT_DB_SSL_ROOT_CERT_PEM: rootCertificates[0], CHAT_DATABASE_PASSWORD: 'mock', CHAT_DB_POOLER_HOST: 'aws-0-eu-west-1.pooler.supabase.com',
+    CHAT_DB_SSL_ROOT_CERT_PEM: fixtureRootCertificate, CHAT_DATABASE_PASSWORD: 'mock', CHAT_DB_POOLER_HOST: 'aws-0-eu-west-1.pooler.supabase.com',
     WEB_EVIDENCE_TOKEN: 'mock', V3_BATCH_JSON: JSON.stringify(batch)};
   const dir = mkdtempSync(join(tmpdir(), 'v3-batch-budget-'));
   try {

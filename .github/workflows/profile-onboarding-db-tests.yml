@@ -7,6 +7,8 @@ name: Profile onboarding DB tests
 on:
   pull_request:
     paths:
+      - 'supabase/migrations/**'
+      - '.github/workflows/profile-onboarding-db-tests.yml'
       - 'supabase/forward-migrations/profile-onboarding/**'
       - 'scripts/ci/run-profile-onboarding-tests.mjs'
       - 'scripts/ci/run-profile-onboarding-db.sh'

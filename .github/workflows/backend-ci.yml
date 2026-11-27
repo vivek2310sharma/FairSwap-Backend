@@ -182,7 +182,7 @@ jobs:
           name: backend-unit-summary-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/backend-ci-artifacts/unit-summary.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
           include-hidden-files: false
 
   database-pg15:
@@ -235,13 +235,15 @@ jobs:
             ${{ runner.temp }}/backend-db-evidence/suite-results.json
             ${{ runner.temp }}/backend-db-evidence/SHA256SUMS
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
           include-hidden-files: false
 
   ratings-native-pg17:
     needs: unit-integrity
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
+    outputs:
+      ratings-readiness: ${{ steps.ratings-readiness.outcome }}
     permissions:
       contents: read
     defaults:
@@ -260,7 +262,20 @@ jobs:
           corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
           npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
       - name: Build checksum-pinned native PostgreSQL 17.6
+        timeout-minutes: 10
         run: bash tests/ratings/build-native-pg17.sh
+      - name: Verify fail-closed release and mandatory CI contracts
+        run: |
+          node --test releases/candidates/ratings-v1-final-release/ci-contract.test.mjs
+          bash -n releases/candidates/ratings-v1-final-release/run-pg17.sh
+      - name: Require both hosted-readiness suites and HDR-03 negative regressions
+        id: ratings-readiness
+        timeout-minutes: 8
+        run: |
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
+            bash releases/candidates/ratings-v1-final-release/run-pg17.sh \
+            "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+
       - name: Require Posting V2.1.2 native PG17 multi-connection regressions
         timeout-minutes: 7
         run: |
@@ -317,35 +332,18 @@ jobs:
             "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin" "$(command -v supabase)"
 
   ratings-hosted-readiness-pg17:
-    needs: unit-integrity
+    needs: ratings-native-pg17
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    permissions:
-      contents: read
-    defaults:
-      run:
-        shell: bash --noprofile --norc -euo pipefail {0}
+    permissions: {}
+    timeout-minutes: 2
     steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: Set up pinned Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: '24.15.0'
-          check-latest: false
-      - name: Verify fail-closed release and mandatory CI contracts
-        run: |
-          node --test releases/candidates/ratings-v1-final-release/ci-contract.test.mjs
-          bash -n releases/candidates/ratings-v1-final-release/run-pg17.sh
-      - name: Build checksum-pinned PostgreSQL 17.6
-        run: bash tests/ratings/build-native-pg17.sh
-      - name: Require both hosted-readiness suites and HDR-03 negative regressions
-        run: |
-          env -i PATH="$PATH" HOME="$RUNNER_TEMP" TMPDIR="$RUNNER_TEMP" \
-            bash releases/candidates/ratings-v1-final-release/run-pg17.sh \
-            "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"
+      - name: Require the shared native PostgreSQL readiness suite to succeed
+        env:
+          NATIVE_RESULT: ${{ needs.ratings-native-pg17.result }}
+          READINESS_OUTCOME: ${{ needs.ratings-native-pg17.outputs.ratings-readiness }}
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: '[[ "$NATIVE_RESULT" == success && "$READINESS_OUTCOME" == success ]]'
 
   backend-ci-success:
     needs: [unit-integrity, database-pg15, ratings-native-pg17, ratings-hosted-readiness-pg17]
@@ -354,7 +352,7 @@ jobs:
     permissions: {}
     timeout-minutes: 2
     steps:
-      - name: Require all three verification jobs to succeed
+      - name: Require all four verification jobs to succeed
         timeout-minutes: 1
         env:
           UNIT_RESULT: ${{ needs.unit-integrity.result }}
