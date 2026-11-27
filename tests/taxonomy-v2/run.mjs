@@ -112,7 +112,9 @@ try {
 async function openNative(bin) {
  const command=(name,args)=>execFileSync(resolve(bin,name),args,{encoding:'utf8'});
  const pin=JSON.parse(readFileSync(resolve(root,'tests/ratings/pg17-source.json'),'utf8'));
- assert.equal(command('postgres',['--version']).trim(),`postgres (PostgreSQL) ${pin.version}`);
+ const version=command('postgres',['--version']).trim();
+ const expected=`postgres (PostgreSQL) ${pin.version}`;
+ assert([expected,`${expected} (Ubuntu ${pin.version}-1.pgdg24.04+1)`].includes(version), `Unexpected PostgreSQL version: ${version}`);
  const dir=realpathSync(mkdtempSync('/tmp/fairswap-posting-native-'));
  chmodSync(dir,0o700);
  writeFileSync(resolve(dir,'fixture-kind'),'fairswap-posting-native-v1\n');

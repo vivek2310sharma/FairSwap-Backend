@@ -3,7 +3,8 @@
 set -euo pipefail
 [[ $# == 1 && $1 == /* ]] || exit 2
 pg_bin="$1"
-[[ "$("$pg_bin/postgres" --version)" == 'postgres (PostgreSQL) 17.6' ]] || exit 2
+version=$("$pg_bin/postgres" --version)
+[[ ${version% (Ubuntu 17.6-1.pgdg24.04+1)} == 'postgres (PostgreSQL) 17.6' ]] || exit 2
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 run_dir="$(mktemp -d "${TMPDIR:-/tmp}/fsw-search-native-XXXXXXXX")"
 # macOS /tmp can be a symlink; the adapter checks canonical cluster paths.

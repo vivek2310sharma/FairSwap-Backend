@@ -8,7 +8,7 @@ const port=await new Promise((resolve,reject)=>{const s=createServer();s.on('err
 if(process.argv.length!==4||!path.isAbsolute(process.argv[2])||!path.isAbsolute(process.argv[3])) throw Error('Supply absolute PG17.6 bin and CLI2.117.0 paths only');
 const repo=fileURLToPath(new URL('../../',import.meta.url));
 const pg=process.argv[2];
-if(execFileSync(path.join(pg,'postgres'),['--version'],{encoding:'utf8'}).trim()!=='postgres (PostgreSQL) 17.6') throw Error('Exact PG17.6 required');
+if(execFileSync(path.join(pg,'postgres'),['--version'],{encoding:'utf8'}).trim().replace(/ \(Ubuntu 17\.6-1\.pgdg24\.04\+1\)$/, '')!=='postgres (PostgreSQL) 17.6') throw Error('Exact PG17.6 required');
 const cli=process.argv[3];
 if(!execFileSync(cli,['--version'],{encoding:'utf8',env:{PATH:process.env.PATH,HOME:mkdtempSync('/tmp/fsw-search-cli-home-')}}).startsWith('2.117.0'))throw Error('Exact CLI2.117.0 required');
 const fixtureHome=mkdtempSync('/tmp/fsw-search-cli-home-');

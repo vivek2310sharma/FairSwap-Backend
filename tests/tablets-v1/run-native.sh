@@ -5,7 +5,8 @@ set -euo pipefail
 pg_bin="$1"
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 expected="$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).version)' "$repo/tests/ratings/pg17-source.json")"
-[[ "$("$pg_bin/postgres" --version)" == "postgres (PostgreSQL) $expected" && $expected == 17.* ]] || exit 2
+version=$("$pg_bin/postgres" --version)
+[[ $expected == 17.* && ${version% (Ubuntu "$expected"-1.pgdg24.04+1)} == "postgres (PostgreSQL) $expected" ]] || exit 2
 run_dir="$(mktemp -d /tmp/fairswap-posting-native-XXXXXX)"
 run_dir="$(cd "$run_dir" && pwd -P)"
 chmod 700 "$run_dir"

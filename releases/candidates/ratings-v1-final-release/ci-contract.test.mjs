@@ -10,7 +10,8 @@ export function validateCi(source,{historical=false}={}){
  const suite=historical?job:source.match(/^  ratings-native-pg17:\n([\s\S]*?)(?=^  [\w-]+:)/m)?.[1];
  assert(suite,'Native PostgreSQL job missing');
  assert.doesNotMatch(suite,/continue-on-error|^\s+if:|secrets:|environment:|pull_request_target/m);
- assert(suite.includes('bash tests/ratings/build-native-pg17.sh'));
+ const installer=historical?'bash tests/ratings/build-native-pg17.sh':'bash scripts/ci/install-prebuilt-pg17.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source"';
+ assert(suite.includes(installer));
  assert(suite.includes('node --test releases/candidates/ratings-v1-final-release/ci-contract.test.mjs'));
  assert(suite.includes('bash -n releases/candidates/ratings-v1-final-release/run-pg17.sh'));
  assert.match(suite,/env -i PATH=.*\n\s+bash releases\/candidates\/ratings-v1-final-release\/run-pg17\.sh/);

@@ -6,6 +6,8 @@ on:
       - 'supabase/migrations/20260914000016_staff_user_moderation_and_hardening.sql'
       - 'tests/ratings/build-native-pg17.sh'
       - 'tests/ratings/pg17-source.json'
+      - 'scripts/ci/install-prebuilt-pg17.sh'
+      - 'scripts/ci/pg17-prebuilt.sha256'
       - 'tests/setup/no-network.ts'
       - 'pnpm-lock.yaml'
       - 'supabase/forward-migrations/idv/**'
@@ -51,9 +53,9 @@ jobs:
           node-version: '24.15.0'
           check-latest: false
 
-      - name: Build checksum-pinned native PostgreSQL 17
+      - name: Install checksum-pinned native PostgreSQL 17.6
         timeout-minutes: 30
-        run: bash tests/ratings/build-native-pg17.sh
+        run: bash scripts/ci/install-prebuilt-pg17.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source"
 
       - name: Execute disposable IDV migration and RLS assertions
         timeout-minutes: 10
