@@ -14,7 +14,7 @@ fi
 cleanup(){ if [[ -f "$task_tmp/data/postmaster.pid" ]]; then "$pg_bin/pg_ctl" -D "$task_tmp/data" -m immediate stop >/dev/null;fi; [[ $task_tmp == */chat-inbox-native.* ]] && rm -rf -- "$task_tmp"; }
 trap cleanup EXIT
 if [[ ${1:-} == --prebuilt ]]; then
-  bash tests/ratings/build-native-pg17.sh --prebuilt "$task_tmp/pg17"
+  bash scripts/ci/install-prebuilt-pg17.sh "$task_tmp/pg17"
 else
   curl --fail --silent --show-error --proto '=https' --tlsv1.2 https://ftp.postgresql.org/pub/source/v17.6/postgresql-17.6.tar.bz2 -o "$task_tmp/pg.tar.bz2"
   echo 'e0630a3600aea27511715563259ec2111cd5f4353a4b040e0be827f94cd7a8b0  '"$task_tmp/pg.tar.bz2" | sha256sum --check --status

@@ -64,6 +64,7 @@ jobs:
           grep -Eq '^# skipped 0$' "$RUNNER_TEMP/chat-v2-renderer-tests.log"
       - run: node --test tests/chat-v2-inbox-only/protected-release.test.mjs tests/chat-v2-inbox-only/readonly-audit.test.mjs
       - run: bash scripts/ci/run-chat-inbox-pg17.sh --prebuilt
+        name: Run native inbox and CLI fixtures with pinned PostgreSQL 17.6
 
   inbox-only-contracts:
     name: Chat inbox source, RLS and release contracts

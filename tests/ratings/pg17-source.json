@@ -3,10 +3,5 @@
   "url": "https://ftp.postgresql.org/pub/source/v17.6/postgresql-17.6.tar.bz2",
   "sha256": "e0630a3600aea27511715563259ec2111cd5f4353a4b040e0be827f94cd7a8b0",
   "checksumSource": "https://ftp.postgresql.org/pub/source/v17.6/postgresql-17.6.tar.bz2.sha256",
-  "configure": ["--without-readline", "--without-zlib", "--without-icu", "--without-openssl"],
-  "nobleAmd64": {
-    "postgresql-17": "2b5e87a653ac70f55950c53b624babea0bc43f9471c0b209321e985232246cc3",
-    "postgresql-client-17": "f5f21a5682333e55aa988e67128a6873df2edd5be0cbc7c47cc109f40c4ab580",
-    "libpq5": "4357455c2f67d9ee4ca29254dbba542587e365a2dfaacef4a0ca998e748758b5"
-  }
+  "configure": ["--without-readline", "--without-zlib", "--without-icu", "--without-openssl"]
 }
