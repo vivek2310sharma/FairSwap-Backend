@@ -119,14 +119,6 @@ verify_jwt = false
 [functions.process-listing-moderation]
 verify_jwt = false
 
-# Strict gateway JWT + service-role token recheck; never accessible to buyers.
-[functions.moderation-v2-text-shadow-probe]
-verify_jwt = true
-
-# Operator-only free OpenAI one-image shadow check; never grants approval.
-[functions.moderation-v2-image-shadow-probe]
-verify_jwt = true
-
 # FairSwap IDV-V1: Authenticated user gateway policies for DigiLocker identity functions
 [functions.idv-start]
 verify_jwt = true
