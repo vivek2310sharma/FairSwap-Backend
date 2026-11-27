@@ -3,14 +3,17 @@ name: Admin moderation analytics disposable DB security gate
 on:
   pull_request:
     paths:
-      - 'supabase/forward-migrations/moderation-analytics-v1/**'
+      - 'supabase/migrations/**'
+      - 'docs/extraction/MIGRATION_MANIFEST.sha256'
+      - 'scripts/verify-migration-manifest.mjs'
+      - 'scripts/release/**'
+      - 'releases/candidates/**'
+      - 'supabase/forward-migrations/**'
       - 'scripts/ci/run-moderation-analytics-db.sh'
       - 'scripts/ci/run-moderation-analytics-tests.mjs'
       - 'scripts/ci/toolchain.json'
       - '.github/workflows/admin-moderation-analytics-db-tests.yml'
       - '.github/workflows/reusable-supabase-release.yml'
-      - 'scripts/release/reusable-candidates.mjs'
-      - 'scripts/release/reusable-supabase-release.mjs'
       - 'tests/release/reusable-supabase-release.test.mjs'
   push:
     branches:

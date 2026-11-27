@@ -191,10 +191,11 @@ function assertWorkflowVerificationGate(workflow) {
     assert.match(gate, new RegExp(`^          ${variables[index]}: \\$\\{\\{ needs\\.${job}\\.result \\}\\}\\r?$`, "m"), `${job} result must be bound`);
   }
   assert.match(workflow, /^  ratings-native-pg17:\r?\n    needs: unit-integrity\r?$/m);
-  assert.match(workflow, /^  ratings-hosted-readiness-pg17:\r?\n    needs: unit-integrity\r?$/m);
+  assert.match(workflow, /^  ratings-hosted-readiness-pg17:\r?\n    needs: ratings-native-pg17\r?\n    if: \$\{\{ always\(\) \}\}\r?$/m);
   for (const job of ["ratings-native-pg17", "ratings-hosted-readiness-pg17"]) {
     const block = workflow.match(new RegExp(`^  ${job}:\\r?\\n([\\s\\S]*?)(?=^  [\\w-]+:\\r?$|(?![\\s\\S]))`, "m"))?.[1];
-    assert.doesNotMatch(block, /continue-on-error|^\s+if:/m, `${job} cannot bypass or skip verification`);
+    const steps = block.replace(/^    if: \$\{\{ always\(\) \}\}\r?\n/m, "");
+    assert.doesNotMatch(steps, /continue-on-error|^\s+if:/m, `${job} cannot bypass or skip verification`);
   }
   assert.doesNotMatch(gate, /continue-on-error|^        if:/m, "aggregate step cannot bypass or skip verification");
   const condition = variables.map(variable => `"$${variable}" == success`).join(" && ");
@@ -205,7 +206,9 @@ function assertWorkflowVerificationGate(workflow) {
 function workflowGateFixture(chat = false) {
   const jobs = ["unit-integrity", "database-pg15", "ratings-native-pg17", ...(chat ? ["chat-v2"] : []), "ratings-hosted-readiness-pg17"];
   const variables = ["UNIT_RESULT", "DATABASE_RESULT", "PG17_RESULT", ...(chat ? ["CHAT_V2_RESULT"] : []), "RATINGS_READINESS_RESULT"];
-  return jobs.map(job => `  ${job}:\n    needs: unit-integrity\n`).join("") +
+  return jobs.filter(job => job !== "ratings-hosted-readiness-pg17")
+    .map(job => `  ${job}:\n    needs: unit-integrity\n`).join("") +
+    "  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: ${{ always() }}\n" +
     `  backend-ci-success:\n    needs: [${jobs.join(", ")}]\n    if: \$\{\{ always() \}\}\n    steps:\n      - name: Require every verification job\n        env:\n` +
     jobs.map((job, index) => `          ${variables[index]}: \$\{\{ needs.${job}.result \}\}\n`).join("") +
     `        run: '[[ ${variables.map(variable => `"$${variable}" == success`).join(" && ")} ]]'\n`;
@@ -228,15 +231,15 @@ const gateChanges = {
   "missing readiness dependency": workflow => workflow.replace(", ratings-hosted-readiness-pg17]", "]"),
   "misspelled readiness dependency": workflow => workflow.replace("ratings-hosted-readiness-pg17]", "ratings-hosted-readiness-pg1]"),
   "extra unreviewed dependency": workflow => workflow.replace("ratings-hosted-readiness-pg17]", "ratings-hosted-readiness-pg17, unchecked]"),
-  "missing readiness job": workflow => workflow.replace("  ratings-hosted-readiness-pg17:\n    needs: unit-integrity\n", ""),
+  "missing readiness job": workflow => workflow.replace("  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: ${{ always() }}\n", ""),
   "missing readiness result binding": workflow => workflow.replace("          RATINGS_READINESS_RESULT: ${{ needs.ratings-hosted-readiness-pg17.result }}\n", ""),
   "incorrect readiness result binding": workflow => workflow.replace("RATINGS_READINESS_RESULT: ${{ needs.ratings-hosted-readiness-pg17.result }}", "RATINGS_READINESS_RESULT: ${{ needs.ratings-native-pg17.result }}"),
   "missing readiness success condition": workflow => workflow.replace(' && "$RATINGS_READINESS_RESULT" == success', ""),
   "readiness OR bypass": workflow => workflow.replace('&& "$RATINGS_READINESS_RESULT"', '|| "$RATINGS_READINESS_RESULT"'),
   "readiness nonfailure bypass": workflow => workflow.replace('"$RATINGS_READINESS_RESULT" == success', '"$RATINGS_READINESS_RESULT" != failure'),
   "readiness ignored failure": workflow => workflow.replace("  ratings-hosted-readiness-pg17:\n", "  ratings-hosted-readiness-pg17:\n    continue-on-error: true\n"),
-  "readiness job skipped": workflow => workflow.replace("  ratings-hosted-readiness-pg17:\n    needs: unit-integrity\n", "  ratings-hosted-readiness-pg17:\n    needs: unit-integrity\n    if: false\n"),
-  "readiness step skipped": workflow => workflow.replace("  ratings-hosted-readiness-pg17:\n    needs: unit-integrity\n", "  ratings-hosted-readiness-pg17:\n    needs: unit-integrity\n    steps:\n      - name: Verification\n        if: false\n"),
+  "readiness job skipped": workflow => workflow.replace("  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: ${{ always() }}\n", "  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: false\n"),
+  "readiness step skipped": workflow => workflow.replace("  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: ${{ always() }}\n", "  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: ${{ always() }}\n    steps:\n      - name: Verification\n        if: false\n"),
   "aggregate step skipped": workflow => workflow.replace("      - name: Require every verification job\n", "      - name: Require every verification job\n        if: false\n"),
   "aggregate ignored failure": workflow => workflow.replace("      - name: Require every verification job\n", "      - name: Require every verification job\n        continue-on-error: true\n"),
 };

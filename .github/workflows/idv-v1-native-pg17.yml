@@ -3,6 +3,11 @@ name: IDV V1 native PostgreSQL 17 security gate
 on:
   pull_request:
     paths:
+      - 'supabase/migrations/20260914000016_staff_user_moderation_and_hardening.sql'
+      - 'tests/ratings/build-native-pg17.sh'
+      - 'tests/ratings/pg17-source.json'
+      - 'tests/setup/no-network.ts'
+      - 'pnpm-lock.yaml'
       - 'supabase/forward-migrations/idv/**'
       - 'supabase/functions/_shared/idv/**'
       - 'supabase/functions/idv-*/**'
