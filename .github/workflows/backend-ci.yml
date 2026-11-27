@@ -261,9 +261,9 @@ jobs:
         run: |
           corepack pnpm install --frozen-lockfile --ignore-scripts --engine-strict
           npm ci --prefix tests/ratings --ignore-scripts --no-audit --no-fund
-      - name: Build checksum-pinned native PostgreSQL 17.6
+      - name: Install checksum-pinned native PostgreSQL 17.6
         timeout-minutes: 10
-        run: bash tests/ratings/build-native-pg17.sh
+        run: bash tests/ratings/build-native-pg17.sh --prebuilt
       - name: Verify fail-closed release and mandatory CI contracts
         run: |
           node --test releases/candidates/ratings-v1-final-release/ci-contract.test.mjs

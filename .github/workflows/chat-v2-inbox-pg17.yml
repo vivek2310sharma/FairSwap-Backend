@@ -63,7 +63,7 @@ jobs:
           grep -Eq '^# fail 0$' "$RUNNER_TEMP/chat-v2-renderer-tests.log"
           grep -Eq '^# skipped 0$' "$RUNNER_TEMP/chat-v2-renderer-tests.log"
       - run: node --test tests/chat-v2-inbox-only/protected-release.test.mjs tests/chat-v2-inbox-only/readonly-audit.test.mjs
-      - run: bash scripts/ci/run-chat-inbox-pg17.sh
+      - run: bash scripts/ci/run-chat-inbox-pg17.sh --prebuilt
 
   inbox-only-contracts:
     name: Chat inbox source, RLS and release contracts

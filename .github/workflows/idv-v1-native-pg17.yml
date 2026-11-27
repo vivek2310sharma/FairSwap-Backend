@@ -51,9 +51,9 @@ jobs:
           node-version: '24.15.0'
           check-latest: false
 
-      - name: Build checksum-pinned native PostgreSQL 17
+      - name: Install checksum-pinned native PostgreSQL 17.6
         timeout-minutes: 30
-        run: bash tests/ratings/build-native-pg17.sh
+        run: bash tests/ratings/build-native-pg17.sh --prebuilt
 
       - name: Execute disposable IDV migration and RLS assertions
         timeout-minutes: 10
