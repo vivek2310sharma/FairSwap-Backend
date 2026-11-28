@@ -32,6 +32,6 @@ test('PGlite and native taxonomy checks run in existing required jobs before agg
  }
  assert(unit.includes('tests/release/taxonomy-v2-release.test.mjs'));
  assert(native.indexOf('build-native-pg17.sh')<native.indexOf('tests/taxonomy-v2/run.mjs'));
- assert.match(ci,/needs: \[unit-integrity, database-pg15, ratings-native-pg17, ratings-hosted-readiness-pg17\]/);
+ assert.match(ci,/needs: \[changes, unit-integrity, database-pg15, forward-db-pg15, ratings-native-pg17, chat-inbox-native-pg17, ratings-hosted-readiness-pg17\]/);
  assert(!ci.includes('continue-on-error: true'));
 });

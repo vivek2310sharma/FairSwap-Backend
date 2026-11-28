@@ -1,6 +1,6 @@
 // GET-only policy audit. Complete privileged metadata is required automatically.
 import {createHash} from 'node:crypto';
-import {readFileSync} from 'node:fs';
+import {existsSync,readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {join} from 'node:path';
 const repository='vivek2310sharma/FairSwap-Backend',base=`https://api.github.com/repos/${repository}`;
@@ -17,10 +17,12 @@ function normalize(value){
  return value;
 }
 export const protectionHash=value=>digest(canonicalJson(value));
+// Retired workflows moved out of the active directory; their bytes (and hashed labels) are unchanged.
+const retiredWorkflowSource=(root,path)=>{const active=join(root,path);return !path.startsWith('.github/workflows/')||existsSync(active)?active:join(root,'docs/operations/archived-workflows',path.slice('.github/workflows/'.length));};
 export function bundleHash(){
  const root=fileURLToPath(new URL('../../',import.meta.url));
  const paths=JSON.parse(readFileSync(join(root,'releases/candidates/chat-v2-inbox-only/protected-files.json'),'utf8'));
- return digest(paths.map(path=>{if(!/^(scripts|tests|releases|\.github)\//.test(path)||path.includes('..'))throw Error('CHAT_BUNDLE_PATH_INVALID');return digest(readFileSync(join(root,path)))+'  '+path;}).join('\n')+'\n');
+ return digest(paths.map(path=>{if(!/^(scripts|tests|releases|\.github)\//.test(path)||path.includes('..'))throw Error('CHAT_BUNDLE_PATH_INVALID');return digest(readFileSync(retiredWorkflowSource(root,path)))+'  '+path;}).join('\n')+'\n');
 }
 const fail=code=>{throw Error(code);};
 const id=value=>Number.isSafeInteger(value)&&value>0;

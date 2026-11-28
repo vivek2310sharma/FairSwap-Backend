@@ -128,7 +128,7 @@ test('malformed protection metadata fails with fixed categories rather than bein
 });
 
 test('audit workflow has separately protected sequential jobs and cannot reach the release path',()=>{
- const workflow=readFileSync(new URL('../../.github/workflows/chat-v2-inbox-release.yml',import.meta.url),'utf8');
+ const workflow=readFileSync(new URL('../../docs/operations/archived-workflows/chat-v2-inbox-release.yml',import.meta.url),'utf8');
  const audit=workflow.slice(workflow.indexOf('  audit_verify:'));
  assert(workflow.includes('inputs.deploy && !inputs.audit_only'));assert(audit.includes('inputs.audit_only && !inputs.deploy'));
  assert(audit.includes('environment: FairSwapTest'));assert(audit.includes('environment: FairSwapProd'));assert(audit.includes('needs: audit_test'));
@@ -139,18 +139,22 @@ test('audit workflow has separately protected sequential jobs and cannot reach t
 });
 
 test('the required native PG17 PR job runs the read-only audit suite without filters or conditional skips',()=>{
- const workflow=readFileSync(new URL('../../.github/workflows/chat-v2-inbox-pg17.yml',import.meta.url),'utf8');
+ const workflow=readFileSync(new URL('../../.github/workflows/backend-ci.yml',import.meta.url),'utf8');
  assert(/^  pull_request:\s*$/m.test(workflow));assert(/^  chat-inbox-native-pg17:\s*$/m.test(workflow));
- assert(workflow.includes('- run: node --test tests/chat-v2-inbox-only/protected-release.test.mjs tests/chat-v2-inbox-only/readonly-audit.test.mjs'));
- assert(workflow.includes('- run: bash scripts/ci/run-chat-inbox-pg17.sh'));
- const [native,contracts]=workflow.split('\n  inbox-only-contracts:\n');
+ const [beforeNative,afterNative]=workflow.split('\n  ratings-native-pg17:\n');
+ const [native,rest]=afterNative.split('\n  ratings-hosted-readiness-pg17:\n');
+ const contracts=rest.split('\n  chat-inbox-native-pg17:\n')[1].split('\n  backend-ci-success:\n')[0];
+ assert(native.includes('- run: node --test tests/chat-v2-inbox-only/protected-release.test.mjs tests/chat-v2-inbox-only/readonly-audit.test.mjs'));
+ assert(native.includes('bash scripts/ci/run-chat-inbox-pg17.sh --pg-bin "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source/install/bin"'));
+ assert(native.includes('bash scripts/ci/install-prebuilt-pg17.sh "$GITHUB_WORKSPACE/artifacts/ratings/pg17-source"'));
  assert(!/^\s*(?:if|paths|paths-ignore):/m.test(native));assert(!/continue-on-error:|secrets\./.test(workflow));
+ assert(!/^  (?:push|pull_request):\n    (?:paths|paths-ignore):/m.test(beforeNative));
  assert.match(native,/^      inbox-contracts: \$\{\{ steps\.inbox-contracts\.outcome \}\}$/m);
  assert.match(native,/PASS 34 independent Chat V2 inbox-only PostgreSQL checks/);
  assert.match(native,/^        id: inbox-contracts\n[\s\S]+renderer\.test\.mjs/m);
- assert.match(contracts,/^    needs: chat-inbox-native-pg17\n    if: \$\{\{ always\(\) \}\}$/m);
- assert(contracts.includes('NATIVE_RESULT: ${{ needs.chat-inbox-native-pg17.result }}'));
- assert(contracts.includes('INBOX_OUTCOME: ${{ needs.chat-inbox-native-pg17.outputs.inbox-contracts }}'));
+ assert.match(contracts,/^    needs: ratings-native-pg17\n    if: \$\{\{ always\(\) \}\}$/m);
+ assert(contracts.includes('NATIVE_RESULT: ${{ needs.ratings-native-pg17.result }}'));
+ assert(contracts.includes('INBOX_OUTCOME: ${{ needs.ratings-native-pg17.outputs.inbox-contracts }}'));
  assert.deepEqual(contracts.match(/^        run: .+$/gm),['        run: \'[[ "$NATIVE_RESULT" == success && "$INBOX_OUTCOME" == success ]]\'']);
  assert(workflow.includes('contents: read'));assert(workflow.includes('persist-credentials: false'));
 });
@@ -216,7 +220,7 @@ test('both original and rerun deployment actors must be the owner before any API
 });
 
 test('one deploy dispatch captures ledgers automatically and carries trusted Test outputs to Prod',()=>{
- const workflow=readFileSync(new URL('../../.github/workflows/chat-v2-inbox-release.yml',import.meta.url),'utf8');
+ const workflow=readFileSync(new URL('../../docs/operations/archived-workflows/chat-v2-inbox-release.yml',import.meta.url),'utf8');
  const jobs=workflow.slice(workflow.indexOf('jobs:')).split(/\n(?=  [a-z_]+:\n)/).slice(1);
  assert.equal(jobs.length,6);
  for(const job of jobs){assert(job.includes("github.actor == 'vivek2310sharma'"));assert(job.includes("github.triggering_actor == 'vivek2310sharma'"));}

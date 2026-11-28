@@ -18,7 +18,8 @@ No hosted deployment, GitHub administration, commit or push occurred in preparat
 
 ChatGPT owns branch/commit/push/PR/merge and hosted orchestration. The one-dispatch
 workflow is prepared locally, not installed or dispatched by this task. All existing
-branch checks, including backend-ci-success and chat-inbox-native-pg17, remain required.
+branch checks, including backend-ci-success and chat-inbox-native-pg17 (now a job inside
+`backend-ci.yml`, same check name), remain required.
 FairSwapTest and FairSwapProd retain their separate owner approval protections.
 No manual/exploratory testing or owner testing before deployment is required.
 

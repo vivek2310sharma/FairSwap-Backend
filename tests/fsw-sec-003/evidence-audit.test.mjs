@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {readFileSync, mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {collect, refs, repository, workflow, hash, verifyReceipt, writeReceipt, backupMetadata} from '../../scripts/release/fsw-sec-003-evidence-audit.mjs';
+import {collect, refs, repository, workflow, workflowArchive, hash, verifyReceipt, writeReceipt, backupMetadata} from '../../scripts/release/fsw-sec-003-evidence-audit.mjs';
 const now = Date.parse('2026-10-31T12:00:00Z');
 const context = (environment='FairSwapTest') => ({GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',
   GITHUB_REPOSITORY:repository,GITHUB_REF:'refs/heads/main',GITHUB_WORKFLOW_REF:`${repository}/${workflow}@refs/heads/main`,
@@ -133,7 +133,7 @@ test('receipt directory and files cannot be overwritten',async()=>{
   }finally{rmSync(dir,{recursive:true,force:true});}
 });
 test('workflow remains isolated from deployments, uses protected independent jobs and immutable trusted receipts',()=>{
-  const w=readFileSync(new URL('../../'+workflow,import.meta.url),'utf8');
+  const w=readFileSync(new URL('../../'+workflowArchive,import.meta.url),'utf8');
   for(const text of ['workflow_dispatch:','github.triggering_actor','inputs.approved_sha == github.sha','environment: ${{ matrix.environment }}','fail-fast: false','overwrite: false','always()','artifact-ids: ${{ steps.artifact.outputs.artifact-id }}','TRUSTED_RECEIPT_SHA: ${{ steps.collect.outputs.sha256 }}','persist-credentials: false'])assert.ok(w.includes(text),text);
   for(const text of ['push:','pull_request:','schedule:','write-all','id-token:','continue-on-error','FSW_SEC_003_RELEASE_ENABLED','CHAT_DATABASE_PASSWORD','supabase db','fsw-sec-003-release.mjs'])assert.ok(!w.includes(text),text);
 });

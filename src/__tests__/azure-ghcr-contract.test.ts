@@ -5,8 +5,8 @@ import { join } from "node:path";
 describe("Azure Moderation GHCR Migration Contract Tests", () => {
   const rootDir = process.cwd();
 
-  const deployWorkflowPath = join(rootDir, ".github/workflows/deploy-azure-moderation.yml");
-  const ciWorkflowPath = join(rootDir, ".github/workflows/azure-moderation-ci.yml");
+  const deployWorkflowPath = join(rootDir, "docs/operations/archived-workflows/deploy-azure-moderation.yml");
+  const ciWorkflowPath = join(rootDir, "docs/operations/archived-workflows/azure-moderation-ci.yml");
   const mainBicepPath = join(rootDir, "infra/azure/moderation/main.bicep");
   const acrBicepPath = join(rootDir, "infra/azure/moderation/acr.bicep");
   const costEstimatePath = join(rootDir, "infra/azure/moderation/COST_ESTIMATE.md");

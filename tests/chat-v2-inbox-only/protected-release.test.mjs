@@ -53,7 +53,7 @@ test('unavailable administration APIs block before credentials can be used for D
  await assert.rejects(()=>auditProtection('FairSwapTest','fixture',async()=>({ok:false}),fixture.evidence),/UNVERIFIABLE/);
 });
 test('workflow is manual/default-off and has separately gated Test and Production environments',()=>{
- const sql=readFileSync(new URL('../../.github/workflows/chat-v2-inbox-release.yml',import.meta.url),'utf8');
+ const sql=readFileSync(new URL('../../docs/operations/archived-workflows/chat-v2-inbox-release.yml',import.meta.url),'utf8');
  assert(sql.includes('workflow_dispatch:'));assert(!sql.includes('schedule:'));assert(!sql.includes('pull_request:'));assert(sql.includes('default: false'));assert(sql.includes('environment: FairSwapTest'));assert(sql.includes('environment: FairSwapProd'));assert(sql.includes('needs: [verify, test]'));assert(sql.includes('inputs.approved_sha == github.sha'));assert(sql.includes('overwrite: false'));assert(!sql.includes('db push'));
 });
 test('solo-owner protections pass; bypass, pagination and repository secrets fail',async()=>{
@@ -265,7 +265,7 @@ test('pooler DNS and network failures remain distinct from authentication and ex
  }
 });
 test('only protected deploy jobs receive their environment-scoped pooler hostname',()=>{
- const workflow=readFileSync(new URL('../../.github/workflows/chat-v2-inbox-release.yml',import.meta.url),'utf8');
+ const workflow=readFileSync(new URL('../../docs/operations/archived-workflows/chat-v2-inbox-release.yml',import.meta.url),'utf8');
  const jobs=workflow.slice(workflow.indexOf('jobs:')).split(/\n(?=  [a-z_]+:\n)/).slice(1);
  for(const job of jobs){
   const deploy=/^  (?:test|production):/.test(job);
