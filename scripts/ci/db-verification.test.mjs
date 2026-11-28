@@ -171,126 +171,142 @@ test("evidence rejects unknown artifacts instead of copying private raw files", 
     assert.throws(() => verifyEvidence(out));
   });
 });
+// The gate under test is the real backend-ci-success job, not a model of it.
+const STRICT_JOBS = [
+  ["changes", "CHANGES_RESULT"], ["unit-integrity", "UNIT_RESULT"], ["ratings-native-pg17", "PG17_RESULT"],
+  ["ratings-hosted-readiness-pg17", "RATINGS_READINESS_RESULT"], ["chat-inbox-native-pg17", "CHAT_INBOX_RESULT"],
+];
+const SKIPPABLE_JOBS = [["database-pg15", "DATABASE_RESULT", "pg15", "PG15_RELEVANT"], ["forward-db-pg15", "FORWARD_RESULT", "forward", "FORWARD_RELEVANT"]];
+const realWorkflow = () => readFileSync(path.join(root, ".github/workflows/backend-ci.yml"), "utf8");
+const gateBlock = workflow => workflow.match(/^  backend-ci-success:\r?\n([\s\S]*?)(?=^  [\w-]+:\r?$|(?![\s\S]))/m)?.[1];
+const jobBlock = (workflow, job) => workflow.match(new RegExp(`^  ${job}:\\r?\\n([\\s\\S]*?)(?=^  [\\w-]+:\\r?$|(?![\\s\\S]))`, "m"))?.[1];
+
 function assertWorkflowVerificationGate(workflow) {
-  const gate = workflow.match(/^  backend-ci-success:\r?\n([\s\S]*?)(?=^  [\w-]+:\r?$|(?![\s\S]))/m)?.[1];
+  const gate = gateBlock(workflow);
   assert.ok(gate, "backend-ci-success must exist");
-  const jobs = ["unit-integrity", "database-pg15", "ratings-native-pg17"];
-  const variables = ["UNIT_RESULT", "DATABASE_RESULT", "PG17_RESULT"];
-  // Preserve the independent local Chat V2 gate whenever that job is installed.
-  if (/^  chat-v2:\r?$/m.test(workflow)) {
-    jobs.push("chat-v2");
-    variables.push("CHAT_V2_RESULT");
-  }
-  jobs.push("ratings-hosted-readiness-pg17");
-  variables.push("RATINGS_READINESS_RESULT");
+  const jobs = [...STRICT_JOBS.map(([job]) => job), ...SKIPPABLE_JOBS.map(([job]) => job)];
   const needs = gate.match(/^    needs: \[([^\]\r\n]+)\]\r?$/m)?.[1].split(/,\s*/);
   assert.deepEqual(needs?.slice().sort(), jobs.slice().sort(), "all verification jobs must be required dependencies");
   assert.match(gate, /^    needs: .+\r?\n    if: \$\{\{ always\(\) \}\}\r?$/m);
-  for (const [index, job] of jobs.entries()) {
+  for (const [job, variable] of [...STRICT_JOBS, ...SKIPPABLE_JOBS.map(([job, variable]) => [job, variable])]) {
     assert.match(workflow, new RegExp(`^  ${job}:\\r?$`, "m"), `${job} must exist`);
-    assert.match(gate, new RegExp(`^          ${variables[index]}: \\$\\{\\{ needs\\.${job}\\.result \\}\\}\\r?$`, "m"), `${job} result must be bound`);
+    assert.match(gate, new RegExp(`^          ${variable}: \\$\\{\\{ needs\\.${job}\\.result \\}\\}\\r?$`, "m"), `${job} result must be bound`);
+  }
+  for (const [job, , output, variable] of SKIPPABLE_JOBS) {
+    assert.match(gate, new RegExp(`^          ${variable}: \\$\\{\\{ needs\\.changes\\.outputs\\.${output} \\}\\}\\r?$`, "m"));
+    const block = jobBlock(workflow, job);
+    assert.match(block, new RegExp(`^    needs: \\[unit-integrity, changes\\]\\r?\\n    if: \\$\\{\\{ needs\\.changes\\.outputs\\.${output} == 'true' \\}\\}\\r?$`, "m"), `${job} skip must come only from the fail-open filter`);
   }
   assert.match(workflow, /^  ratings-native-pg17:\r?\n    needs: unit-integrity\r?$/m);
   assert.match(workflow, /^  ratings-hosted-readiness-pg17:\r?\n    needs: ratings-native-pg17\r?\n    if: \$\{\{ always\(\) \}\}\r?$/m);
-  for (const job of ["ratings-native-pg17", "ratings-hosted-readiness-pg17"]) {
-    const block = workflow.match(new RegExp(`^  ${job}:\\r?\\n([\\s\\S]*?)(?=^  [\\w-]+:\\r?$|(?![\\s\\S]))`, "m"))?.[1];
-    const steps = block.replace(/^    if: \$\{\{ always\(\) \}\}\r?\n/m, "");
+  assert.match(workflow, /^  chat-inbox-native-pg17:\r?\n    needs: ratings-native-pg17\r?\n    if: \$\{\{ always\(\) \}\}\r?$/m);
+  assert.doesNotMatch(jobBlock(workflow, "unit-integrity"), /continue-on-error|^    if:/m, "unit-integrity cannot bypass verification");
+  for (const job of ["ratings-native-pg17", "ratings-hosted-readiness-pg17", "chat-inbox-native-pg17"]) {
+    const steps = jobBlock(workflow, job).replace(/^    if: \$\{\{ always\(\) \}\}\r?\n/m, "");
     assert.doesNotMatch(steps, /continue-on-error|^\s+if:/m, `${job} cannot bypass or skip verification`);
   }
   assert.doesNotMatch(gate, /continue-on-error|^        if:/m, "aggregate step cannot bypass or skip verification");
-  const condition = variables.map(variable => `"$${variable}" == success`).join(" && ");
-  assert.deepEqual(gate.match(/^        run: .+$/gm)?.map(line => line.trimEnd()),
-    [`        run: '[[ ${condition} ]]'`], "every verification result must equal success without a bypass");
+  const run = gate.match(/^        run: \|\r?\n((?:          .*\r?\n?)+)/m)?.[1];
+  assert.ok(run, "aggregate must have a reviewed script");
+  const strict = STRICT_JOBS.map(([, variable]) => `"$${variable}" == success`).join(" && ");
+  assert.ok(run.includes(`[[ ${strict} ]] || exit 1\n`), "every strict result must equal success without a bypass");
+  for (const [, variable, , relevant] of SKIPPABLE_JOBS) assert.ok(run.includes(`skip_proven "$${variable}" "$${relevant}" || exit 1\n`));
+  assert.ok(run.includes('skip_proven() { [[ "$1" == success || ( "$1" == skipped && "$CHANGES_RESULT" == success && "$2" == false ) ]]; }'));
+  assert.doesNotMatch(run, /\|\|\s*true|\bexit 0\b|set \+e/);
+  assert.equal(run.trimEnd().split(/\r?\n/).filter(line => !/^\s*#/.test(line)).length, 4, "no unreviewed gate command");
 }
 
-function workflowGateFixture(chat = false) {
-  const jobs = ["unit-integrity", "database-pg15", "ratings-native-pg17", ...(chat ? ["chat-v2"] : []), "ratings-hosted-readiness-pg17"];
-  const variables = ["UNIT_RESULT", "DATABASE_RESULT", "PG17_RESULT", ...(chat ? ["CHAT_V2_RESULT"] : []), "RATINGS_READINESS_RESULT"];
-  return jobs.filter(job => job !== "ratings-hosted-readiness-pg17")
-    .map(job => `  ${job}:\n    needs: unit-integrity\n`).join("") +
-    "  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: ${{ always() }}\n" +
-    `  backend-ci-success:\n    needs: [${jobs.join(", ")}]\n    if: \$\{\{ always() \}\}\n    steps:\n      - name: Require every verification job\n        env:\n` +
-    jobs.map((job, index) => `          ${variables[index]}: \$\{\{ needs.${job}.result \}\}\n`).join("") +
-    `        run: '[[ ${variables.map(variable => `"$${variable}" == success`).join(" && ")} ]]'\n`;
-}
-
-test("workflow gate accepts all four mandatory jobs and preserves an installed Chat V2 gate", () => {
-  assertWorkflowVerificationGate(workflowGateFixture());
-  assertWorkflowVerificationGate(workflowGateFixture(true));
+test("real aggregate gate depends on every verification job and has no bypass", () => {
+  assertWorkflowVerificationGate(realWorkflow());
 });
+
 const gateChanges = {
-  "missing PG17 dependency": workflow => workflow.replace(", ratings-native-pg17", ""),
-  "missing PG17 job": workflow => workflow.replace("  ratings-native-pg17:\n    needs: unit-integrity\n", ""),
-  "missing PG17 success condition": workflow => workflow.replace(' && "$PG17_RESULT" == success', ""),
-  "incorrect PG17 result binding": workflow => workflow.replace("PG17_RESULT: ${{ needs.ratings-native-pg17.result }}", "PG17_RESULT: ${{ needs.unit-integrity.result }}"),
-  "missing unit success condition": workflow => workflow.replace('"$UNIT_RESULT" == success && ', ""),
-  "missing database success condition": workflow => workflow.replace('"$DATABASE_RESULT" == success && ', ""),
-  "OR bypass": workflow => workflow.replace('&& "$PG17_RESULT"', '|| "$PG17_RESULT"'),
-  "unconditional success bypass": workflow => workflow.replace(" ]]'", " ]] || true'"),
-  "missing always condition": workflow => workflow.replace("    if: ${{ always() }}\n", ""),
-  "missing readiness dependency": workflow => workflow.replace(", ratings-hosted-readiness-pg17]", "]"),
-  "misspelled readiness dependency": workflow => workflow.replace("ratings-hosted-readiness-pg17]", "ratings-hosted-readiness-pg1]"),
-  "extra unreviewed dependency": workflow => workflow.replace("ratings-hosted-readiness-pg17]", "ratings-hosted-readiness-pg17, unchecked]"),
-  "missing readiness job": workflow => workflow.replace("  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: ${{ always() }}\n", ""),
-  "missing readiness result binding": workflow => workflow.replace("          RATINGS_READINESS_RESULT: ${{ needs.ratings-hosted-readiness-pg17.result }}\n", ""),
-  "incorrect readiness result binding": workflow => workflow.replace("RATINGS_READINESS_RESULT: ${{ needs.ratings-hosted-readiness-pg17.result }}", "RATINGS_READINESS_RESULT: ${{ needs.ratings-native-pg17.result }}"),
-  "missing readiness success condition": workflow => workflow.replace(' && "$RATINGS_READINESS_RESULT" == success', ""),
-  "readiness OR bypass": workflow => workflow.replace('&& "$RATINGS_READINESS_RESULT"', '|| "$RATINGS_READINESS_RESULT"'),
-  "readiness nonfailure bypass": workflow => workflow.replace('"$RATINGS_READINESS_RESULT" == success', '"$RATINGS_READINESS_RESULT" != failure'),
-  "readiness ignored failure": workflow => workflow.replace("  ratings-hosted-readiness-pg17:\n", "  ratings-hosted-readiness-pg17:\n    continue-on-error: true\n"),
-  "readiness job skipped": workflow => workflow.replace("  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: ${{ always() }}\n", "  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: false\n"),
-  "readiness step skipped": workflow => workflow.replace("  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: ${{ always() }}\n", "  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: ${{ always() }}\n    steps:\n      - name: Verification\n        if: false\n"),
-  "aggregate step skipped": workflow => workflow.replace("      - name: Require every verification job\n", "      - name: Require every verification job\n        if: false\n"),
-  "aggregate ignored failure": workflow => workflow.replace("      - name: Require every verification job\n", "      - name: Require every verification job\n        continue-on-error: true\n"),
+  "missing PG17 dependency": w => w.replace(", ratings-native-pg17", ""),
+  "missing PG17 job": w => w.replace("  ratings-native-pg17:\n    needs: unit-integrity\n", ""),
+  "missing PG17 success condition": w => w.replace(' && "$PG17_RESULT" == success', ""),
+  "incorrect PG17 result binding": w => w.replace("PG17_RESULT: ${{ needs.ratings-native-pg17.result }}", "PG17_RESULT: ${{ needs.unit-integrity.result }}"),
+  "missing unit success condition": w => w.replace('"$UNIT_RESULT" == success && ', ""),
+  "missing changes dependency": w => w.replace("needs: [changes, ", "needs: ["),
+  "missing database dependency": w => w.replace(", database-pg15,", ","),
+  "missing forward-package dependency": w => w.replace(", forward-db-pg15,", ","),
+  "missing Chat inbox dependency": w => w.replace(", chat-inbox-native-pg17,", ","),
+  "missing Chat inbox success condition": w => w.replace(' && "$CHAT_INBOX_RESULT" == success', ""),
+  "missing filter success condition": w => w.replace('[[ "$CHANGES_RESULT" == success && ', "[[ "),
+  "database skip without relevance proof": w => w.replace('skip_proven "$DATABASE_RESULT" "$PG15_RELEVANT"', 'skip_proven "$DATABASE_RESULT" false'),
+  "forward skip without relevance proof": w => w.replace('skip_proven "$FORWARD_RESULT" "$FORWARD_RELEVANT"', '[[ "$FORWARD_RESULT" != failure ]]'),
+  "skip accepted without filter success": w => w.replace(' && "$CHANGES_RESULT" == success && "$2" == false', ' && "$2" == false'),
+  "skip accepted for any relevance": w => w.replace('"$2" == false', '"$2" != true'),
+  "OR bypass": w => w.replace('&& "$PG17_RESULT"', '|| "$PG17_RESULT"'),
+  "unconditional success bypass": w => w.replace('skip_proven "$FORWARD_RESULT" "$FORWARD_RELEVANT" || exit 1', 'skip_proven "$FORWARD_RESULT" "$FORWARD_RELEVANT" || true'),
+  "unenforced strict check": w => w.replace('"$CHAT_INBOX_RESULT" == success ]] || exit 1', '"$CHAT_INBOX_RESULT" == success ]]'),
+  "missing always condition": w => w.replace("    if: ${{ always() }}\n    runs-on: ubuntu-24.04\n    permissions: {}\n    timeout-minutes: 2\n    steps:\n      - name: Require every verification job", "    runs-on: ubuntu-24.04\n    permissions: {}\n    timeout-minutes: 2\n    steps:\n      - name: Require every verification job"),
+  "missing readiness dependency": w => w.replace(", ratings-hosted-readiness-pg17]", "]"),
+  "extra unreviewed dependency": w => w.replace("ratings-hosted-readiness-pg17]\n", "ratings-hosted-readiness-pg17, unchecked]\n"),
+  "missing readiness job": w => w.replace("  ratings-hosted-readiness-pg17:\n    needs: ratings-native-pg17\n    if: ${{ always() }}\n", ""),
+  "missing readiness result binding": w => w.replace("          RATINGS_READINESS_RESULT: ${{ needs.ratings-hosted-readiness-pg17.result }}\n", ""),
+  "missing readiness success condition": w => w.replace(' && "$RATINGS_READINESS_RESULT" == success', ""),
+  "readiness ignored failure": w => w.replace("  ratings-hosted-readiness-pg17:\n", "  ratings-hosted-readiness-pg17:\n    continue-on-error: true\n"),
+  "native PG17 step skipped": w => w.replace("      - name: Require IDV native PG17 migration, RLS and Production v3-to-v1 assertions\n", "      - name: Require IDV native PG17 migration, RLS and Production v3-to-v1 assertions\n        if: false\n"),
+  "database job filtered by a free-form condition": w => w.replace("if: ${{ needs.changes.outputs.pg15 == 'true' }}", "if: ${{ github.event_name == 'push' }}"),
+  "aggregate step skipped": w => w.replace("        timeout-minutes: 1\n        env:\n          CHANGES_RESULT", "        timeout-minutes: 1\n        if: false\n        env:\n          CHANGES_RESULT"),
+  "aggregate ignored failure": w => w.replace("        timeout-minutes: 1\n        env:\n          CHANGES_RESULT", "        timeout-minutes: 1\n        continue-on-error: true\n        env:\n          CHANGES_RESULT"),
 };
 for (const [name, change] of Object.entries(gateChanges)) test(`workflow gate rejects ${name}`, () => {
-  const workflow = workflowGateFixture();
+  const workflow = realWorkflow();
   const altered = change(workflow);
   assert.notEqual(altered, workflow, "negative fixture must change the workflow");
   assert.throws(() => assertWorkflowVerificationGate(altered));
 });
-for (const variable of ["UNIT_RESULT", "DATABASE_RESULT", "PG17_RESULT", "RATINGS_READINESS_RESULT"]) {
-  for (const result of ["failure", "cancelled", "skipped"]) test(`workflow gate rejects ${variable} accepting ${result}`, () => {
-    assert.throws(() => assertWorkflowVerificationGate(workflowGateFixture().replace(`"$${variable}" == success`, `"$${variable}" == ${result}`)));
-  });
-}
-test("workflow gate rejects removing an installed Chat V2 gate or success condition", () => {
-  assert.throws(() => assertWorkflowVerificationGate(workflowGateFixture(true).replace(", chat-v2", "")));
-  assert.throws(() => assertWorkflowVerificationGate(workflowGateFixture(true).replace(' && "$CHAT_V2_RESULT" == success', "")));
-});
 
-function executeFixtureGate(chat, rejectedVariable, rejectedResult) {
-  const workflow = workflowGateFixture(chat);
-  assertWorkflowVerificationGate(workflow);
-  const command = workflow.match(/^        run: '(\[\[ .+ \]\])'$/m)[1];
-  const variables = [...workflow.matchAll(/^          (\w+): \$\{\{ needs\./gm)].map(match => match[1]);
-  // Run only the validated, fixed fixture expression, with no inherited secrets or shell startup hooks.
-  const env = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot };
-  for (const variable of variables) {
-    if (variable === rejectedVariable && rejectedResult === undefined) continue;
-    env[variable] = variable === rejectedVariable ? rejectedResult : "success";
+function executeGate(overrides = {}) {
+  const gate = gateBlock(realWorkflow());
+  const run = gate.match(/^        run: \|\r?\n((?:          .*\r?\n?)+)/m)[1].replace(/^ {10}/gm, "");
+  const env = { PATH: process.env.PATH };
+  for (const [, variable] of [...STRICT_JOBS, ...SKIPPABLE_JOBS]) env[variable] = "success";
+  env.PG15_RELEVANT = "true";
+  env.FORWARD_RELEVANT = "true";
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) delete env[key]; else env[key] = value;
   }
-  const result = spawnSync("bash", ["--noprofile", "--norc", "-euo", "pipefail", "-c", command],
-    { env, encoding: "utf8", windowsHide: true });
+  // Run only the reviewed gate script, with no inherited secrets or shell startup hooks.
+  const result = spawnSync("bash", ["--noprofile", "--norc", "-euo", "pipefail", "-c", run], { env, encoding: "utf8", windowsHide: true });
   assert.ifError(result.error);
+  assert.notEqual(result.status, null, "gate must execute instead of relying on process termination");
   return result.status;
 }
-for (const chat of [false, true]) test(`workflow gate executes successfully only when every result succeeds (Chat V2 ${chat})`, () => {
-  assert.equal(executeFixtureGate(chat), 0);
+test("gate executes successfully when every job succeeds, whatever the relevance flags", () => {
+  assert.equal(executeGate(), 0);
+  assert.equal(executeGate({ PG15_RELEVANT: "false", FORWARD_RELEVANT: "" }), 0);
 });
-for (const variable of ["UNIT_RESULT", "DATABASE_RESULT", "PG17_RESULT", "CHAT_V2_RESULT", "RATINGS_READINESS_RESULT"]) {
+for (const [, variable] of STRICT_JOBS) {
   for (const result of [undefined, "", "failure", "failed", "cancelled", "skipped"]) {
-    test(`workflow gate fails closed for ${variable} result ${result === undefined ? "missing" : JSON.stringify(result)}`, () => {
-      const status = executeFixtureGate(true, variable, result);
-      assert.notEqual(status, null, "gate must execute instead of relying on process termination");
-      assert.notEqual(status, 0);
+    test(`gate fails closed for ${variable} result ${result === undefined ? "missing" : JSON.stringify(result)}`, () => {
+      assert.notEqual(executeGate({ [variable]: result, PG15_RELEVANT: "false", FORWARD_RELEVANT: "false" }), 0);
     });
   }
+}
+for (const [, variable, , relevant] of SKIPPABLE_JOBS) {
+  for (const result of [undefined, "", "failure", "failed", "cancelled"]) {
+    test(`gate fails closed for ${variable} result ${result === undefined ? "missing" : JSON.stringify(result)} even when proven irrelevant`, () => {
+      assert.notEqual(executeGate({ [variable]: result, [relevant]: "false" }), 0);
+    });
+  }
+  for (const flag of ["true", "", "True", "0", "no", undefined]) {
+    test(`a skipped ${variable} without the literal false (${flag === undefined ? "missing" : JSON.stringify(flag)}) never passes`, () => {
+      assert.notEqual(executeGate({ [variable]: "skipped", [relevant]: flag }), 0);
+    });
+  }
+  test(`a skipped ${variable} passes only when the filter succeeded and proved it irrelevant`, () => {
+    assert.equal(executeGate({ [variable]: "skipped", [relevant]: "false" }), 0);
+    for (const changes of ["failure", "skipped", "cancelled", "", undefined]) {
+      assert.notEqual(executeGate({ [variable]: "skipped", [relevant]: "false", CHANGES_RESULT: changes }), 0);
+    }
+  });
 }
 
 test("workflow and executor preserve the local-only fail-closed boundaries", () => {
   const workflow = readFileSync(path.join(root, ".github/workflows/backend-ci.yml"), "utf8");
-  assert.match(workflow, /database-pg15:\r?\n\s+needs: unit-integrity/);
+  assert.match(workflow, /database-pg15:\r?\n\s+needs: \[unit-integrity, changes\]/);
   assertWorkflowVerificationGate(workflow);
   assert.doesNotMatch(workflow, /continue-on-error|pull_request_target|secrets\./);
   assert.match(workflow, /branches: \[main\]/);
@@ -332,4 +348,17 @@ test("workflow and executor preserve the local-only fail-closed boundaries", () 
     assert.ok(!sql.includes(`has_table_privilege('${role}',c.oid,'INSERT,UPDATE,DELETE')`));
   }
   assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\s+(?:TABLE|FUNCTION|INTO|FROM)\b/i);
+});
+
+test("forward-package suites each run on their own clean baseline stack", () => {
+  const script = readFileSync(path.join(root, "scripts/ci/run-forward-packages-db.sh"), "utf8");
+  const calls = script.match(/^run_suite \S+ \S+_DB_URL run-\S+\.mjs$/gm);
+  assert.deepEqual(calls?.map(call => call.split(" ")[1]), ["moderation-analytics", "profile-onboarding"]);
+  // The stack, ports, project id and baseline migration are created inside run_suite, once per package.
+  const body = script.slice(script.indexOf("run_suite() {"), script.indexOf("\nrun_suite moderation-analytics"));
+  for (const needle of ["db start", "migration up --local", "project_id=", "stop_stack", "unset \"$url_var\"",
+    "supabase_migrations.schema_migrations", "is not the clean baseline"]) assert.ok(body.includes(needle), needle);
+  assert.equal(script.split("cli_local db start").length - 1, 1, "db start only inside run_suite");
+  assert.ok(body.indexOf("is not the clean baseline") < body.indexOf("--execute"), "baseline proof precedes the suite");
+  assert.doesNotMatch(script, /export (?:MODERATION_ANALYTICS|PROFILE_ONBOARDING)_DB_URL=/);
 });

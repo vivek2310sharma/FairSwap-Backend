@@ -6,7 +6,9 @@ import {resolve, join} from 'node:path';
 import {auditProtection, requireOwnerActors, canonicalJson} from './inbox-protection.mjs';
 
 export const repository = 'vivek2310sharma/FairSwap-Backend';
+// Receipt identity stays the original path; the retired file's bytes now live under the archive path.
 export const workflow = '.github/workflows/fsw-sec-003-evidence-audit.yml';
+export const workflowArchive = 'docs/operations/archived-workflows/fsw-sec-003-evidence-audit.yml';
 export const refs = Object.freeze({FairSwapTest:'wpppxlnbzqynvhpeuavd', FairSwapProd:'kriuhwppxgxsyyrbjsau'});
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const day = 86400000;
@@ -25,8 +27,8 @@ const object = value => value !== null && typeof value === 'object' && !Array.is
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const hex = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 export function sourceHash() {
-  return hash([workflow, 'scripts/release/fsw-sec-003-evidence-audit.mjs', 'scripts/release/inbox-protection.mjs',
-    'tests/fsw-sec-003/evidence-audit.test.mjs'].map(path => hash(readFileSync(join(root,path)))+'  '+path).join('\n'));
+  return hash([[workflow, workflowArchive], ...['scripts/release/fsw-sec-003-evidence-audit.mjs', 'scripts/release/inbox-protection.mjs',
+    'tests/fsw-sec-003/evidence-audit.test.mjs'].map(path => [path, path])].map(([label, file]) => hash(readFileSync(join(root,file)))+'  '+label).join('\n'));
 }
 function binding(environment, c) {
   return {repository, workflow, environment, projectRef:refs[environment], sourceCommit:c.GITHUB_SHA,

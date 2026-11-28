@@ -713,7 +713,7 @@ describe("FairSwap Google Cloud Moderation V1 - Scoped Automated Tests", () => {
     });
 
     it("verifies GitHub Actions deployment workflow postflight gates and healthz alignment", () => {
-      const wfPath = path.join(process.cwd(), ".github/workflows/deploy-google-moderation.yml");
+      const wfPath = path.join(process.cwd(), "docs/operations/archived-workflows/deploy-google-moderation.yml");
       expect(fs.existsSync(wfPath)).toBe(true);
       const wf = fs.readFileSync(wfPath, "utf-8");
 

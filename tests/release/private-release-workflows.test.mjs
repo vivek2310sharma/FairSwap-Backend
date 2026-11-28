@@ -1,8 +1,21 @@
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {existsSync, readdirSync, readFileSync} from 'node:fs';
 import {test} from 'node:test';
 
 const workflow = name => readFileSync(new URL(`../../.github/workflows/${name}.yml`, import.meta.url), 'utf8');
+// Retired workflows are preserved outside the active directory so GitHub cannot run them.
+const archived = name => readFileSync(new URL(`../../docs/operations/archived-workflows/${name}.yml`, import.meta.url), 'utf8');
+
+test('at most five workflows are active and every retired workflow is archived, not active', () => {
+  const active = readdirSync(new URL('../../.github/workflows/', import.meta.url)).sort();
+  assert.deepEqual(active, ['backend-ci.yml', 'backend-scoped-token-check.yml', 'reusable-supabase-release.yml']);
+  assert.ok(active.length <= 5);
+  for (const name of ['azure-moderation-ci', 'chat-v2-inbox-release', 'deploy-azure-moderation', 'deploy-google-moderation',
+    'fsw-sec-003-evidence-audit', 'fsw-sec-003-prelaunch', 'fsw-sec-003-protected-release']) {
+    assert.ok(existsSync(new URL(`../../docs/operations/archived-workflows/${name}.yml`, import.meta.url)), name);
+    assert.ok(!existsSync(new URL(`../../.github/workflows/${name}.yml`, import.meta.url)), name);
+  }
+});
 
 test('the private reusable release gates credentials by reviewed owner dispatch and target', () => {
   const yaml = workflow('reusable-supabase-release');
@@ -29,7 +42,7 @@ test('retired Chat and FSW workflows have only disabled roots and success-gated 
     ['fsw-sec-003-prelaunch', ['verify']],
     ['fsw-sec-003-evidence-audit', ['audit']]
   ]) {
-    const jobs = workflow(name).split('\njobs:\n')[1].split(/\n(?=  [a-z_]+:\n)/);
+    const jobs = archived(name).split('\njobs:\n')[1].split(/\n(?=  [a-z_]+:\n)/);
     const blocked = new Set();
     const disabledRoots = [];
     for (const job of jobs) {
@@ -53,7 +66,7 @@ test('retired Chat and FSW workflows have only disabled roots and success-gated 
 
 test('cloud build and publish entry jobs are disabled and OIDC subjects stay environment-bound', () => {
   for (const [provider, entry] of [['azure', 'build-ci-and-publish'], ['google', 'build-and-verify']]) {
-    const yaml = workflow('deploy-' + provider + '-moderation');
+    const yaml = archived('deploy-' + provider + '-moderation');
     assert.ok(yaml.includes(`  ${entry}:\n    # Provider deployment is inactive. Keep the downstream environment-bound OIDC subjects.\n    if: \${{ false }}`));
     assert.match(yaml, /^    environment: FairSwapTest$/m);
     assert.match(yaml, /^    environment: FairSwapProd$/m);

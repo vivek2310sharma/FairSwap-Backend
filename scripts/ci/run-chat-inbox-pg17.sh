@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Dedicated native Linux fixture; private Unix socket, no hosted URL or credentials.
 set -euo pipefail
-[[ $(uname -s) == Linux && ( $# == 0 || ( $# == 1 && $1 == --prebuilt ) ) ]]
+# --pg-bin <absolute bin dir> reuses the job's already installed checksum-pinned PG17 and Supabase CLI.
+[[ $(uname -s) == Linux && ( $# == 0 || ( $# == 1 && $1 == --prebuilt ) || ( $# == 2 && $1 == --pg-bin && $2 == /* ) ) ]]
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$root"
 classify(){ node scripts/release/protected-inbox-plan.mjs classify "$1"; }
@@ -10,10 +11,14 @@ chmod 700 "$task_tmp"
 pg_bin="$task_tmp/install/bin"
 if [[ ${1:-} == --prebuilt ]]; then
   pg_bin="$task_tmp/pg17/install/bin"
+elif [[ ${1:-} == --pg-bin ]]; then
+  pg_bin=$2
 fi
 cleanup(){ if [[ -f "$task_tmp/data/postmaster.pid" ]]; then "$pg_bin/pg_ctl" -D "$task_tmp/data" -m immediate stop >/dev/null;fi; [[ $task_tmp == */chat-inbox-native.* ]] && rm -rf -- "$task_tmp"; }
 trap cleanup EXIT
-if [[ ${1:-} == --prebuilt ]]; then
+if [[ ${1:-} == --pg-bin ]]; then
+  [[ $("$pg_bin/postgres" --version) == 'postgres (PostgreSQL) 17.'* ]]
+elif [[ ${1:-} == --prebuilt ]]; then
   bash scripts/ci/install-prebuilt-pg17.sh "$task_tmp/pg17"
 else
   curl --fail --silent --show-error --proto '=https' --tlsv1.2 https://ftp.postgresql.org/pub/source/v17.6/postgresql-17.6.tar.bz2 -o "$task_tmp/pg.tar.bz2"
@@ -27,8 +32,13 @@ task_port=$(shuf -i 49152-65535 -n 1)
 [[ $("$pg_bin/psql" -XAt -h "$task_tmp" -p "$task_port" -U inbox_fixture_admin -d postgres -c 'show server_version_num') == 170006 ]]
 if ! node scripts/ci/prepare-chat-inbox-cli-fixture.mjs "$task_tmp" seed >"$task_tmp/seed-plan.log" 2>&1; then echo "FAIL fixture preparation: $(classify "$task_tmp/seed-plan.log")";exit 1;fi
 "$pg_bin/psql" -XAtq -h "$task_tmp" -p "$task_port" -U inbox_fixture_admin -d postgres -v ON_ERROR_STOP=1 -f "$task_tmp/prepare.sql" >"$task_tmp/prepare.log" 2>&1
-if ! bash scripts/release/install-inbox-cli.sh >"$task_tmp/install-cli.log" 2>&1; then echo 'FAIL pinned CLI installation';exit 1;fi
-task_cli=$(tail -n1 "$GITHUB_PATH")
+if [[ ${1:-} == --pg-bin ]]; then
+  # The caller already ran the pinned installer; never install a second copy.
+  task_cli=$(dirname -- "$(command -v supabase)")
+else
+  if ! bash scripts/release/install-inbox-cli.sh >"$task_tmp/install-cli.log" 2>&1; then echo 'FAIL pinned CLI installation';exit 1;fi
+  task_cli=$(tail -n1 "$GITHUB_PATH")
+fi
 task_connection="postgresql://postgres@127.0.0.1:$task_port/postgres?sslmode=disable"
 # Use a minimal explicit CLI environment: never inherit hosted connection credentials.
 cli(){ env -i PATH="$PATH" HOME="$HOME" NO_COLOR=1 "$task_cli/supabase" "$@"; }

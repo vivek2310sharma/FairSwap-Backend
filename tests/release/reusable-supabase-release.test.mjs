@@ -5386,6 +5386,7 @@ test('remaining categories receipt recovery guards pinned Test and Production hi
 });
 
 test('remaining categories releaseReusable tests actual Test apply and Production ledger-pinned release path', async () => {
+  const receiptsDir = mkdtempSync(join(tmpdir(), 'fs-test-receipts-'));
   const candidate = getCandidate('remaining-categories-launch-v1');
   const postflightJson = JSON.stringify({catalogue_leaf_count: 63, dogs_rehoming: true, other_pets_rehoming: true, staff_intake_guard: true});
 
@@ -5462,7 +5463,7 @@ test('remaining categories releaseReusable tests actual Test apply and Productio
     TEST_CATALOGUE_RUN_ID: ''
   };
 
-  const testReceipt = await releaseReusable({
+  const testReceipt = await releaseReusable({receiptDir: receiptsDir,
     candidateId: candidate.id,
     environment: 'FairSwapTest',
     context: testContext,
@@ -5473,18 +5474,18 @@ test('remaining categories releaseReusable tests actual Test apply and Productio
   assert.equal(testReceipt.ledgerStatementsSha256, candidate.statementsSha256);
 
   // Recovery of the already recorded migration must be read-only and exact-pin guarded.
-  const recovered = await releaseReusable({candidateId: candidate.id, environment: 'FairSwapTest',
+  const recovered = await releaseReusable({receiptDir: receiptsDir, candidateId: candidate.id, environment: 'FairSwapTest',
     context: testContext, runner: makeTestRunner({alreadyApplied: true})});
   assert.equal(recovered.status, 'ALREADY_APPLIED_VERIFIED');
   assert.deepEqual(recovered.dryRunPending, []);
   assert.equal(recovered.ledgerStatementsSha256, candidate.statementsSha256);
-  await assert.rejects(releaseReusable({candidateId: candidate.id, environment: 'FairSwapTest',
+  await assert.rejects(releaseReusable({receiptDir: receiptsDir, candidateId: candidate.id, environment: 'FairSwapTest',
     context: testContext, runner: makeTestRunner({alreadyApplied: true, installedDigest: '0'.repeat(64)})}),
     /REMAINING_CATEGORIES_RECORDED_LEDGER_MISMATCH/);
 
   // 2. FairSwapProd requires Test evidence
   await assert.rejects(
-    releaseReusable({
+    releaseReusable({receiptDir: receiptsDir,
       candidateId: candidate.id,
       environment: 'FairSwapProd',
       context: {...baseEnv, TARGET: 'production', GITHUB_SHA: 'a'.repeat(40), GITHUB_RUN_ID: '1002'},
@@ -5551,7 +5552,7 @@ test('remaining categories releaseReusable tests actual Test apply and Productio
   };
 
   await assert.rejects(
-    releaseReusable({
+    releaseReusable({receiptDir: receiptsDir,
       candidateId: candidate.id,
       environment: 'FairSwapProd',
       context: prodContextWithTestRun,
@@ -5562,7 +5563,7 @@ test('remaining categories releaseReusable tests actual Test apply and Productio
   );
 
   // 4. FairSwapProd with matching Test receipt succeeds
-  const prodReceipt = await releaseReusable({
+  const prodReceipt = await releaseReusable({receiptDir: receiptsDir,
     candidateId: candidate.id,
     environment: 'FairSwapProd',
     context: prodContextWithTestRun,

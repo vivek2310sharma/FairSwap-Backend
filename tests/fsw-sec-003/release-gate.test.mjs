@@ -70,7 +70,7 @@ test('precisely one reviewed pending filename in CLI dry-run',()=>{
 });
 test('required CI gate and pinned dependencies cannot silently skip search',()=>{
  const ci=readFileSync(new URL('../../.github/workflows/backend-ci.yml',import.meta.url),'utf8');
- assert.ok(ci.includes('needs: [unit-integrity, database-pg15, ratings-native-pg17, ratings-hosted-readiness-pg17]'));
+ assert.ok(ci.includes('needs: [changes, unit-integrity, database-pg15, forward-db-pg15, ratings-native-pg17, chat-inbox-native-pg17, ratings-hosted-readiness-pg17]'));
  assert.ok(ci.includes('node tests/fsw-sec-003/run-disposable.mjs'));
  assert.ok(ci.includes('tests/ratings/node_modules/@electric-sql/pglite/dist/index.js'));
  assert.ok(ci.includes('bash tests/fsw-sec-003/run-native.sh'));

@@ -80,14 +80,15 @@ ChatGPT independently verified that both FairSwapTest and FairSwapProd record
 [31 October migration snapshot](../../releases/candidates/fsw-sec-003/history-snapshot.json)
 also records the Chat migration in both projects.
 
-- **Chat V2 inbox release and protection audit** are retired in place. CI still
-  exercises the retained release scripts and bundle inputs.
-- **FSW-SEC-003 prelaunch, protected release and evidence audit** are retired in
-  place. The audit has no active release consumer. Preserve the historical
-  workflows, release logic, receipts and security tests. The reusable pipeline
-  still imports the exact-SHA CI and TLS certificate helpers. The retired jobs
-  require no credential migration. The active pipeline still uses the named
-  project-specific database credentials above.
-- **Azure and Google moderation** have disabled build and publish entry jobs.
-  The downstream OIDC jobs cannot run through those entry points. The Azure CI
-  workflow still observes its existing path filter.
+- **Chat V2 inbox release and protection audit** are retired and archived in
+  `docs/operations/archived-workflows/`. CI still exercises the retained release
+  scripts and bundle inputs inside `backend-ci.yml`.
+- **FSW-SEC-003 prelaunch, protected release and evidence audit** are retired and
+  archived in the same folder with their bytes unchanged. The audit has no active
+  release consumer. Preserve the archived workflows, release logic, receipts and
+  security tests. The reusable pipeline still imports the exact-SHA CI and TLS
+  certificate helpers. The retired jobs require no credential migration. The
+  active pipeline still uses the named project-specific database credentials above.
+- **Azure and Google moderation** deployment and Azure CI workflows are archived
+  in the same folder; their disabled entry jobs and environment-bound OIDC
+  subjects are preserved verbatim and none can run from there.

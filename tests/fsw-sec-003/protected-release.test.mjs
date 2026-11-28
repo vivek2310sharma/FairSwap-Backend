@@ -126,7 +126,7 @@ test('Test-to-Prod receipt rejects missing, widened or falsely passing waiver',a
  }
 });
 test('workflow retains protected environments, owner actors, immutable receipt transfer and CI',()=>{
- const w=readFileSync(new URL('../../.github/workflows/fsw-sec-003-protected-release.yml',import.meta.url),'utf8');
+ const w=readFileSync(new URL('../../docs/operations/archived-workflows/fsw-sec-003-protected-release.yml',import.meta.url),'utf8');
  for(const value of ['workflow_dispatch:','cancel-in-progress: false','environment: FairSwapTest','environment: FairSwapProd','needs: [verify, test, verify_test]',"verifyTestReceipt(readFileSync('test-evidence/receipt.json')",'github.triggering_actor','inputs.approved_sha == github.sha','artifact-ids: ${{ needs.test.outputs.artifact_id }}','TEST_RECEIPT_SHA: ${{ needs.test.outputs.receipt_sha }}','always()','requireCi(process.env)','install-fsw-sec-003-pg.sh'])assert.ok(w.includes(value),value);
  assert.ok(!w.includes('continue-on-error')&&!w.includes('pull_request:')&&!w.includes('push:'));
  const ci=readFileSync(new URL('../../.github/workflows/backend-ci.yml',import.meta.url),'utf8');assert.ok(ci.includes('tests/fsw-sec-003/protected-release.test.mjs'));
@@ -192,7 +192,7 @@ for(const [name,options] of Object.entries({ci:{ciFailure:true},exposure:{expose
  const r=await simulate('FairSwapTest',{...options,context:deferred,noRecovery:true});assert.ok(r.failure);assert.equal(r.receipt.status,'FAIL');
 });
 test('workflow binds credential-free verifier to trusted Test output and each protected target to its variable',()=>{
- const w=readFileSync(new URL('../../.github/workflows/fsw-sec-003-protected-release.yml',import.meta.url),'utf8');
+ const w=readFileSync(new URL('../../docs/operations/archived-workflows/fsw-sec-003-protected-release.yml',import.meta.url),'utf8');
  assert.equal(w.split("FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED: ${{ vars.FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED || 'false' }}").length-1,2);
  assert.ok(w.includes('FSW_SEC_003_PRELAUNCH_AUTHORITY_DEFERRED: ${{ needs.test.outputs.authority_deferred }}'));
  assert.ok(w.includes('authority_deferred: ${{ steps.proof.outputs.authority_deferred }}'));

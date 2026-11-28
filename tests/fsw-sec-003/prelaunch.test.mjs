@@ -38,15 +38,15 @@ test('Production requires complete fresh same-run Test proof without writer evid
  check(r);assert.throws(()=>check({...r,runAttempt:'2'}));assert.throws(()=>check({...r,status:'FAIL'}));assert.throws(()=>check({...r,cliVersion:'latest'}));
 });
 test('retired prelaunch workflow retains historical deployment order and protection checks',()=>{
- const w=readFileSync('.github/workflows/fsw-sec-003-prelaunch.yml','utf8');
+ const w=readFileSync('docs/operations/archived-workflows/fsw-sec-003-prelaunch.yml','utf8');
  assert.match(w,/^      false &&$/m);
  assert.match(w,/environment: FairSwapTest/);assert.match(w,/environment: FairSwapProd/);assert.match(w,/needs: \[verify, test, verify_test\]/);
  assert.doesNotMatch(w,/AUTHORITY|install-fsw-sec-003-pg/);
- assert.match(readFileSync('.github/workflows/fsw-sec-003-protected-release.yml','utf8'),/false && github.repository/);
+ assert.match(readFileSync('docs/operations/archived-workflows/fsw-sec-003-protected-release.yml','utf8'),/false && github.repository/);
 });
 
 test('both ubuntu jobs use authenticated noble PGDG client installation',()=>{
- const workflow=readFileSync('.github/workflows/fsw-sec-003-prelaunch.yml','utf8');
+ const workflow=readFileSync('docs/operations/archived-workflows/fsw-sec-003-prelaunch.yml','utf8');
  assert.equal(workflow.match(/run: bash scripts\/release\/install-fsw-sec-003-client.sh/g)?.length,2);
  const installer=readFileSync('scripts/release/install-fsw-sec-003-client.sh','utf8');
  for(const pin of ['noble-pgdg','signed-by=','B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8','--no-install-recommends postgresql-client-17','/usr/lib/postgresql/17/bin/psql --version'])assert.ok(installer.includes(pin));
