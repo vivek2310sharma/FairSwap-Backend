@@ -20,6 +20,8 @@ jobs:
   # Phase 1: Build, CI, Publish Public GHCR Images, and Verify Package Availability
   # ---------------------------------------------------------------------------
   build-ci-and-publish:
+    # Provider deployment is inactive. Keep the downstream environment-bound OIDC subjects.
+    if: ${{ false }}
     name: Build, Test & Publish Public GHCR Images
     runs-on: ubuntu-latest
     permissions:

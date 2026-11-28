@@ -25,7 +25,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   verify:
+    # Both target ledgers contain the foundation as of the 31 October snapshot.
     if: >-
+      false &&
       github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
       github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
       inputs.deploy && !inputs.audit_only && vars.CHAT_INBOX_RELEASE_ENABLED == 'true' && inputs.approved_sha == github.sha
@@ -135,7 +137,9 @@ jobs:
           retention-days: 90
           overwrite: false
   audit_verify:
+    # The retired Chat release no longer requires GitHub protection audits.
     if: >-
+      false &&
       github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' &&
       github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' &&
       inputs.audit_only && !inputs.deploy && inputs.approved_sha == github.sha

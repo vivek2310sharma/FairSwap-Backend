@@ -356,8 +356,8 @@ test('workflow syntax contains required security checks', () => {
   assert(yaml.includes('github.actor == \'vivek2310sharma\''));
   assert(yaml.includes('github.triggering_actor == \'vivek2310sharma\''));
   assert(yaml.includes('inputs.approved_sha == github.sha'));
-  assert(yaml.includes('environment: FairSwapTest'));
-  assert(yaml.includes('environment: FairSwapProd'));
+  assert(yaml.includes('github.event.repository.private == true'));
+  assert.doesNotMatch(yaml, /^ {4}environment:/m);
   assert(yaml.includes('- moderation-azure-v1'));
 });
 
@@ -1257,7 +1257,7 @@ test('workflow verifies the deployed Web release before any database step and us
   for (const m of yaml.matchAll(/- name: Execute [^\n]*\n[\s\S]*?(?=\n      - |\n  \w|$)/g)) {
     if (!m[0].includes('WEB_EVIDENCE_TOKEN')) continue;
     const candidates = m[0].includes('Execute Test') ? v3Web : "inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue' || " + v3Web;
-    assert(m[0].includes("WEB_EVIDENCE_TOKEN: ${{ (" + candidates + ") && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}"));
+    assert(m[0].includes("WEB_EVIDENCE_TOKEN: ${{ (" + candidates + ") && secrets.FAIRSWAP_WEB_EVIDENCE_TOKEN || '' }}"));
   }
 });
 
@@ -1273,7 +1273,7 @@ test('workflow gates Production behind verified evidence and keeps moderation au
   assert(!yaml.includes('workflow_run'));
   assert(!/^name:.*accessories/im.test(yaml));
   const secrets = [...yaml.matchAll(/secrets\.([A-Z0-9_]+)/g)].map(m => m[1]).sort();
-  assert.deepEqual([...new Set(secrets)], ['CHAT_DATABASE_PASSWORD', 'CHAT_DB_SSL_ROOT_CERT_PEM', 'CHAT_RELEASE_AUDIT_TOKEN', 'FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN', 'FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN']);
+  assert.deepEqual([...new Set(secrets)], ['FAIRSWAP_PROD_DB_PASSWORD', 'FAIRSWAP_PROD_DB_SSL_ROOT_CERT_PEM', 'FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN', 'FAIRSWAP_TEST_DB_PASSWORD', 'FAIRSWAP_TEST_DB_SSL_ROOT_CERT_PEM', 'FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN', 'FAIRSWAP_WEB_EVIDENCE_TOKEN']);
 });
 
 test('Tablets SQL is pinned and both Accessories stages must precede it', () => {
@@ -2123,7 +2123,7 @@ test('Wearables uses the existing reusable workflow only, with no new secrets an
     assert.ok(job.includes('ACCESSORIES_PROD_FOUNDATION_RUN_ID') && job.includes('TEST_E2E_RUN_ID'));
   }
   assert.deepEqual([...new Set([...yaml.matchAll(/secrets\.([A-Z0-9_]+)/g)].map(m => m[1]))].sort(),
-    ['CHAT_DATABASE_PASSWORD', 'CHAT_DB_SSL_ROOT_CERT_PEM', 'CHAT_RELEASE_AUDIT_TOKEN', 'FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN', 'FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN']);
+    ['FAIRSWAP_PROD_DB_PASSWORD', 'FAIRSWAP_PROD_DB_SSL_ROOT_CERT_PEM', 'FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN', 'FAIRSWAP_TEST_DB_PASSWORD', 'FAIRSWAP_TEST_DB_SSL_ROOT_CERT_PEM', 'FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN', 'FAIRSWAP_WEB_EVIDENCE_TOKEN']);
 });
 
 // ---- Existing-installation adoption (Accessories Production: foundation + activation, ACTIVATED) --------------------
@@ -2386,7 +2386,7 @@ test('workflow exposes adoption only as a protected, Accessories-foundation-only
   assert.ok(yaml.includes('- adopt'));
   assert.ok(yaml.includes("inputs.target == 'adopt' && inputs.candidate == 'accessories-v1-foundation' && needs.test.result == 'skipped'"));
   const prod = yaml.slice(yaml.indexOf('\n  production:'));
-  assert.ok(prod.includes('environment: FairSwapProd'));
+  assert.ok(prod.includes('secrets.FAIRSWAP_PROD_DB_PASSWORD'));
   assert.ok(prod.includes("TARGET: ${{ inputs.target }}"));
   assert.ok(prod.includes("process.env.TARGET === 'adopt'") && prod.includes('adoptExistingInstallation(options)'));
   const test = yaml.slice(yaml.indexOf('\n  test:'), yaml.indexOf('\n  verify_test:'));
@@ -3487,9 +3487,9 @@ test('IDV DigiLocker V1 is pinned to the reviewed migration and reaches Producti
   assert.ok(yaml.includes('IDV_DIGILOCKER_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.idv_digilocker_ledger_sha }}'));
   assert.ok(yaml.includes("test-evidence/${process.env.CANDIDATE}-fairswaptest.json"));
   // Existing V1/V2 candidates stay dark. The separately guarded parity candidate is permitted to deploy Edge functions.
-  assert.deepEqual([...new Set(yaml.match(/secrets\.[A-Z0-9_]+/g))].sort(), ['secrets.CHAT_DATABASE_PASSWORD', 'secrets.CHAT_DB_SSL_ROOT_CERT_PEM',
-    'secrets.CHAT_RELEASE_AUDIT_TOKEN', 'secrets.FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN', 'secrets.FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN']);
-  assert.deepEqual([...new Set(yaml.match(/^ {4}environment: \S+$/gm))].sort(), ['    environment: FairSwapProd', '    environment: FairSwapTest']);
+  assert.deepEqual([...new Set(yaml.match(/secrets\.[A-Z0-9_]+/g))].sort(), ['secrets.FAIRSWAP_PROD_DB_PASSWORD', 'secrets.FAIRSWAP_PROD_DB_SSL_ROOT_CERT_PEM', 'secrets.FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN',
+    'secrets.FAIRSWAP_TEST_DB_PASSWORD', 'secrets.FAIRSWAP_TEST_DB_SSL_ROOT_CERT_PEM', 'secrets.FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN', 'secrets.FAIRSWAP_WEB_EVIDENCE_TOKEN']);
+  assert.doesNotMatch(yaml, /^ {4}environment:/m);
   const parityStep = yaml.indexOf('Verify DigiLocker Production Web and provider secret names before gate activation');
   assert(parityStep > yaml.indexOf('\n  production:'));
   assert.match(yaml.slice(parityStep), /functions deploy idv-digilocker-start/);
@@ -3614,7 +3614,7 @@ test('IDV DigiLocker releases to Test out of order with a verified, sanitized re
 // Minimal evaluator for the production job's GitHub expression (subset used by this workflow), so the real condition is tested.
 function productionJobRuns(yaml, {candidate, target, autoPromote, test = 'success', verifyTest = 'success', outputs = {}}) {
   const block = yaml.slice(yaml.indexOf('\n  production:\n'));
-  const expr = block.slice(block.indexOf('if: >-') + 6, block.indexOf('\n    environment: FairSwapProd')).trim()
+  const expr = block.slice(block.indexOf('if: >-') + 6, block.indexOf('\n    runs-on:')).trim()
     .replace(/^\$\{\{/, '').replace(/\}\}$/, '').replace(/\s+/g, ' ');
   const ctx = {
     inputs: {candidate, target},

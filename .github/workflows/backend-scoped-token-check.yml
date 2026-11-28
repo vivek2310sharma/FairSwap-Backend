@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   verify-test:
-    if: ${{ github.ref == 'refs/heads/main' && github.actor == 'vivek2310sharma' && inputs.target == 'test' }}
+    if: ${{ github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' && inputs.target == 'test' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -60,7 +60,7 @@ jobs:
           echo "PASS: Test token reads FairSwapTest only; FairSwapProd access denied; zero writes."
 
   verify-production:
-    if: ${{ github.ref == 'refs/heads/main' && github.actor == 'vivek2310sharma' && inputs.target == 'production' }}
+    if: ${{ github.repository == 'vivek2310sharma/FairSwap-Backend' && github.ref == 'refs/heads/main' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' && inputs.target == 'production' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
