@@ -32,7 +32,7 @@ their verification code are unmodified. Re-enabling either workflow would requir
 
 | Job | Notes |
 | --- | --- |
-| `changes` | Fail-open filter (`scripts/ci/changed-areas.mjs`): unknown paths and unverified file lists run the database jobs; only docs, root Markdown and `src/` can skip, and only the literal `false` from a complete PR file list excuses a skip. Everything under `supabase/` (every forward migration), `docs/extraction/` (migration manifest), `scripts/`, `releases/`, `tests/` and `.github/` is always relevant. |
+| `changes` | Fail-open filter (`scripts/ci/changed-areas.mjs`): unknown paths and unverified file lists run the database jobs; only docs, root Markdown and `src/` can skip, and only the literal `false` from an uncapped GitHub compare of the event base SHA to the exact tested merge SHA excuses a skip (non-ancestor, malformed or 300-file-capped results run both jobs). Everything under `supabase/` (every forward migration), `docs/extraction/` (migration manifest), `scripts/`, `releases/`, `tests/` and `.github/` is always relevant. |
 | `unit-integrity` | Unchanged checks plus HDR-03 package verification; pnpm cache. |
 | `database-pg15`, `forward-db-pg15` | Docker Supabase PG 15.8. Skipped only when `changes` proves them irrelevant. `forward-db-pg15` runs Moderation Analytics and profile-onboarding pgTAP, each on its own fresh stack after a ledger check proves the clean baseline; one CLI download is shared. |
 | `ratings-native-pg17` | One checksum-pinned PG 17.6 install and one Supabase CLI install shared by Ratings, Posting, Tablets, Wearables, Taxonomy, public search, IDV, HDR-03 and Chat inbox. No step is conditional. |

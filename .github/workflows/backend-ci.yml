@@ -16,13 +16,12 @@ concurrency:
 
 jobs:
   # Relevant-change filter for the two Docker PG15 jobs. Fails open: only the literal output "false"
-  # (computed from the complete PR file list) lets backend-ci-success accept a skipped job.
+  # (computed from the immutable base-to-tested-merge comparison) lets backend-ci-success accept a skipped job.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       pg15: ${{ steps.areas.outputs.pg15 }}
       forward: ${{ steps.areas.outputs.forward }}
@@ -37,7 +36,7 @@ jobs:
         id: areas
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         shell: bash --noprofile --norc -euo pipefail {0}
         run: node scripts/ci/changed-areas.mjs
 
