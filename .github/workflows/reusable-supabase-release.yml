@@ -130,7 +130,7 @@ jobs:
       foundation_ledger_sha: ${{ steps.plan.outputs.foundation_ledger_sha }}
       candidate_ledger_sha: ${{ steps.plan.outputs.candidate_ledger_sha }}
     if: >-
-      github.repository == 'vivek2310sharma/FairSwap-Backend' &&
+      github.repository == 'vivek2310sharma/FairSwap-Backend' && github.event.repository.private == true &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'vivek2310sharma' &&
       (inputs.test_e2e_run_id != 'OWNER_APPROVED_WEARABLES_V1_E2E_WAIVER' ||
@@ -235,7 +235,7 @@ jobs:
         id: plan
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          WEB_EVIDENCE_TOKEN: ${{ secrets.FAIRSWAP_WEB_EVIDENCE_TOKEN }}
           CANDIDATE: ${{ inputs.candidate }}
           TARGET: ${{ inputs.target }}
           WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
@@ -296,7 +296,6 @@ jobs:
   test:
     needs: verify
     if: ${{ needs.verify.result == 'success' && inputs.target == 'test' && github.actor == 'vivek2310sharma' && github.triggering_actor == 'vivek2310sharma' }}
-    environment: FairSwapTest
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.candidate == 'v3-test-remaining-batch' && 45 || startsWith(inputs.candidate, 'v3-goods-batch-') && 30 || 20 }}
     defaults:
@@ -333,7 +332,7 @@ jobs:
           BOOKS_ACCEPTANCE_RUN_ID: ${{ inputs.books_acceptance_run_id }}
           TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
           V3_BATCH_JSON: ${{ inputs.v3_batch }}
-          WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          WEB_EVIDENCE_TOKEN: ${{ secrets.FAIRSWAP_WEB_EVIDENCE_TOKEN }}
         run: |
           node --input-type=module - <<'NODE'
           import {planDispatch} from './scripts/release/reusable-candidates.mjs';
@@ -368,7 +367,7 @@ jobs:
         if: ${{ inputs.candidate != 'v3-test-remaining-batch' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          WEB_EVIDENCE_TOKEN: ${{ (startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-') || startsWith(inputs.candidate, 'v3-goods-batch-')) && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
+          WEB_EVIDENCE_TOKEN: ${{ (startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-') || startsWith(inputs.candidate, 'v3-goods-batch-')) && secrets.FAIRSWAP_WEB_EVIDENCE_TOKEN || '' }}
           TARGET: ${{ inputs.target }}
           ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
           TABLETS_FOUNDATION_LEDGER_SHA: ${{ needs.verify.outputs.foundation_ledger_sha }}
@@ -376,9 +375,9 @@ jobs:
           CANDIDATE: ${{ inputs.candidate }}
           EXPECTED_SHA: ${{ inputs.expected_candidate_sha256 }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN }}
-          CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
-          CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.CHAT_DB_SSL_ROOT_CERT_PEM }}
-          CHAT_DB_POOLER_HOST: ${{ vars.CHAT_DB_POOLER_HOST }}
+          CHAT_DATABASE_PASSWORD: ${{ secrets.FAIRSWAP_TEST_DB_PASSWORD }}
+          CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.FAIRSWAP_TEST_DB_SSL_ROOT_CERT_PEM }}
+          CHAT_DB_POOLER_HOST: ${{ vars.FAIRSWAP_TEST_DB_POOLER_HOST }}
           WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
           WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
           TEST_CATALOGUE_RUN_ID: ${{ inputs.test_catalogue_run_id }}
@@ -404,9 +403,9 @@ jobs:
         env:
           TARGET: ${{ inputs.target }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_TEST_SUPABASE_ACCESS_TOKEN }}
-          CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
-          CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.CHAT_DB_SSL_ROOT_CERT_PEM }}
-          CHAT_DB_POOLER_HOST: ${{ vars.CHAT_DB_POOLER_HOST }}
+          CHAT_DATABASE_PASSWORD: ${{ secrets.FAIRSWAP_TEST_DB_PASSWORD }}
+          CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.FAIRSWAP_TEST_DB_SSL_ROOT_CERT_PEM }}
+          CHAT_DB_POOLER_HOST: ${{ vars.FAIRSWAP_TEST_DB_POOLER_HOST }}
         run: |
           node --input-type=module - <<'NODE'
           import {createHash} from 'node:crypto';
@@ -679,7 +678,6 @@ jobs:
       (inputs.candidate != 'taxonomy-v2-catalogue' || needs.verify_test.outputs.taxonomy_ledger_sha != '')) ||
       (inputs.target == 'production' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped' && inputs.candidate != 'v3-provider-neutral-activation' && inputs.candidate != 'mobile-catalogue-india-v1' && inputs.candidate != 'idv-digilocker-v1' && inputs.candidate != 'idv-digilocker-oidc-v2' && inputs.candidate != 'idv-digilocker-prod-parity' && inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue') ||
       (inputs.target == 'adopt' && inputs.candidate == 'accessories-v1-foundation' && needs.test.result == 'skipped' && needs.verify_test.result == 'skipped')) }}
-    environment: FairSwapProd
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.candidate == 'v3-production-disabled-batch' && 45 || startsWith(inputs.candidate, 'v3-goods-batch-') && 30 || 20 }}
     defaults:
@@ -713,7 +711,7 @@ jobs:
           BOOKS_ACCEPTANCE_RUN_ID: ${{ inputs.books_acceptance_run_id }}
           TEST_E2E_RUN_ID: ${{ inputs.test_e2e_run_id }}
           V3_BATCH_JSON: ${{ inputs.v3_batch }}
-          WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          WEB_EVIDENCE_TOKEN: ${{ secrets.FAIRSWAP_WEB_EVIDENCE_TOKEN }}
         run: |
           node --input-type=module - <<'NODE'
           import {planDispatch} from './scripts/release/reusable-candidates.mjs';
@@ -764,7 +762,7 @@ jobs:
         if: ${{ inputs.candidate == 'idv-digilocker-prod-parity' }}
         env:
           WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
-          WEB_EVIDENCE_TOKEN: ${{ secrets.CHAT_RELEASE_AUDIT_TOKEN }}
+          WEB_EVIDENCE_TOKEN: ${{ secrets.FAIRSWAP_WEB_EVIDENCE_TOKEN }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN }}
         run: |
           node --input-type=module - <<'NODE'
@@ -800,7 +798,7 @@ jobs:
           V3_CORRECTION_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.correction_ledger_sha }}
           MOBILE_CATALOGUE_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.mobile_catalogue_ledger_sha }}
           IDV_DIGILOCKER_TEST_LEDGER_SHA: ${{ needs.verify_test.outputs.idv_digilocker_ledger_sha }}
-          WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue' || startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-') || startsWith(inputs.candidate, 'v3-goods-batch-')) && secrets.CHAT_RELEASE_AUDIT_TOKEN || '' }}
+          WEB_EVIDENCE_TOKEN: ${{ (inputs.candidate == 'tablets-v2-catalogue' || inputs.candidate == 'wearables-v11-catalogue' || startsWith(inputs.candidate, 'v3-books-') || startsWith(inputs.candidate, 'v3-tables-chairs-') || startsWith(inputs.candidate, 'v3-goods-batch-')) && secrets.FAIRSWAP_WEB_EVIDENCE_TOKEN || '' }}
           V3_BATCH_JSON: ${{ inputs.v3_batch }}
           ACCESSORIES_RECHECK_PROD_FOUNDATION: ${{ needs.verify.outputs.accessories_recheck_prod_foundation }}
           ACCESSORIES_RECOVERED_FOUNDATION_SHA: ${{ needs.verify.outputs.accessories_recovered_foundation_sha }}
@@ -810,9 +808,9 @@ jobs:
           CANDIDATE: ${{ inputs.candidate }}
           EXPECTED_SHA: ${{ inputs.expected_candidate_sha256 }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.FAIRSWAP_PROD_SUPABASE_ACCESS_TOKEN }}
-          CHAT_DATABASE_PASSWORD: ${{ secrets.CHAT_DATABASE_PASSWORD }}
-          CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.CHAT_DB_SSL_ROOT_CERT_PEM }}
-          CHAT_DB_POOLER_HOST: ${{ vars.CHAT_DB_POOLER_HOST }}
+          CHAT_DATABASE_PASSWORD: ${{ secrets.FAIRSWAP_PROD_DB_PASSWORD }}
+          CHAT_DB_SSL_ROOT_CERT_PEM: ${{ secrets.FAIRSWAP_PROD_DB_SSL_ROOT_CERT_PEM }}
+          CHAT_DB_POOLER_HOST: ${{ vars.FAIRSWAP_PROD_DB_POOLER_HOST }}
           WEB_STAGING_SHA: ${{ inputs.web_staging_sha }}
           WEB_PRODUCTION_SHA: ${{ inputs.web_production_sha }}
           TEST_CATALOGUE_RUN_ID: ${{ inputs.test_catalogue_run_id }}

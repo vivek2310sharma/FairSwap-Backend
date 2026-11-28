@@ -37,8 +37,9 @@ test('Production requires complete fresh same-run Test proof without writer evid
  const check=x=>{const b=JSON.stringify(x);return verifyTestReceipt(b,sha(b),c);};
  check(r);assert.throws(()=>check({...r,runAttempt:'2'}));assert.throws(()=>check({...r,status:'FAIL'}));assert.throws(()=>check({...r,cliVersion:'latest'}));
 });
-test('workflow retains ordered protected deployment and disables legacy',()=>{
+test('retired prelaunch workflow retains historical deployment order and protection checks',()=>{
  const w=readFileSync('.github/workflows/fsw-sec-003-prelaunch.yml','utf8');
+ assert.match(w,/^      false &&$/m);
  assert.match(w,/environment: FairSwapTest/);assert.match(w,/environment: FairSwapProd/);assert.match(w,/needs: \[verify, test, verify_test\]/);
  assert.doesNotMatch(w,/AUTHORITY|install-fsw-sec-003-pg/);
  assert.match(readFileSync('.github/workflows/fsw-sec-003-protected-release.yml','utf8'),/false && github.repository/);

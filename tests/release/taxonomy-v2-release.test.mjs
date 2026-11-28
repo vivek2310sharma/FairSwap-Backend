@@ -67,7 +67,8 @@ test('existing workflow requires successful Test, hash-verified receipt and taxo
  assert(w.includes("inputs.candidate != 'taxonomy-v2-foundation' || needs.verify_test.outputs.taxonomy_ledger_sha != ''"));
  assert(w.includes("inputs.candidate != 'listing-validity-365' && inputs.candidate != 'taxonomy-v2-foundation' && inputs.candidate != 'taxonomy-v2-catalogue')"));
  assert.match(w,/TAXONOMY_TEST_LEDGER_SHA: \$\{\{ needs.verify_test.outputs.taxonomy_ledger_sha/);
- assert.match(w,/environment: FairSwapTest/);assert.match(w,/environment: FairSwapProd/);
+ assert.match(w,/secrets\.FAIRSWAP_TEST_DB_PASSWORD/);assert.match(w,/secrets\.FAIRSWAP_PROD_DB_PASSWORD/);
+ assert.doesNotMatch(w,/^ {4}environment:/m);
 });
 
 test('existing CLI orchestration preserves history, verifies Test then Production and withholds bad receipts (mock subprocesses only)',async()=>{

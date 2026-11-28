@@ -21,6 +21,8 @@ jobs:
   # Phase 1: Build, Test & Verify Shared Microservice Images
   # ---------------------------------------------------------------------------
   build-and-verify:
+    # Provider deployment is inactive. Keep the downstream environment-bound OIDC subjects.
+    if: ${{ false }}
     name: Build & Verify Shared Microservices
     runs-on: ubuntu-latest
     permissions:
@@ -214,7 +216,7 @@ jobs:
         env:
           CONTROLLER_URL: ${{ steps.deploy-services.outputs.controller_url }}
           MODERATION_SECRET: ${{ secrets.GOOGLE_CLOUD_MODERATION_SECRET }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.FAIRSWAP_TEST_SERVICE_ROLE_KEY || secrets.SUPABASE_TEST_SERVICE_ROLE_KEY || secrets.SUPABASE_SERVICE_ROLE_KEY || secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.FAIRSWAP_TEST_SERVICE_ROLE_KEY }}
         run: |
           set -euo pipefail
           if [[ -z "${SUPABASE_SERVICE_KEY:-}" ]]; then
@@ -470,7 +472,7 @@ jobs:
         env:
           CONTROLLER_URL: ${{ steps.deploy-services-prod.outputs.controller_url }}
           MODERATION_SECRET: ${{ secrets.GOOGLE_CLOUD_MODERATION_SECRET }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.FAIRSWAP_PROD_SERVICE_ROLE_KEY || secrets.SUPABASE_PROD_SERVICE_ROLE_KEY || secrets.SUPABASE_SERVICE_ROLE_KEY || secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.FAIRSWAP_PROD_SERVICE_ROLE_KEY }}
         run: |
           set -euo pipefail
           if [[ -z "${SUPABASE_SERVICE_KEY:-}" ]]; then

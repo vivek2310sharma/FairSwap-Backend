@@ -1,6 +1,11 @@
 # Backend release authority and scoped Chat V2 exception
 
-## Current scoped authorization — 28 October 2026
+The Chat foundation is recorded in both project ledgers in the 31 October 2026
+[snapshot](../../releases/candidates/fsw-sec-003/history-snapshot.json). The
+procedure below is historical. See the [private release cutover](GITHUB_FREE_PRIVATE_RELEASE.md)
+for active workflows and credential configuration.
+
+## Scoped authorization — 28 October 2026
 
 The owner authorizes the Chat V2 foundation release using existing Supabase
 credentials, multiple deploy tools and no backups, in FairSwapTest then FairSwapProd.

@@ -128,6 +128,7 @@ jobs:
           node scripts/ci/test-wearables-v1.mjs --catalogue-update --pglite-module="$PG" --web="$WEB"
           node scripts/ci/test-wearables-tablets-v1.mjs --catalogue-update --pglite-module="$PG" --web="$WEB"
           node --test tests/release/reusable-supabase-release.test.mjs
+          node --test tests/release/private-release-workflows.test.mjs
 
       - name: Require all 115 public search regression checks (pinned PGlite)
         timeout-minutes: 2
